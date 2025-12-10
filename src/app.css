@@ -1,0 +1,89 @@
+/* Main CSS file */
+@import url("./assets/styles/colors.css");
+@import "tailwindcss";
+@import "./../node_modules/@blueprintjs/core/lib/css/blueprint.css";
+@import './../node_modules/normalize.css/normalize.css';
+
+body {
+	font-family: Verdana, Geneva, Tahoma, sans-serif;
+}
+
+button:focus, .bp5-tab:focus {
+  outline: none;
+}
+
+input {
+	font-family: Verdana;
+	padding: 5px;
+	margin: 1px;
+}
+
+.row {
+	display: flex;
+	flex-direction: row;
+	padding: 10px 0;
+}
+
+.bp5-dark {
+	color: #f5f8fa;
+	background-color: var(--bg-color-dark);
+}
+
+.bp5-dark h2 {
+	color: var(--color-h2-dark);
+}
+
+.bp5-dark .bp5-card {
+	box-shadow: 0 5px 5px 0 rgba(0, 0, 0, 0.13);
+	background-color: var(--bg-color-darker);
+}
+
+table.bp5-dark {
+	background-color: var(--bg-color-darker);
+}
+
+.bp5-navbar.bp5-dark, .bp5-dark .bp5-navbar {
+	background-color: var(--bg-color-darker);
+}
+
+.bp5-input-group:not(:last-child) {
+	padding-right: 10px;
+}
+
+.bp5-dark .bp5-button:not([class*=bp5-intent-]) {
+	background-color: var(--bg-color-darker);
+}
+
+.bp5-dark .bp5-button:not([class*=bp5-intent-]):hover {
+	background-color: var(--bg-color-button-hover);
+}
+
+.bp5-dark .bp5-button:not([class*=bp5-intent-]):focus {
+	background-color: var(--bg-color-button-pressed);
+}
+
+.bp5-button {
+	font-size: 1.2em;
+}
+
+.bp5-button.bp5-intent-success {
+	color: var(--bg-color-darker);
+	background-color: var(--bg-color-button-success);
+	font-family: Storyteller;
+	font-size: 1.5em;
+	font-weight:bolder;
+}
+
+.bp5-button.bp5-intent-success:hover {
+	color: var(--bg-color-darker);
+	background-color: var(--bg-color-button-success-hover);
+}
+
+.bp5-dark .bp5-button:not([class*=bp5-intent-]).bp5-active {
+	background-color: #485969;
+	cursor: default;
+}
+
+.bp5-button.bp5-minimal:active, .bp5-button.bp5-minimal.bp5-active {
+  	background:rgba(100, 162, 208, 0.34);
+}

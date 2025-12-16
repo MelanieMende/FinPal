@@ -1,6 +1,7 @@
 import '@testing-library/jest-dom'
 
 window.API = {
+  getConfig: jest.fn(),
   saveTheme: jest.fn(),
   saveDatabase: jest.fn(),
   selectFolder: jest.fn().mockImplementation(() => Promise.resolve()),

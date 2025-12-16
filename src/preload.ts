@@ -3,22 +3,6 @@
 //import * as appState from './api/appStateAPI'
 import { app, contextBridge, ipcRenderer } from 'electron';
 
-declare global {
-  interface Window {
-    API: { 
-      selectFolder?():any,
-      getConfig?():any,
-      dbFileExists?():boolean,
-      saveTheme?(theme:string):any,
-      saveSelectedTab?(selectedTab:string):any,
-      saveTransactionsAssetFilter?(transactions_AssetFilter:any):any,
-      sendToDB?(sql:string):any,
-      sendToFinanceAPI?(args:{symbol:string}):any,
-      quit?():any
-    }
-  }
-}
-
 contextBridge.exposeInMainWorld('API', {
   quit: () => app.quit(),
   selectFolder: () => ipcRenderer.invoke('dialog:openDirectory'),
@@ -38,6 +22,14 @@ contextBridge.exposeInMainWorld('API', {
     return new Promise((resolve) => {
       ipcRenderer.send('save-theme', theme);
       ipcRenderer.once('save-theme', (_, arg) => {
+          resolve(arg);
+      });
+    });
+  },
+  saveDatabase(database:string) {
+    return new Promise((resolve) => {
+      ipcRenderer.send('save-database', database);
+      ipcRenderer.once('save-database', (_, arg) => {
           resolve(arg);
       });
     });

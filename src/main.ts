@@ -166,6 +166,13 @@ ipcMain.on('save-theme', (event, arg) => {
   return event.reply('save-theme', true);
 });
 
+ipcMain.on('save-database', (event, arg) => {
+  Object.assign(appState, { database: arg });
+  console.log("Saving database: " + arg);
+  fs.writeFileSync( filePath, JSON.stringify(appState))
+  return event.reply('save-database', true);
+});
+
 ipcMain.on('save-selected-tab', (event, arg) => {
   Object.assign(appState, { selectedTab: arg });
   console.log("Saving selectedTab: " + arg);

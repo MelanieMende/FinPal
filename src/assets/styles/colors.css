@@ -1,0 +1,9 @@
+:root {
+  --color-h2-dark: #8099ac;
+  --bg-color-dark: #394B59;
+  --bg-color-darker: #2c3944;
+  --bg-color-button-hover: #30404f;
+  --bg-color-button-pressed: #30425300;
+  --bg-color-button-success: #2ddc99;
+  --bg-color-button-success-hover: #31c98f;
+}

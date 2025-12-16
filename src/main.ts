@@ -159,6 +159,13 @@ ipcMain.handle('get-config', async (event) => {
   return appState
 })
 
+ipcMain.on('save-theme', (event, arg) => {
+  Object.assign(appState, { theme: arg });
+  console.log("Saving theme: " + arg);
+  fs.writeFileSync( filePath, JSON.stringify(appState))
+  return event.reply('save-theme', true);
+});
+
 ipcMain.on('save-selected-tab', (event, arg) => {
   Object.assign(appState, { selectedTab: arg });
   console.log("Saving selectedTab: " + arg);

@@ -9,6 +9,7 @@ declare global {
       selectFolder?():any,
       getConfig?():any,
       dbFileExists?():boolean,
+      saveTheme?(theme:string):any,
       saveSelectedTab?(selectedTab:string):any,
       saveTransactionsAssetFilter?(transactions_AssetFilter:any):any,
       sendToDB?(sql:string):any,
@@ -29,6 +30,14 @@ contextBridge.exposeInMainWorld('API', {
     return new Promise((resolve) => {
       ipcRenderer.send('check-if-db-file-exists');
       ipcRenderer.once('check-if-db-file-exists', (_, arg) => {
+          resolve(arg);
+      });
+    });
+  },
+  saveTheme(theme:string) {
+    return new Promise((resolve) => {
+      ipcRenderer.send('save-theme', theme);
+      ipcRenderer.once('save-theme', (_, arg) => {
           resolve(arg);
       });
     });

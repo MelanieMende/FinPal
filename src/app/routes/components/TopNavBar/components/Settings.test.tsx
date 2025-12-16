@@ -6,10 +6,6 @@ import TopNavBar from '../TopNavBar';
 
 describe('Settings component', () => {
 
-  window.API = {
-    saveTheme: jest.fn(),
-  }
-
 	it('renders', async() => {
     render(<Settings />) 
 		await waitFor(() => {

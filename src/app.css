@@ -1,9 +1,12 @@
 /* Main CSS file */
 @import url("./assets/styles/colors.css");
 @import './../node_modules/normalize.css/normalize.css';
-@import "tailwindcss";
 @import "./../node_modules/@blueprintjs/core/lib/css/blueprint.css";
+@import "tailwindcss";
 
+@theme {
+  --color-custom-red: #eb13476e;
+}
 
 body {
 	font-family: Verdana, Geneva, Tahoma, sans-serif;

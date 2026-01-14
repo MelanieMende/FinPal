@@ -3,7 +3,6 @@ import { useAppSelector, useAppDispatch } from './../../../../hooks'
 
 import * as appStateReducer from '../../../../store/appState/appState.reducer';
 import * as assetCreationReducer from '../../../../store/assetCreation/assetCreation.reducer';
-import * as TopNavBar from '../../../components/TopNavBar/TopNavBar';
 
 export default function AnalysisRoute() {
 

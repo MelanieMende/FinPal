@@ -18,7 +18,7 @@ export default function TransactionsRoute() {
 
   const sorted_Assets = assetsSelector.selectAssetsSortedByName(assets, 'asc')
 
-  const bgColorType = typeInput == "Buy" ? "bg-emerald-600" : "bg-pink-700"
+  const bgColorType = typeInput == "Buy" ? "bg-teal-600" : "bg-custom-red"
 
 	return (
     <tr>

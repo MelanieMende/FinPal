@@ -50,8 +50,8 @@ export default function TransactionListItem(props: {i: number, transaction:Trans
 	const sorted_Assets = assetsSelector.selectAssetsSortedByName(assets, 'asc')
 	const shares_cumulated_formatted = (Math.round(props.transaction.shares_cumulated * 100) / 100).toFixed(2)
 
-	const bgColorType = props.transaction.type == "Buy" ? "bg-emerald-600" : "bg-pink-700"
-	const bgColorInOut = props.transaction.in_out > 0 ? "bg-emerald-600" : "bg-pink-700"
+	const bgColorType = props.transaction.type == "Buy" ? "bg-teal-600" : "bg-custom-red"
+	const bgColorInOut = props.transaction.in_out > 0 ? "bg-teal-600" : "bg-custom-red"
 
   return (
     <tr id="TransactionListItem">

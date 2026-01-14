@@ -208,7 +208,7 @@ ipcMain.on('async-db-message', (event, arg) => {
 import YahooFinance from 'yahoo-finance2';
 
 ipcMain.on('finance-api-message', (event, args) => {
-  const yf = new YahooFinance();
+  const yf = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
   yf.quoteSummary(args.symbol).then((result) => {
     event.reply('finance-api-reply', result);
   }).catch((reason) => console.log('ERROR: finance-api-message: ', reason));

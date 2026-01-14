@@ -68,13 +68,7 @@ export const loadPricesAndDividends = createAsyncThunk(
 			thunkAPI.dispatch(setDividendYield({ asset, dividendYield: resultYahooFinance.summaryDetail.dividendYield })) // dividend per share
 
 			try {
-				const response = await fetch('https://api.divvydiary.com/symbols/' + asset.isin)
-				
-				if(!response.ok) {
-					throw new Error(`Response status: ${response.status}`);
-				}
-
-				const json = await response.json();
+				const json = await callDivvyDiaryAPI(asset.isin)
 				console.log(asset.name, '- divvydiary: ', json)
 
 				if(json.dividends[0]) {
@@ -111,7 +105,12 @@ export const loadPricesAndDividends = createAsyncThunk(
 )
 
 async function callYahooFinanceAPI(symbol:string) {
-	var result = await window.API.sendToFinanceAPI({symbol:symbol})
+	var result = await window.API.sendToYahooFinanceAPI({symbol:symbol})
+	return result
+}
+
+async function callDivvyDiaryAPI(isin:string) {
+	var result = await window.API.sendToDivvyDiaryAPI({isin:isin})
 	return result
 }
 

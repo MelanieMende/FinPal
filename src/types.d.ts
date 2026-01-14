@@ -11,7 +11,8 @@ declare global {
       saveSelectedTab?(selectedTab:string):any,
       saveTransactionsAssetFilter?(transactions_AssetFilter:any):any,
       sendToDB?(sql:string):any,
-      sendToFinanceAPI?(args:{symbol:string}):any,
+      sendToYahooFinanceAPI?(args:{symbol:string}):any,
+      sendToDivvyDiaryAPI?(args:{isin:string}):any,
       quit?():any
     }
   }

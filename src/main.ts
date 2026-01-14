@@ -207,9 +207,20 @@ ipcMain.on('async-db-message', (event, arg) => {
 
 import YahooFinance from 'yahoo-finance2';
 
-ipcMain.on('finance-api-message', (event, args) => {
+ipcMain.on('yahoo-finance-api-message', (event, args) => {
   const yf = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
   yf.quoteSummary(args.symbol).then((result) => {
-    event.reply('finance-api-reply', result);
-  }).catch((reason) => console.log('ERROR: finance-api-message: ', reason));
+    event.reply('yahoo-finance-api-reply', result);
+  }).catch((reason) => console.log('ERROR: yahoo-finance-api-message: ', reason));
+});
+
+ipcMain.on('divvy-diary-api-message', async (event, args) => {
+  console.log('Received request for Divvy Diary API with ISIN:', args.isin);
+  const response = await fetch('https://api.divvydiary.com/symbols/' + args.isin)
+  if(!response.ok) {
+    throw new Error(`Response status: ${response.status}`);
+  }
+  const data = await response.json();
+  //console.log(data);
+  event.reply('divvy-diary-api-reply', data);
 });

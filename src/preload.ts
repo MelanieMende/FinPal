@@ -59,10 +59,18 @@ contextBridge.exposeInMainWorld('API', {
       });
     });
   },
-  sendToFinanceAPI(args: { symbol:string}) {
+  sendToYahooFinanceAPI(args: { symbol:string}) {
     return new Promise((resolve) => {
-      ipcRenderer.send('finance-api-message', args);
-      ipcRenderer.once('finance-api-reply', (_, arg) => {
+      ipcRenderer.send('yahoo-finance-api-message', args);
+      ipcRenderer.once('yahoo-finance-api-reply', (_, arg) => {
+          resolve(arg);
+      });
+    });
+  },
+  sendToDivvyDiaryAPI(args: { isin:string}) {
+    return new Promise((resolve) => {
+      ipcRenderer.send('divvy-diary-api-message', args);
+      ipcRenderer.once('divvy-diary-api-reply', (_, arg) => {
           resolve(arg);
       });
     });

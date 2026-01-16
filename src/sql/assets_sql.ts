@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS assets (
   "isin" TEXT NOT NULL,
   "kgv",
   "exDividendDate" TEXT,
+  "is_watched" INTEGER DEFAULT 1,
   CONSTRAINT assets_pk PRIMARY KEY("ID" AUTOINCREMENT)
 );
 

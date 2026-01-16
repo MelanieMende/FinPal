@@ -256,6 +256,18 @@ const assetsSlice = createSlice({
 			})
 			return mapped
 		}
+		,
+		setIsWatched(state, action) {
+			let mapped = state.map((item:Asset, index:number) => { 
+				if(item.ID === action.payload.asset.ID) {
+					return Object.assign({}, item, { is_watched: action.payload.is_watched })
+				}
+				else {
+					return item
+				}
+			})
+			return mapped
+		}
 	}
 })
 
@@ -273,7 +285,8 @@ export const {
 	setExDividendDate,
 	setNextEstimatedDividendPerShare,
 	setPayDividendDate,
-	setPrice
+	setPrice,
+	setIsWatched
 } = actions
 
 export default reducer

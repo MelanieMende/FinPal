@@ -1,9 +1,7 @@
 import TableCell from '../../../../../../components/Table/TableCell/TableCell';
 
 export default function AssetListSumRow(props: {columns: any[] }) {
-
-
-
+  
 	return (
     <tr id="AssetListSumRow">
       {

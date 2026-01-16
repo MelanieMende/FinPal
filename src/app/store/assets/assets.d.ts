@@ -4,8 +4,9 @@ interface Asset {
   symbol: string,
   isin: string,
   kgv?: string,
+  is_watched?: boolean,
   current_shares?: float,
-  current_shares_before_ex_date?: float;
+  current_shares_before_ex_date?: float,
   current_invest?: float,
   current_sum_in_out?: float,
   price?: float,

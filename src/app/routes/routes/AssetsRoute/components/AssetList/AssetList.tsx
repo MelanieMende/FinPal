@@ -41,6 +41,14 @@ export default function AnalysisRoute() {
 		},
 		{
 			header: {
+				content: ''
+			},
+			sum_row: {
+				content: ''
+			}
+		},
+		{
+			header: {
 				content: 'Name'
 			},
 			sum_row: {

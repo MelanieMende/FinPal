@@ -1,10 +1,11 @@
 import { useAppSelector, useAppDispatch } from '../../../../../../hooks'
 import * as selectors from '../../../../../../selectors';
 import TableCell from '../../../../../../components/Table/TableCell/TableCell'
-import { Alignment, Button } from '@blueprintjs/core';
+import { Alignment, Button, Colors, Icon } from '@blueprintjs/core';
 import * as assetsSelector from '../../../../../../store/assets/assets.selectors';
 import * as appStateReducer from '../../../../../../store/appState/appState.reducer';
 import * as assetCreationReducer from '../../../../../../store/assetCreation/assetCreation.reducer';
+import * as assetReducer from '../../../../../../store/assets/assets.reducer';
 
 export default function AssetListItem(props: {i: number, asset:Asset}) {
 
@@ -34,7 +35,6 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 	const payDividendDateFormatted = isNaN(payDividendDate.getTime()) ? '' : payDividendDate.toLocaleDateString("de-DE", options)
 
 	const dividendYieldFormatted = assetsSelector.get_dividend_yield_formatted(props.asset)
-	//const nextEstimatedDividendPerShareFormatted = isNaN(props.asset.next_estimated_dividend_per_share) ? '0.000' : (Math.round((props.asset.next_estimated_dividend_per_share) * 1000) / 1000).toFixed(3)
 
 	const bgColor_PriceComparison = price_comparison == "<" ? "bg-teal-600" : (price_comparison == "=" ? "bg-slate-500" : "bg-custom-red")
 	const bgColor_ProfitLoss = assetsSelector.get_current_profit_loss_bgColor(props.asset)
@@ -46,6 +46,14 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
   return (
     <tr id={"AssetListItem_" + props.i}>
 			<TableCell additionalClassNames="text-right">{props.i}</TableCell>
+			<TableCell additionalClassNames="text-center">
+				<Button 
+					data-testid={"toggleIsWatched_" + props.asset.ID} 
+					minimal fill
+					onClick={(e) => toggleIsWatched(props.asset)}>
+						<Icon icon={props.asset.is_watched ? "eye-open" : "eye-off"} style={{ color: props.asset.is_watched ? button_text_color : Colors.GRAY1 }} />
+				</Button>
+			</TableCell>
       <TableCell>
 				<Button data-testid={"openOverlayButton_" + props.asset.ID} text={props.asset.name} minimal style={{ color: button_text_color }} fill alignText={Alignment.LEFT} onClick={(e) => openAssetOverlay()} />
 			</TableCell>
@@ -76,5 +84,9 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 		dispatch(assetCreationReducer.setISINInput(props.asset.isin))
 		dispatch(assetCreationReducer.setKGVInput(props.asset.kgv))
 		dispatch(appStateReducer.setShowAssetOverlay(true))
+	}
+
+	function toggleIsWatched(asset: Asset) {
+		dispatch(assetReducer.setIsWatched({asset, is_watched: !asset.is_watched}))
 	}
 }

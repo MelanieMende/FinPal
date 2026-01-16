@@ -104,6 +104,22 @@ export const loadPricesAndDividends = createAsyncThunk(
   }
 )
 
+export const setIsWatched = createAsyncThunk(
+  'assets/setIsWatched',
+  async (props: {asset: Asset, is_watched: boolean}, thunkAPI) => {
+		let state = thunkAPI.getState() as State
+		for(const asset of state.assets) {
+			if(asset.ID === props.asset.ID) {
+				let sql = 'UPDATE assets SET is_watched = ' + props.is_watched + ' WHERE ID = ' + props.asset.ID
+				console.log(sql)
+				let result = await window.API.sendToDB(sql)
+				console.log('result: ', result)
+				thunkAPI.dispatch(setAsset({ asset: props.asset, is_watched: props.is_watched }))
+			}
+		}
+  }
+)
+
 async function callYahooFinanceAPI(symbol:string) {
 	var result = await window.API.sendToYahooFinanceAPI({symbol:symbol})
 	return result
@@ -256,18 +272,6 @@ const assetsSlice = createSlice({
 			})
 			return mapped
 		}
-		,
-		setIsWatched(state, action) {
-			let mapped = state.map((item:Asset, index:number) => { 
-				if(item.ID === action.payload.asset.ID) {
-					return Object.assign({}, item, { is_watched: action.payload.is_watched })
-				}
-				else {
-					return item
-				}
-			})
-			return mapped
-		}
 	}
 })
 
@@ -285,8 +289,7 @@ export const {
 	setExDividendDate,
 	setNextEstimatedDividendPerShare,
 	setPayDividendDate,
-	setPrice,
-	setIsWatched
+	setPrice
 } = actions
 
 export default reducer

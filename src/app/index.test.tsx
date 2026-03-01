@@ -8,7 +8,7 @@ jest.mock('./routes/RootRoute', () => () => <div>Mocked RootRoute</div>);
 describe('App Component', () => {
   it('renders without crashing', () => {
     const mockStore = configureStore({
-      reducer: {}
+      reducer: (state = {}) => state
     });
     const { getByText } = render(
       <Provider store={mockStore}>
@@ -21,7 +21,7 @@ describe('App Component', () => {
 
   it('renders the Provider with the store', () => {
     const mockStore = configureStore({
-      reducer: {}
+      reducer: (state = {}) => state
     });
     const { container } = render(
       <Provider store={mockStore}>
@@ -48,7 +48,7 @@ describe('App Component', () => {
 
 it('attaches a DOMContentLoaded event listener and renders the App', () => {
 	const mockStore = configureStore({
-		reducer: {}
+		reducer: (state = {}) => state
 	});
 
 	// Mock the DOM structure

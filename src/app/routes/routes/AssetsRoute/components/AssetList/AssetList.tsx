@@ -6,7 +6,7 @@ import Table from '../../../../../components/Table/Table';
 import * as assetsSelector from '../../../../../store/assets/assets.selectors';
 import RefreshButton from './../../components/RefreshButton';
 import NewAssetButton from './components/NewAssetButton';
-import TableHeaderRow from '../../../../../components/Table/TableHeaderRow/TableHeaderRow';
+import TableHeaderRow, { TableColumn } from '../../../../../components/Table/TableHeaderRow/TableHeaderRow';
 
 export default function AnalysisRoute() {
 
@@ -29,7 +29,7 @@ export default function AnalysisRoute() {
 
 	const sorted_Assets = assetsSelector.selectAssetsSortedByProfitLoss(assets, 'desc')
 
-	const columns = [
+	const columns: TableColumn[] = [
 		{
 			header: {
 				content: <RefreshButton />

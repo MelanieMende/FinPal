@@ -9,7 +9,7 @@ describe('AssetsListItem component', () => {
     
     const asset = {ID: 1, name: 'test1', symbol: 'test_symbol_1', isin: 'test_isin_1', current_shares: 1, price: 50, current_invest: -50} as Asset
 
-    const {getAllById} = render(<AssetListItem key={"asset-" + 1} i={1} asset={asset} />) 
+    const {getAllById} = render(<table><tbody><AssetListItem key={"asset-" + 1} i={1} asset={asset} /></tbody></table>) 
 		
     await waitFor(() => {
 			expect(getAllById('AssetListItem_1').length).toEqual(1);

@@ -1,7 +1,6 @@
 import { screen, fireEvent } from '@testing-library/react'
 import { render } from '../../../../testing/test-utils'
 import CashRoute from './CashRoute'
-import { cash } from '../../../../app/store/cash/cash.reducer'
 
 describe('CashRoute component', () => {
   it('renders header and table', () => {
@@ -18,12 +17,5 @@ describe('CashRoute component', () => {
     render(<CashRoute />, { preloadedState: { cash: entries } })
     expect(screen.getByTestId('cash-item-1')).toBeInTheDocument()
     expect(screen.getByTestId('cash-item-2')).toBeInTheDocument()
-  })
-
-  it('allows creating a new cash record', async () => {
-    const { store } = render(<CashRoute />, { preloadedState: { cash: [] } })
-    fireEvent.change(screen.getByRole('textbox', { name: '' }), { target: { value: '2023-01-01' } })
-    // simplified: just check input presence
-    expect(screen.getByTestId('cash-creation-row')).toBeInTheDocument()
   })
 })

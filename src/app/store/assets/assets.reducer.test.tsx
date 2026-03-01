@@ -36,7 +36,8 @@ describe('AssetCreation reducer', () => {
       window.API = {
         sendToDB: jest.fn() as jest.MockedFunction<(sql: string) => any>,
       };
-      (window.API.sendToDB as jest.Mock).mockResolvedValue(mockAsset);
+      // return an array to match thunk code
+      (window.API.sendToDB as jest.Mock).mockResolvedValue([mockAsset]);
       
       await assetsReducer.loadAsset({assetID: 1})(dispatch, getState, undefined);
       expect(dispatch).toHaveBeenCalledWith(assetsReducer.setAsset(mockAsset));
@@ -44,20 +45,7 @@ describe('AssetCreation reducer', () => {
       // Reset the mock to avoid conflicts in subsequent tests
       (window.API.sendToDB as jest.Mock).mockResolvedValue([]);
     });
-/*
-    it('should dispatch loadPricesAndDividends thunk', async () => {
-      const store = setupStore();
-      await act( async () => {
-        await store.dispatch(assetsReducer.loadPricesAndDividends());
-      });
-      const state = store.getState().assets;
-      // Assuming that prices are updated in the assets state
-      for(const asset of state) {
-        if(asset.is_watched) {
-          expect(asset.currentPrice).toBeDefined();
-        }
-      }
-    });*/
+
   });
 
   describe('Assets Actions', () => {
@@ -72,20 +60,7 @@ describe('AssetCreation reducer', () => {
       const newState = reducer(initialState, assetsReducer.setAssets(assets));
       expect(newState).toEqual(assets);
     });
-/*
-    it('should handle clearAssets action', () => {
-      const initialState = {
-        ...assetsReducer.initialState,
-        assets: [{
-          ID: 1,
-          name: '3M',
-          symbol: 'MMM'
-        }]
-      };
-      const newState = reducer(initialState, assetsReducer.clearAssets());
-      expect(newState).toEqual([]);
-    });
-*/
+
   });
 
 });

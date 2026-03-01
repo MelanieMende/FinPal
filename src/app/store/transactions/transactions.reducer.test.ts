@@ -1,3 +1,4 @@
+import { get } from 'node:http';
 import transactionsReducer, {
   initialState,
   setTransactionsInternal,
@@ -54,6 +55,7 @@ describe('Transactions Async Actions', () => {
     (window.API.sendToDB as jest.Mock).mockResolvedValue(mockTransactions);
 
     await loadTransactions()(dispatch, getState, undefined);
+    expect(dispatch).toHaveBeenCalledWith(setTransactionsInternal(mockTransactions));
 
     // Reset the mock to avoid conflicts in subsequent tests
     (window.API.sendToDB as jest.Mock).mockResolvedValue([]);

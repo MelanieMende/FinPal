@@ -6,6 +6,8 @@ import * as transactionsReducer from '../store/transactions/transactions.reducer
 import * as transactionCreationReducer from '../store/transactionCreation/transactionCreation.reducer';
 import * as dividendsReducer from '../store/dividends/dividends.reducer';
 import * as dividendCreationReducer from '../store/dividendCreation/dividendCreation.reducer';
+import * as cashReducer from '../store/cash/cash.reducer';
+import * as cashTransactionCreationReducer from '../store/cashTransactionCreation/cashTransactionCreation.reducer';
 
 import TopNavBar from './components/TopNavBar/TopNavBar';
 import TransactionsRoute from './routes/TransactionsRoute/TransactionsRoute';
@@ -19,7 +21,9 @@ import dividends_sql from '../../sql/dividends_sql'
 import assets_v_sql from '../../sql/assets_v_sql'
 import transactions_v_sql from '../../sql/transactions_v_sql'
 import appState_sql from '../../sql/appState_sql';
+import cash_sql from '../../sql/cash_sql';
 import { useEffect } from 'react';
+import CashRoute from './routes/CashRoute/CashRoute';
 
 export default function RootRoute() {
 
@@ -45,8 +49,12 @@ export default function RootRoute() {
 							setupDividends().then(() => {
 								setupDividendsView().then(() => {
 									setupAssetsView().then(() => {
-										dispatch(assetsReducer.loadAssets()).then(() => {
-											dispatch(transactionsReducer.loadTransactions())
+										setupCash().then(() => {
+											dispatch(assetsReducer.loadAssets()).then(() => {
+												dispatch(transactionsReducer.loadTransactions()).then(() => {
+													dispatch(cashReducer.loadCash())
+												})
+											})
 										})
 									})
 								})
@@ -132,6 +140,18 @@ export default function RootRoute() {
 		let result = await window.API.sendToDB(assets_v_sql)
 		console.log('result - assets_v: ', result)
 	}
+
+	async function setupCash() {
+		await sendToDB(cash_sql)
+		let sql  = 'SELECT MAX(ID) as ID FROM cash'
+		var result = await sendToDB(sql)
+		var newID = 0
+		if(result && result[0]) {
+			newID = result[0].ID + 1
+		}
+		console.log('New ID (cash): ' + newID)
+		dispatch(cashTransactionCreationReducer.setNewID(newID))
+	}
 }
 
 export async function sendToDB(sql:string) {
@@ -177,13 +197,22 @@ export function Content() {
 	const selectedTab = useAppSelector(state => state.appState.selectedTab)
 	const theme = useAppSelector(state => state.appState.theme)
 
-	let mainContent = <DatabaseRoute/>
+	let mainContent = <div className="flex flex-col items-center justify-center h-full">
+		<h1 className="text-2xl font-bold mb-4">Welcome to FinPal</h1>
+		<p className="text-gray-300">Please select a tab to get started.</p>
+	</div>
+
 	if(selectedTab == 'transactionsTab')
 		mainContent = <TransactionsRoute/>
 	else if(selectedTab == 'dividendsTab')
 		mainContent = <DividendsRoute/>
 	else if(selectedTab == 'assetsTab')
 		mainContent = <AssetsRoute/>
+	else if(selectedTab == 'databaseTab')
+		mainContent = <DatabaseRoute/>
+	else if(selectedTab == 'cashTab')
+		mainContent = <CashRoute/>
+	
 
 	return(
 		<div id="rootContent" className={"absolute flex flex-col items-center w-full top-[66px] bottom-0 p-[15px] overflow-auto "  + theme}>

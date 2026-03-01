@@ -27,11 +27,9 @@ export const loadAsset = createAsyncThunk(
 		console.log('result: ', assets)
 		for(const asset of assets) {
 			asset.currencySymbol = '€'
-
 			console.log('loaded asset: ', asset)
 			thunkAPI.dispatch(setAsset(asset))
 		}
-		
 		thunkAPI.dispatch(loadPricesAndDividends())
   }
 )
@@ -48,7 +46,7 @@ export const loadPricesAndDividends = createAsyncThunk(
 		const USD_conversion_rate = USD.rates.EUR
 		const DKK_conversion_rate = DKK.rates.EUR
 
-		for(const asset of state.assets) {
+		for(const asset of state.assets.filter(a => a.is_watched)) {
 			
 			console.log(asset.name, '-', asset.symbol)
 

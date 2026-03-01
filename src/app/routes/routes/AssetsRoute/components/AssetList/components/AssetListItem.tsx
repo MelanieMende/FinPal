@@ -12,7 +12,7 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
   const dispatch = useAppDispatch();
 
 	const shares_formatted = (Math.round(props.asset.current_shares * 1000) / 1000).toFixed(3)
-	const current_price = (Math.round(props.asset.price * 100) / 100).toFixed(2)
+	const current_price = (Math.round((props.asset.price || 0) * 100) / 100).toFixed(2)
 	const avg_price_paid_formatted = (Math.round(props.asset.avg_price_paid * 100) / 100).toFixed(2)
 	const price_comparison = props.asset.price < props.asset.avg_price_paid ? "<" : props.asset.price > props.asset.avg_price_paid ? ">" : "="
 	const current_invest = (Math.round(props.asset.current_invest * 100) / 100).toFixed(2)
@@ -55,10 +55,21 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 				</Button>
 			</TableCell>
       <TableCell>
-				<Button data-testid={"openOverlayButton_" + props.asset.ID} text={props.asset.name} minimal style={{ color: button_text_color }} fill alignText={Alignment.LEFT} onClick={(e) => openAssetOverlay()} />
+				<Button 
+					data-testid={"openOverlayButton_" + props.asset.ID} 
+					text={props.asset.name} 
+					minimal 
+					style={{ color: button_text_color }} 
+					fill 
+					alignText={Alignment.LEFT} 
+					onClick={(e) => openAssetOverlay()} />
 			</TableCell>
-			<TableCell additionalClassNames={"text-right " + assetsSelector.get_current_shares_textColor(props.asset)}>{shares_formatted}</TableCell>
-			<TableCell additionalClassNames="text-right w-24">{current_price} {props.asset.currencySymbol}</TableCell>
+			<TableCell additionalClassNames={"text-right " + assetsSelector.get_current_shares_textColor(props.asset)}>
+				{shares_formatted}
+			</TableCell>
+			<TableCell additionalClassNames={"text-right w-24 " + (props.asset.is_watched ? "inherit" : "text-slate-500")}>
+				{current_price} {props.asset.currencySymbol}
+			</TableCell>
 			<TableCell additionalClassNames="text-right" bgColor={bgColor_PriceComparison}>{price_comparison}</TableCell>
 			<TableCell additionalClassNames="text-right">{avg_price_paid_formatted} {props.asset.currencySymbol}</TableCell>
 			<TableCell additionalClassNames={"text-right " + assetsSelector.get_current_invest_textColor(props.asset)}>{current_invest} {props.asset.currencySymbol}</TableCell>

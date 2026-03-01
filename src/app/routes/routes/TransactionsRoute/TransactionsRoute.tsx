@@ -81,7 +81,7 @@ export default function TransactionsRoute() {
 						<tbody>
 							<TransactionCreation/>
 							{transactions.filter((transaction) => {
-								if(filterForAssets.length > 0) {
+								if(filterForAssets && filterForAssets.length > 0) {
 									if(filterForAssets.includes(transaction.asset_ID)) {
 										return transaction
 									}

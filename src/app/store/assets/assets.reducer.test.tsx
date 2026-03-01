@@ -8,6 +8,58 @@ describe('AssetCreation reducer', () => {
     expect(reducer(undefined, { type: 'unknown' })).toEqual(assetsReducer.initialState)
   })
 
+  describe('Assets Thunks', () => {
+
+    it('should dispatch loadAssets thunk', async () => {
+      const dispatch = jest.fn();
+      const getState = jest.fn();
+      const mockAssets = [
+        { ID: 1, name: '3M', symbol: 'MMM' },
+        { ID: 2, name: 'Apple', symbol: 'AAPL' },
+      ] as Asset[];
+      window.API = {
+        sendToDB: jest.fn() as jest.MockedFunction<(sql: string) => any>,
+      };
+      (window.API.sendToDB as jest.Mock).mockResolvedValue(mockAssets);
+      
+      await assetsReducer.loadAssets()(dispatch, getState, undefined);
+      expect(dispatch).toHaveBeenCalledWith(assetsReducer.setAssets(mockAssets));
+      
+      // Reset the mock to avoid conflicts in subsequent tests
+      (window.API.sendToDB as jest.Mock).mockResolvedValue([]);
+    });
+
+    it('should dispatch loadAsset thunk', async () => {
+      const dispatch = jest.fn();
+      const getState = jest.fn();
+      const mockAsset = { ID: 1, name: '3M', symbol: 'MMM' } as Asset;
+      window.API = {
+        sendToDB: jest.fn() as jest.MockedFunction<(sql: string) => any>,
+      };
+      (window.API.sendToDB as jest.Mock).mockResolvedValue(mockAsset);
+      
+      await assetsReducer.loadAsset({assetID: 1})(dispatch, getState, undefined);
+      expect(dispatch).toHaveBeenCalledWith(assetsReducer.setAsset(mockAsset));
+      
+      // Reset the mock to avoid conflicts in subsequent tests
+      (window.API.sendToDB as jest.Mock).mockResolvedValue([]);
+    });
+/*
+    it('should dispatch loadPricesAndDividends thunk', async () => {
+      const store = setupStore();
+      await act( async () => {
+        await store.dispatch(assetsReducer.loadPricesAndDividends());
+      });
+      const state = store.getState().assets;
+      // Assuming that prices are updated in the assets state
+      for(const asset of state) {
+        if(asset.is_watched) {
+          expect(asset.currentPrice).toBeDefined();
+        }
+      }
+    });*/
+  });
+
   describe('Assets Actions', () => {
 
     it('should handle setAssets action', () => {
@@ -32,22 +84,6 @@ describe('AssetCreation reducer', () => {
       };
       const newState = reducer(initialState, assetsReducer.clearAssets());
       expect(newState).toEqual([]);
-    });
-*/
-  });
-
-  describe('Assets Thunks', () => {
-/*
-    it('should handle fetchAssets thunk', async () => {
-      const store = setupStore();
-      const mockAssets = [{
-        ID: 1,
-        name: '3M',
-        symbol: 'MMM'
-      }] as Asset[];
-      jest.spyOn(assetsReducer, 'fetchAssets').mockResolvedValueOnce(mockAssets);
-      await store.dispatch(assetsReducer.fetchAssets() as any);
-      expect(store.getState().assets.assets).toEqual(mockAssets);
     });
 */
   });

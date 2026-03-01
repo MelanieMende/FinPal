@@ -7,5 +7,7 @@ interface State {
   assetCreation?: AssetCreation,
   dividends?: Dividends,
   dividendCreation?: DividendCreation,
-  dividendsFilter?: DividendsFilter
+  dividendsFilter?: DividendsFilter,
+  cash?: Cash[]
+  cashTransactionCreation?: CashTransactionCreation
 }

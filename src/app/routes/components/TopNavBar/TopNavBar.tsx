@@ -63,6 +63,12 @@ export default function TopNavBar () {
 						<Tab id="dividendsTab" data-testid="dividendsTab">
 							<Icon icon="calendar" className="mr-2" /> Dividends
 						</Tab>
+
+						<NavbarDivider className="ml-0 mb-[15px]" />
+
+						<Tab id="cashTab" data-testid="cashTab">
+							<Icon icon="dollar" className="mr-2" /> Cash
+						</Tab>
 						
 				</Tabs>
       </NavbarGroup>

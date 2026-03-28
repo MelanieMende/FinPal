@@ -9,13 +9,17 @@ describe('CashRoute component', () => {
     expect(screen.getByTestId('CashRoute')).toBeInTheDocument()
   })
 
-  it('shows existing cash entries', () => {
+  it('shows existing cash entries and totals', () => {
     const entries = [
-      { ID:1, date:'2022-01-01', type:'Deposit', amount:100, comment:'foo' },
-      { ID:2, date:'2022-01-02', type:'Withdrawal', amount:50, comment:'bar' }
+      { ID:1, date:'2022-01-01', type:'Deposit', amount:100, fee:5, comment:'foo' },
+      { ID:2, date:'2022-01-02', type:'Withdrawal', amount:50, fee:2, comment:'bar' }
     ]
     render(<CashRoute />, { preloadedState: { cash: entries } })
     expect(screen.getByTestId('cash-item-1')).toBeInTheDocument()
     expect(screen.getByTestId('cash-item-2')).toBeInTheDocument()
+    const totals = screen.getByTestId('cash-totals-row')
+    expect(totals).toBeInTheDocument()
+    expect(totals).toHaveTextContent('150') // sum amount
+    expect(totals).toHaveTextContent('7')   // sum fee
   })
 })

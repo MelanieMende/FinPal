@@ -1,9 +1,17 @@
 :root {
-  --color-h2-dark: #8099ac;
-  --bg-color-dark: #394B59;
-  --bg-color-darker: #2c3944;
-  --bg-color-button-hover: #30404f;
-  --bg-color-button-pressed: #30425300;
-  --bg-color-button-success: #2ddc99;
-  --bg-color-button-success-hover: #31c98f;
+  --color-h2-dark: #b1c6d8;
+  --bg-color-dark: #121417; /* Deeper dark background */
+  --bg-color-darker: #1b1f24;
+  --bg-color-button-hover: #2d333b;
+  --bg-color-button-pressed: #22272e;
+  --bg-color-button-success: #10b981; /* Tailwind emerald-500 equivalent */
+  --bg-color-button-success-hover: #059669;
+
+  /* Modern Glassmorphism & Accent Colors */
+  --glass-bg: rgba(255, 255, 255, 0.05);
+  --glass-border: rgba(255, 255, 255, 0.1);
+  --accent-primary: #3b82f6; /* Blue 500 */
+  --accent-secondary: #8b5cf6; /* Violet 500 */
+  --accent-success: #10b981;
+  --accent-danger: #ef4444;
 }

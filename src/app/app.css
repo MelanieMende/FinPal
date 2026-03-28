@@ -8,7 +8,15 @@
 }
 
 body {
-	font-family: Verdana, Geneva, Tahoma, sans-serif;
+	font-family: 'Inter', system-ui, -apple-system, sans-serif;
+	background-color: var(--bg-color-dark);
+	color: #e5e7eb; /* tailwind gray-200 */
+	-webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, .bp5-heading {
+	font-family: 'Outfit', sans-serif;
+	letter-spacing: -0.02em;
 }
 
 button:focus, .bp5-tab:focus {
@@ -16,16 +24,41 @@ button:focus, .bp5-tab:focus {
 }
 
 input {
-	font-family: Verdana;
-	padding: 5px;
+	font-family: 'Inter', sans-serif;
+	padding: 8px 12px;
 	margin: 1px;
-	background-color: #485969;
+	background-color: var(--bg-color-darker);
+	border: 1px solid var(--glass-border);
+	border-radius: 6px;
+	color: white;
+	transition: border-color 0.2s;
+}
+
+input:focus {
+	border-color: var(--accent-primary);
+	outline: none;
 }
 
 .row {
 	display: flex;
 	flex-direction: row;
 	padding: 10px 0;
+}
+
+/* Glassmorphism Styles */
+.glass-card {
+	background: var(--glass-bg);
+	backdrop-filter: blur(12px);
+	border: 1px solid var(--glass-border);
+	border-radius: 12px;
+	box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+	padding: 20px;
+	transition: transform 0.2s, box-shadow 0.2s;
+}
+
+.glass-card:hover {
+	transform: translateY(-2px);
+	box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.45);
 }
 
 .bp5-dark {
@@ -38,16 +71,21 @@ input {
 }
 
 .bp5-dark .bp5-card {
-	box-shadow: 0 5px 5px 0 rgba(0, 0, 0, 0.13);
-	background-color: var(--bg-color-darker);
+	background: var(--glass-bg);
+	backdrop-filter: blur(8px);
+	border: 1px solid var(--glass-border);
+	box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+	border-radius: 12px;
 }
 
 table.bp5-dark {
-	background-color: var(--bg-color-darker);
+	background-color: transparent !important;
 }
 
 .bp5-navbar.bp5-dark, .bp5-dark .bp5-navbar {
-	background-color: var(--bg-color-darker);
+	background-color: rgba(18, 20, 23, 0.8) !important;
+	backdrop-filter: blur(10px);
+	border-bottom: 1px solid var(--glass-border);
 }
 
 .bp5-input-group:not(:last-child) {
@@ -55,39 +93,51 @@ table.bp5-dark {
 }
 
 .bp5-dark .bp5-button:not([class*=bp5-intent-]) {
-	background-color: var(--bg-color-darker);
+	background-color: var(--bg-color-button-hover);
+	border: 1px solid var(--glass-border);
+	border-radius: 8px;
 }
 
 .bp5-dark .bp5-button:not([class*=bp5-intent-]):hover {
-	background-color: var(--bg-color-button-hover);
-}
-
-.bp5-dark .bp5-button:not([class*=bp5-intent-]):focus {
-	background-color: var(--bg-color-button-pressed);
+	background-color: var(--accent-primary);
+	color: white;
 }
 
 .bp5-button {
-	font-size: 1.2em;
+	font-size: 1em;
+	font-weight: 500;
+	transition: all 0.2s;
 }
 
 .bp5-button.bp5-intent-success {
-	color: var(--bg-color-darker);
-	background-color: var(--bg-color-button-success);
-	font-family: Storyteller;
-	font-size: 1.5em;
-	font-weight:bolder;
+	color: white;
+	background-color: var(--bg-color-button-success) !important;
+	font-family: 'Outfit', sans-serif;
+	font-size: 1.1em;
+	font-weight: 600;
+	border-radius: 8px;
 }
 
 .bp5-button.bp5-intent-success:hover {
-	color: var(--bg-color-darker);
-	background-color: var(--bg-color-button-success-hover);
+	background-color: var(--bg-color-button-success-hover) !important;
 }
 
 .bp5-dark .bp5-button:not([class*=bp5-intent-]).bp5-active {
-	background-color: #485969;
+	background-color: var(--accent-primary);
+	color: white;
 	cursor: default;
 }
 
 .bp5-button.bp5-minimal:active, .bp5-button.bp5-minimal.bp5-active {
-  	background:rgba(100, 162, 208, 0.34);
+  	background: rgba(59, 130, 246, 0.2) !important;
+}
+
+/* Animations */
+@keyframes fadeIn {
+	from { opacity: 0; transform: translateY(10px); }
+	to { opacity: 1; transform: translateY(0); }
+}
+
+#rootContent > div {
+	animation: fadeIn 0.4s ease-out;
 }

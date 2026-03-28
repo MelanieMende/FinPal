@@ -8,6 +8,10 @@ import TableHeaderRow from '../../../components/Table/TableHeaderRow/TableHeader
 export default function CashRoute() {
   const cash = useAppSelector(state => state.cash);
 
+  // compute totals for amount and fee
+  const totalAmount = cash.reduce((sum, entry) => sum + (entry.amount || 0), 0);
+  const totalFee = cash.reduce((sum, entry) => sum + (entry.fee || 0), 0);
+
   const columns = [
     { header: { content: '#' } },
     { header: { content: 'Date' } },
@@ -27,6 +31,16 @@ export default function CashRoute() {
             <TableHeaderRow columns={columns} />
             <tbody>
               <CashCreation />
+                            {/* totals row */}
+              <tr data-testid="cash-totals-row" className="font-bold">
+                <td></td>
+                <td></td>
+                <td>Totals</td>
+                <td>{totalAmount}</td>
+                <td>{totalFee}</td>
+                <td></td>
+                <td></td>
+              </tr>
               {cash.map((entry, i) => (
                 <CashListItem key={`cash-${entry.ID}`} i={i + 1} cash={entry} />
               ))}

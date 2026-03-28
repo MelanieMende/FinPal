@@ -14,6 +14,7 @@ import TransactionsRoute from './routes/TransactionsRoute/TransactionsRoute';
 import DividendsRoute from './routes/DividendsRoute/DividendsRoute';
 import AssetsRoute from './routes/AssetsRoute/AssetsRoute';
 import DatabaseRoute from './routes/DatabaseRoute/DatabaseRoute';
+import DashboardRoute from './routes/DashboardRoute/DashboardRoute';
 
 import assets_sql from '../../sql/assets_sql'
 import transactions_sql from '../../sql/transactions_sql'
@@ -40,33 +41,28 @@ export default function RootRoute() {
 			setTransactionsAssetFilter(result.transactions_AssetFilter, dispatch);
 
 			if (result.database && result.database !== "" && window.API.dbFileExists()) {
-				
 				setDatabase(result.database, dispatch);
 
-				sendToDB(appState_sql).then(() => {
-					setupAssets().then(() => {
-						setupTransactions().then(() => {
-							setupDividends().then(() => {
-								setupDividendsView().then(() => {
-									setupAssetsView().then(() => {
-										setupCash().then(() => {
-											dispatch(assetsReducer.loadAssets()).then(() => {
-												dispatch(transactionsReducer.loadTransactions()).then(() => {
-													dispatch(cashReducer.loadCash())
-												})
-											})
-										})
-									})
-								})
-							})
-						})
-					})
-				})
+				const initDatabase = async () => {
+					await sendToDB(appState_sql);
+					await setupAssets();
+					await setupTransactions();
+					await setupDividends();
+					await setupDividendsView();
+					await setupAssetsView();
+					await setupCash();
+					
+					await dispatch(assetsReducer.loadAssets());
+					await dispatch(transactionsReducer.loadTransactions());
+					await dispatch(cashReducer.loadCash());
+				};
 
-				if (result.selectedTab !== "databaseTab") {
+				initDatabase();
+
+				if (result.selectedTab && result.selectedTab !== "databaseTab") {
 					setSelectedTab(result.selectedTab, dispatch);
 				} else {
-					setSelectedTab("assetsTab", dispatch);
+					setSelectedTab("dashboardTab", dispatch);
 				}
 			} else {
 				console.log("database: not set");
@@ -202,7 +198,9 @@ export function Content() {
 		<p className="text-gray-300">Please select a tab to get started.</p>
 	</div>
 
-	if(selectedTab == 'transactionsTab')
+	if(selectedTab == 'dashboardTab')
+		mainContent = <DashboardRoute/>
+	else if(selectedTab == 'transactionsTab')
 		mainContent = <TransactionsRoute/>
 	else if(selectedTab == 'dividendsTab')
 		mainContent = <DividendsRoute/>

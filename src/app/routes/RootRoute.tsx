@@ -99,7 +99,7 @@ export default function RootRoute() {
 		let sql  = 'SELECT MAX(ID) as ID FROM transactions'
 		var result = await sendToDB(sql)
 		var newID = 0
-		if(result) {
+		if(result && result[0]) {
 			newID = result[0].ID + 1
 		}
 		console.log('New ID (transactions): ' + newID)
@@ -112,7 +112,7 @@ export default function RootRoute() {
 		let sql  = 'SELECT MAX(ID) as ID FROM dividends'
 		var result = await sendToDB(sql)
 		var newID = 0
-		if(result) {
+		if(result && result[0]) {
 			newID = result[0].ID + 1
 		}
 		console.log('New ID (dividends): ' + newID)

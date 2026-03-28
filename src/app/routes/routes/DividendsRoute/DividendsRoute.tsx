@@ -8,7 +8,7 @@ import UpcomingDividends from './components/UpcomingDividends';
 import DividendBarChart from './components/DividendBarChart';
 
 export default function DividendsRoute() {
-	const dividends = useAppSelector(state => state.dividends);
+	const dividends = useAppSelector(state => state.dividends) || [];
 	const currentYear = new Date().getFullYear();
 
 	// Calculate Monthly Data for Bar Chart
@@ -19,17 +19,18 @@ export default function DividendsRoute() {
 				const date = new Date(d.date);
 				return date.getFullYear() === currentYear && date.getMonth() === index;
 			})
-			.reduce((acc, d) => acc + d.income, 0);
+			.reduce((acc, d) => acc + (d.income || 0), 0);
 		return { month: name, income: Math.round(income * 100) / 100 };
 	});
 
 	// KPI Calculations
 	const ytdIncome = dividends
 		.filter(d => new Date(d.date).getFullYear() === currentYear)
-		.reduce((acc, d) => acc + d.income, 0);
+		.reduce((acc, d) => acc + (d.income || 0), 0);
 	
-	const totalIncomeAllTime = dividends.reduce((acc, d) => acc + d.income, 0);
-	const avgMonthlyIncome = ytdIncome / (new Date().getMonth() + 1);
+	const totalIncomeAllTime = dividends.reduce((acc, d) => acc + (d.income || 0), 0);
+	const currentMonthIndex = new Date().getMonth() + 1;
+	const avgMonthlyIncome = ytdIncome / (currentMonthIndex || 1);
 
 	return (
 		<div id="DividendsRoute" className="w-full p-4 animate-in fade-in duration-500">

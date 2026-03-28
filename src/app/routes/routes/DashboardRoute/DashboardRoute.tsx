@@ -10,7 +10,13 @@ export default function DashboardRoute() {
 
 	// Basic calculations
 	const totalAssetsValue = assets.reduce((acc: number, asset) => acc + ((asset.current_shares || 0) * (asset.price || 0)), 0);
-	const totalCash = cash.reduce((acc: number, c) => acc + (c.amount || 0), 0);
+	
+	const totalCash = cash.reduce((acc: number, c) => {
+		const amount = c.amount || 0;
+		const fee = c.fee || 0;
+		return acc + (c.type === 'Deposit' ? amount : -amount) - fee;
+	}, 0);
+
 	const netWorth = totalAssetsValue + totalCash;
 
 	// Chart Data: Allocation

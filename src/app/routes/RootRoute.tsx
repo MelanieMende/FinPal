@@ -213,7 +213,7 @@ export function Content() {
 	
 
 	return(
-		<div id="rootContent" className={"absolute flex flex-col items-center w-full top-[66px] bottom-0 p-[15px] overflow-auto "  + theme}>
+		<div id="rootContent" className={"absolute flex flex-col w-full top-[66px] bottom-0 p-[15px] overflow-auto "  + theme}>
 			{mainContent}
 		</div>
 	)

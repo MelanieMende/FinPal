@@ -2,15 +2,16 @@ import React, { ReactNode } from "react";
 import { useAppSelector } from "../../hooks";
 
 type Props = {
-  children?: ReactNode
+  children?: ReactNode,
+  className?: string
 }
 
-export default function Table({ children, ...props }:Props) {
+export default function Table({ children, className, ...props }:Props) {
 
   const theme = useAppSelector(state => state.appState.theme)
 
   return(
-    <table className={theme}>{children}</table>
+    <table className={theme + " " + (className || "")}>{children}</table>
   )
 }
 

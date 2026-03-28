@@ -10,64 +10,50 @@ export default function DividendCalendar() {
 
 	return (
 		<div id="DividendCalendar">
-      <div>
-        <div className="flex flex-row">
-          {years.map((year, i) => {
-            return(
-              <DividendsInYear key={i} year={year} dividends={dividends} />
-            )
-          })}
-        </div>
-      </div>
-    </div>
+			<div className="flex flex-row gap-6 overflow-x-auto pb-4 scrollbar-hide">
+				{years.map((year, i) => (
+					<DividendsInYear key={i} year={year} dividends={dividends} />
+				))}
+			</div>
+		</div>
 	);
 }
 
 export function DividendsInYear(props:{year:number, dividends:Dividend[]}) {
   
-  const dividends_in_year = props.dividends.filter((dividend, i) => new Date(dividend.date).getFullYear() == props.year)
+  const dividends_in_year = props.dividends.filter((dividend) => new Date(dividend.date).getFullYear() == props.year)
+  const sum = dividends_in_year.reduce((acc, d) => acc + d.income, 0);
 
-  let sum = 0
-  dividends_in_year.forEach(dividend => sum += dividend.income)
-
-  const monthNames = [ "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December" ];
-  const months: [{sum: number, tooltip: string}] = [{sum: 0, tooltip: ''}]
-
-  for(let month = 0; month < 12; month++) {
-    months[month] = {sum: 0, tooltip: ''}
-  }
-  
-  for(let month = 0; month < 12; month++) {
-    const dividends_in_month = dividends_in_year.filter((dividend, i) => new Date(dividend.date).getMonth() == month)
-    dividends_in_month.forEach(dividend => {
-      months[month].sum += dividend.income
-      months[month].tooltip += dividend.asset_name + '\n'
-    })
-  }
+  const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+  const months = Array.from({ length: 12 }, (_, i) => {
+    const dividends_in_month = dividends_in_year.filter(d => new Date(d.date).getMonth() === i);
+    const monthSum = dividends_in_month.reduce((acc, d) => acc + d.income, 0);
+    const tooltip = dividends_in_month.map(d => `${d.asset_name}: ${d.income.toFixed(2)} €`).join('\n');
+    return { sum: monthSum, tooltip };
+  });
 
   return(
-    <Table>
-      <thead>
-        <tr>
-          <TableHeaderCell>{props.year}</TableHeaderCell>
-          <TableHeaderCell>{(Math.round(sum * 100) / 100).toFixed(2)} €</TableHeaderCell>
-        </tr>
-      </thead>
-      <tbody>
-        {months.map((month, i) => {
-          return(
-            <tr key={props.year + '-' + i}>
-              <TableCell tooltip={month.tooltip}>{monthNames[i]}</TableCell>
+    <div className="glass-card min-w-[220px]">
+      <div className="flex justify-between items-center mb-4 border-b border-white/10 pb-2">
+        <span className="text-xl font-bold text-white">{props.year}</span>
+        <span className="text-sm font-bold text-emerald-400">{sum.toFixed(2)} €</span>
+      </div>
+      <Table className="w-full">
+        <tbody>
+          {months.map((month, i) => (
+            <tr key={`${props.year}-${i}`} className="hover:bg-white/5 transition-colors group">
+              <TableCell className="py-2 text-xs text-gray-400 group-hover:text-gray-200" tooltip={month.tooltip}>
+                {monthNames[i]}
+              </TableCell>
               <TableCell 
-                id={props.year + "-" + i} 
-                additionalClassNames={"text-right " + (month.sum <= 0 ? "text-slate-500" : "inherit")}
+                className={`py-2 text-right text-xs font-mono ${month.sum > 0 ? 'text-emerald-400' : 'text-gray-600'}`}
                 tooltip={month.tooltip}>
-                  {(Math.round(month.sum * 100) / 100).toFixed(2)} €
+                {month.sum > 0 ? `${month.sum.toFixed(2)} €` : '—'}
               </TableCell>
             </tr>   
-          )
-        })}
-      </tbody>
-    </Table>
+          ))}
+        </tbody>
+      </Table>
+    </div>
   )
 }

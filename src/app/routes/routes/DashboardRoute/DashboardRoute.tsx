@@ -25,7 +25,7 @@ export default function DashboardRoute() {
 	].sort((a, b) => b.value - a.value);
 
 	return (
-		<div id="DashboardRoute" className="w-full max-w-7xl mx-auto p-4">
+		<div id="DashboardRoute" className="w-full p-4">
 			<div className="mb-8">
 				<H3 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-500">
 					Portfolio Overview

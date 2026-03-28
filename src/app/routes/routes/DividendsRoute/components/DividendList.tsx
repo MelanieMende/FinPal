@@ -36,20 +36,24 @@ export default function DividendList() {
   ]
 
 	return (
-		<div data-testid="DividendList">
-      <Table>
-        <TableHeaderRow columns={columns}/>
+		<div className="w-full">
+      <Table className="w-full">
+        <thead>
+					<tr className="bg-white/5">
+						{columns.map((col, idx) => (
+							<th key={idx} className="p-3 text-left text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">
+								{col.header.content}
+							</th>
+						))}
+					</tr>
+				</thead>
         <tbody>
           <DividendCreation/>
           {dividends.filter((dividend) => {
             if(filerForAssets.length > 0) {
-              if(filerForAssets.includes(dividend.asset_ID)) {
-                return dividend
-              }
+              return filerForAssets.includes(dividend.asset_ID);
             }
-            else {
-              return dividend
-            }
+            return true;
           }).map((dividend, i) => {
             return (<DividendListItem key={"dividend-" + dividend.ID} i={i+1} dividend={dividend} />)
           })}

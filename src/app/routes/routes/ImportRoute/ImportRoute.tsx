@@ -9,6 +9,8 @@ import * as dividendsReducer from './../../../store/dividends/dividends.reducer'
 export default function ImportRoute() {
     const dispatch = useAppDispatch();
     const assets = useAppSelector(state => state.assets);
+    const transactions = useAppSelector(state => state.transactions);
+    const dividends = useAppSelector(state => state.dividends);
     const { pendingRecords, isLoading, error } = useAppSelector(state => state.import);
     const [mappings, setMappings] = useState<{ [key: string]: number }>({});
     const [importing, setImporting] = useState(false);
@@ -191,10 +193,46 @@ export default function ImportRoute() {
                                 {pendingRecords.map((record, index) => {
                                     const mappedAsset = assets.find(a => a.ID === mappings[index]);
                                     const isAutoMatched = !!mappedAsset;
+                                    
+                                    // Duplicate Detection
+                                    const assetID = mappings[index];
+                                    let isDuplicate = false;
+                                    if (assetID) {
+                                        if (record.type === 'Dividend') {
+                                            isDuplicate = dividends.some(d => 
+                                                d.date === record.date && 
+                                                d.asset_ID === assetID && 
+                                                Math.abs(d.income - record.totalAmount) < 0.01
+                                            );
+                                        } else {
+                                            isDuplicate = transactions.some(t => 
+                                                t.date === record.date && 
+                                                t.asset_ID === assetID && 
+                                                t.type === record.type && 
+                                                Math.abs(Math.abs(t.in_out) - record.totalAmount) < 0.05
+                                            );
+                                        }
+                                    }
 
                                     return (
-                                        <tr key={index}>
-                                            <td className="text-gray-400 font-mono text-xs">{record.date}</td>
+                                        <tr key={index} className={isDuplicate ? "bg-orange-500/10 border-l-4 border-orange-500/50" : ""}>
+                                            <td className="p-3 text-gray-400 font-mono text-[10px]">
+                                                <div className="flex flex-col gap-1 items-start">
+                                                    {record.date}
+                                                    {isDuplicate && (
+                                                        <Tag 
+                                                            intent={Intent.WARNING} 
+                                                            minimal 
+                                                            round 
+                                                            large
+                                                            className="animate-pulse shadow-sm"
+                                                        >
+                                                            <Icon icon="duplicate" size={10} className="mr-1" />
+                                                            DUPLICATE
+                                                        </Tag>
+                                                    )}
+                                                </div>
+                                            </td>
                                             <td>
                                                 <Tag 
                                                     intent={record.type === 'Buy' ? Intent.SUCCESS : record.type === 'Sell' ? Intent.DANGER : Intent.PRIMARY}

@@ -6,20 +6,26 @@ import './DashboardRoute.css';
 
 export default function DashboardRoute() {
 	const assets = useAppSelector(state => state.assets);
-	const cash = useAppSelector(state => state.cash);
+	const transactions = useAppSelector(state => state.transactions) || [];
+	const dividends = useAppSelector(state => state.dividends) || [];
+	const cash = useAppSelector(state => state.cash) || [];
 
 	// Basic calculations
 	const totalAssetsValue = assets.reduce((acc: number, asset) => acc + ((asset.current_shares || 0) * (asset.price || 0)), 0);
 	
-	const totalCash = cash.reduce((acc: number, c) => {
+	const manualCash = cash.reduce((acc: number, c) => {
 		const amount = c.amount || 0;
 		const fee = c.fee || 0;
 		return acc + (c.type === 'Deposit' ? amount : -amount) - fee;
 	}, 0);
 
+	const totalTransactionFlow = transactions.reduce((acc, t) => acc + (t.in_out || 0), 0);
+	const totalDividends = dividends.reduce((acc, d) => acc + (d.income || 0), 0);
+	const totalCash = manualCash + totalTransactionFlow + totalDividends;
+
 	const netWorth = totalAssetsValue + totalCash;
 
-	// Chart Data: Allocation
+	// Chart Data: Allocation by Asset
 	const allocationData = [
 		...assets
 			.filter(a => (a.current_shares || 0) > 0)
@@ -29,6 +35,34 @@ export default function DashboardRoute() {
 			})),
 		{ name: 'Cash', value: totalCash }
 	].sort((a, b) => b.value - a.value);
+
+	// Chart Data: Allocation by Type
+	const typeLabels: { [key: string]: string } = {
+		'Stock': 'Einzelaktien',
+		'ETF': 'ETFs',
+		'Bond': 'Anleihen',
+		'Crypto': 'Kryptowährungen',
+		'Commodity': 'Rohstoffe',
+		'RealEstate': 'Immobilien',
+		'CashEquivalent': 'Geldmarkt/Cash'
+	};
+
+	const allocationByTypeData = Object.keys(typeLabels).map(type => {
+		const totalValue = assets
+			.filter(a => (a.type === type || (!a.type && type === 'Stock')) && (a.current_shares || 0) > 0)
+			.reduce((acc, a) => acc + (a.current_shares || 0) * (a.price || 0), 0);
+		
+		return {
+			name: typeLabels[type],
+			value: totalValue
+		};
+	}).filter(item => item.value > 0);
+
+	if (totalCash > 0) {
+		allocationByTypeData.push({ name: 'Cash (Liquid)', value: totalCash });
+	}
+
+	allocationByTypeData.sort((a, b) => b.value - a.value);
 
 	return (
 		<div id="DashboardRoute" className="w-full p-4">
@@ -88,17 +122,41 @@ export default function DashboardRoute() {
 				</Card>
 			</div>
 
-			{/* Charts */}
-			<div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+			{/* Charts Grid */}
+			<div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
 				<Card className="glass-card h-[400px] flex flex-col">
-					<H5 className="mb-4 text-gray-400 uppercase text-xs font-bold tracking-widest">Asset Allocation</H5>
+					<div className="flex items-center gap-2 mb-4">
+						<div className="p-1.5 bg-blue-500/10 rounded-md">
+							<Icon icon="pie-chart" className="text-blue-500" size={14} />
+						</div>
+						<H5 className="m-0 text-gray-400 uppercase text-xs font-bold tracking-widest">Allocation by Asset</H5>
+					</div>
 					<div className="flex-grow">
 						<AssetAllocationChart data={allocationData} />
 					</div>
 				</Card>
-				
+
 				<Card className="glass-card h-[400px] flex flex-col">
-					<H5 className="mb-4 text-gray-400 uppercase text-xs font-bold tracking-widest">Top Positions</H5>
+					<div className="flex items-center gap-2 mb-4">
+						<div className="p-1.5 bg-indigo-500/10 rounded-md">
+							<Icon icon="layers" className="text-indigo-500" size={14} />
+						</div>
+						<H5 className="m-0 text-gray-400 uppercase text-xs font-bold tracking-widest">Allocation by Class</H5>
+					</div>
+					<div className="flex-grow">
+						<AssetAllocationChart data={allocationByTypeData} />
+					</div>
+				</Card>
+			</div>
+
+			<div className="grid grid-cols-1 gap-8">
+				<Card className="glass-card flex flex-col">
+					<div className="flex items-center gap-2 mb-4">
+						<div className="p-1.5 bg-purple-500/10 rounded-md">
+							<Icon icon="list-columns" className="text-purple-500" size={14} />
+						</div>
+						<H5 className="m-0 text-gray-400 uppercase text-xs font-bold tracking-widest">Top Positions</H5>
+					</div>
 					<div className="overflow-auto scrollbar-hide">
 						{assets
 							.filter(a => (a.current_shares || 0) > 0)

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Button, Dialog, DialogBody, DialogFooter, FormGroup, InputGroup, Intent, OverlaysProvider, Icon, Divider, H3 } from '@blueprintjs/core';
+import { Button, Dialog, DialogBody, DialogFooter, FormGroup, InputGroup, Intent, OverlaysProvider, Icon, Divider, H3, SegmentedControl } from '@blueprintjs/core';
 import { useAppSelector, useAppDispatch } from './../../../../hooks'
 
 import * as appStateReducer from '../../../../store/appState/appState.reducer';
@@ -24,7 +24,7 @@ export default function AssetOverlay() {
 	return (
     <OverlaysProvider>
       <Dialog 
-        className="glass-card shadow-2xl p-0" 
+        className="glass-card shadow-2xl p-0 bp5-dark" 
         isOpen={isOpen} 
         onClose={() => handleOnClose()}
 				canOutsideClickClose={true}
@@ -51,6 +51,24 @@ export default function AssetOverlay() {
 								onChange={(e) => dispatch(assetCreationReducer.setNameInput(e.target.value))}
 								className="glass-input"
 								large
+							/>
+						</FormGroup>
+
+						<FormGroup label="Asset Type" className="col-span-2">
+							<SegmentedControl 
+								value={useAppSelector(state => state.assetCreation.typeInput)}
+								onValueChange={(value) => dispatch(assetCreationReducer.setTypeInput(value as any))}
+								options={[
+									{ label: 'Aktie', value: 'Stock' },
+									{ label: 'ETF', value: 'ETF' },
+									{ label: 'Anleihe', value: 'Bond' },
+									{ label: 'Krypto', value: 'Crypto' },
+									{ label: 'Rohstoff', value: 'Commodity' },
+									{ label: 'Immobilie', value: 'RealEstate' },
+									{ label: 'Geldmarkt', value: 'CashEquivalent' }
+								]}
+								fill
+								className="glass-segmented-control"
 							/>
 						</FormGroup>
 
@@ -82,12 +100,11 @@ export default function AssetOverlay() {
 							/>
 						</FormGroup>
 
-						<div className="flex flex-col justify-end">
-							<div className="text-[10px] text-gray-500 uppercase font-bold mb-1">Asset ID</div>
-							<div className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono text-gray-400">
+						<FormGroup label="Asset ID" helperText="System identifier (read-only)">
+							<div className="bg-white/5 border border-white/10 rounded-lg px-3 py-2 text-sm font-mono text-gray-400 h-[30px] flex items-center">
 								#{ID}
 							</div>
-						</div>
+						</FormGroup>
 					</div>
 
           {appState.assetOverlayType == appStateReducer.AssetOverlayType.EDIT && (

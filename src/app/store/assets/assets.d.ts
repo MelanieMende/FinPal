@@ -1,5 +1,6 @@
 interface Asset {
   ID: number,
+  type: 'Stock' | 'ETF' | 'Bond' | 'Crypto' | 'Commodity' | 'RealEstate' | 'CashEquivalent',
   name: string,
   symbol: string,
   isin: string,

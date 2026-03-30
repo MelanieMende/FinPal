@@ -133,6 +133,7 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 		dispatch(assetCreationReducer.setSymbolInput(props.asset.symbol))
 		dispatch(assetCreationReducer.setISINInput(props.asset.isin))
 		dispatch(assetCreationReducer.setKGVInput(props.asset.kgv))
+		dispatch(assetCreationReducer.setTypeInput(props.asset.type || 'Stock'))
 		dispatch(appStateReducer.setShowAssetOverlay(true))
 	}
 

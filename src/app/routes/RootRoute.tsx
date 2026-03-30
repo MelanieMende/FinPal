@@ -134,8 +134,15 @@ export default function RootRoute() {
 	}
 
 	async function setupAssetsView() {
-		let result = await window.API.sendToDB(assets_v_sql)
-		console.log('result - assets_v: ', result)
+		// Soft Migration: Add type column if it doesn't exist
+		// Note: window.API.sendToDB might return a string error instead of throwing
+		await window.API.sendToDB("ALTER TABLE assets ADD COLUMN type TEXT DEFAULT 'Stock'");
+
+		// Recreate view to include the new column
+		// We drop it first to ensure the new schema is applied
+		await window.API.sendToDB("DROP VIEW IF EXISTS assets_v");
+		let result = await window.API.sendToDB(assets_v_sql);
+		console.log('result - assets_v: ', result);
 	}
 
 	async function setupCash() {

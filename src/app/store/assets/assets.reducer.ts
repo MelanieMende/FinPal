@@ -12,7 +12,14 @@ export const loadAssets = createAsyncThunk(
 			sql += ` WHERE ID IN (${props.assetIDs.join(',')})`
 		}
 		let assets = await window.API.sendToDB(sql)
-		console.log('assets: ', assets)
+		console.log('assets result: ', assets)
+		
+		if (!Array.isArray(assets)) {
+			console.error('Failed to load assets from DB: ', assets)
+			thunkAPI.dispatch(setAssets([]))
+			return
+		}
+
 		for(const asset of assets) {
 			asset.currencySymbol = '€'
 		}

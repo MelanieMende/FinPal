@@ -4,6 +4,7 @@ import { AssetOverlayType } from '../appState/appState.reducer';
 
 export const initialState = {
   ID: null,
+  typeInput: 'Stock',
   nameInput: '',
   symbolInput: '',
   isinInput: '',
@@ -16,13 +17,14 @@ export const validateAndSave = createAsyncThunk(
 		let state = thunkAPI.getState() as State
     if(isValid(state.assetCreation)) {
     let sql  = `
-      INSERT OR REPLACE INTO assets (ID, name, symbol, isin, kgv) 
+      INSERT OR REPLACE INTO assets (ID, name, symbol, isin, kgv, type) 
         VALUES (
            ${state.assetCreation.ID},
           '${state.assetCreation.nameInput.replace('\'', '\'\'')}',
           '${state.assetCreation.symbolInput.replace('\'', '\'\'')}',
           '${state.assetCreation.isinInput.replace('\'', '\'\'')}',
-          '${state.assetCreation.kgvInput.replace('\'', '\'\'')}'
+          '${state.assetCreation.kgvInput.replace('\'', '\'\'')}',
+          '${state.assetCreation.typeInput}'
         )`
      
     window.API.sendToDB(sql)
@@ -69,6 +71,7 @@ export const reset = createAsyncThunk(
     thunkAPI.dispatch(setSymbolInput(''))
     thunkAPI.dispatch(setISINInput(''))
     thunkAPI.dispatch(setKGVInput(''))
+    thunkAPI.dispatch(setTypeInput('Stock'))
     let state = thunkAPI.getState() as State
     console.log(state.assetCreation)
   }
@@ -93,6 +96,9 @@ const assetCreationSlice = createSlice({
     setKGVInput(state, action) {
 			state.kgvInput = action.payload
 		},
+    setTypeInput(state, action) {
+			state.typeInput = action.payload
+		},
 	}
 })
 
@@ -105,6 +111,7 @@ export const {
   setSymbolInput,
   setISINInput,
   setKGVInput,
+  setTypeInput,
 } = actions
 
 export default reducer

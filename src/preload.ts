@@ -75,4 +75,6 @@ contextBridge.exposeInMainWorld('API', {
       });
     });
   },
+  openFiles: () => ipcRenderer.invoke('dialog:openFiles'),
+  parsePDF: (filePath: string) => ipcRenderer.invoke('pdf:parse', filePath),
 })

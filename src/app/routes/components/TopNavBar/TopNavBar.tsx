@@ -75,6 +75,12 @@ export default function TopNavBar () {
 						<Tab id="cashTab" data-testid="cashTab">
 							<Icon icon="dollar" className="mr-2" /> Cash
 						</Tab>
+
+						<NavbarDivider className="ml-0 mb-[15px]" />
+
+						<Tab id="importTab" data-testid="importTab">
+							<Icon icon="import" className="mr-2" /> Import
+						</Tab>
 						
 				</Tabs>
       </NavbarGroup>

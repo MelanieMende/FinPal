@@ -13,6 +13,8 @@ declare global {
       sendToDB?(sql:string):any,
       sendToYahooFinanceAPI?(args:{symbol:string}):any,
       sendToDivvyDiaryAPI?(args:{isin:string}):any,
+      openFiles():Promise<string[]>,
+      parsePDF(filePath:string):Promise<string>,
       quit?():any
     }
   }

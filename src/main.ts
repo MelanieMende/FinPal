@@ -111,6 +111,32 @@ const createWindow = async () => {
       return filePaths[0]
     }
   })
+
+  ipcMain.handle('dialog:openFiles', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openFile', 'multiSelections'],
+      filters: [{ name: 'PDF Documents', extensions: ['pdf'] }]
+    })
+    if (canceled) {
+      return []
+    } else {
+      return filePaths
+    }
+  })
+
+  const { PDFParse } = require('pdf-parse');
+
+  ipcMain.handle('pdf:parse', async (event, filePath: string) => {
+    try {
+      const dataBuffer = fs.readFileSync(filePath);
+      const parser = new PDFParse({ data: dataBuffer });
+      const result = await parser.getText();
+      return result.text;
+    } catch (error) {
+      console.error('PDF parsing error:', error);
+      throw error;
+    }
+  })
 };
 
 // This method will be called when Electron has finished

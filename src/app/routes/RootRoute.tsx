@@ -15,6 +15,7 @@ import DividendsRoute from './routes/DividendsRoute/DividendsRoute';
 import AssetsRoute from './routes/AssetsRoute/AssetsRoute';
 import DatabaseRoute from './routes/DatabaseRoute/DatabaseRoute';
 import DashboardRoute from './routes/DashboardRoute/DashboardRoute';
+import ImportRoute from './routes/ImportRoute/ImportRoute';
 
 import assets_sql from '../../sql/assets_sql'
 import transactions_sql from '../../sql/transactions_sql'
@@ -210,6 +211,8 @@ export function Content() {
 		mainContent = <DatabaseRoute/>
 	else if(selectedTab == 'cashTab')
 		mainContent = <CashRoute/>
+	else if(selectedTab == 'importTab')
+		mainContent = <ImportRoute/>
 	
 
 	return(

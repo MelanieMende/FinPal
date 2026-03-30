@@ -34,6 +34,7 @@
     "@testing-library/user-event": "^14.5.2",
     "@types/electron-squirrel-startup": "^1.0.2",
     "@types/jest": "^29.5.14",
+    "@types/pdf-parse": "^1.1.5",
     "@types/react": "^18.3.27",
     "@types/react-dom": "^18.2.18",
     "@types/redux-mock-store": "^1.5.0",
@@ -56,8 +57,10 @@
   "dependencies": {
     "@blueprintjs/core": "5.12.0",
     "@tailwindcss/postcss": "^4.1.18",
+    "date-fns": "^4.1.0",
     "easy-currencies": "^1.8.3",
     "electron-squirrel-startup": "^1.0.1",
+    "pdf-parse": "^2.4.5",
     "postcss": "^8.5.6",
     "react": "^18.2.0",
     "react-beautiful-dnd": "^13.1.1",

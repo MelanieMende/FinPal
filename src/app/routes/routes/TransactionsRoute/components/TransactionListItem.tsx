@@ -70,16 +70,11 @@ export default function TransactionListItem(props: {i: number, transaction:Trans
 						value={typeInput} 
 						onChange={(e) => setTypeInput(e.target.value)} 
 						onBlur={() => validateAndSave()}
-						className={`text-[10px] font-bold uppercase rounded-full px-3 py-1 border-0 cursor-pointer appearance-none transition-all ${isBuy ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}
+						className={`text-[10px] font-bold uppercase rounded-full px-3 py-1 border-0 cursor-pointer appearance-none transition-all ${isBuy ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}
 					>
 						<option value="Buy">Buy</option>
 						<option value="Sell">Sell</option>
 					</select>
-					<Icon 
-						icon={isBuy ? "plus" : "minus"} 
-						size={8} 
-						className={`absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none ${isBuy ? 'text-blue-400' : 'text-red-400'}`} 
-					/>
 				</div>
 			</TableCell>
 

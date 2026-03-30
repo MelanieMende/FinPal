@@ -1,7 +1,7 @@
 // See the Electron documentation for details on how to use preload scripts:
 // https://www.electronjs.org/docs/latest/tutorial/process-model#preload-scripts
 //import * as appState from './api/appStateAPI'
-import { app, contextBridge, ipcRenderer } from 'electron';
+import { app, contextBridge, ipcRenderer, webUtils } from 'electron';
 
 contextBridge.exposeInMainWorld('API', {
   quit: () => app.quit(),
@@ -77,4 +77,5 @@ contextBridge.exposeInMainWorld('API', {
   },
   openFiles: () => ipcRenderer.invoke('dialog:openFiles'),
   parsePDF: (filePath: string) => ipcRenderer.invoke('pdf:parse', filePath),
+  getPathForFile: (file: File) => webUtils.getPathForFile(file),
 })

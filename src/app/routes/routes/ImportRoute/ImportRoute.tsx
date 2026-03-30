@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Button, Card, H3, HTMLTable, Icon, Intent, NonIdealState, Spinner, Callout, Tag } from '@blueprintjs/core';
+import { Button, Card, H3, HTMLTable, Icon, Intent, NonIdealState, Spinner, Callout, Tag, Alert } from '@blueprintjs/core';
 import { useAppDispatch, useAppSelector } from './../../../hooks';
 import { loadFiles, clearImport, removeRecord } from './../../../store/import/import.reducer';
 import * as assetsReducer from './../../../store/assets/assets.reducer';
@@ -12,6 +12,36 @@ export default function ImportRoute() {
     const { pendingRecords, isLoading, error } = useAppSelector(state => state.import);
     const [mappings, setMappings] = useState<{ [key: string]: number }>({});
     const [importing, setImporting] = useState(false);
+    const [isDragging, setIsDragging] = useState(false);
+    const [showSuccessAlert, setShowSuccessAlert] = useState(false);
+    const [showErrorAlert, setShowErrorAlert] = useState(false);
+
+    const handleDragOver = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragging(true);
+    };
+
+    const handleDragLeave = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragging(false);
+    };
+
+    const handleDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDragging(false);
+
+        const files = Array.from(e.dataTransfer.files)
+            .filter(file => file.name.toLowerCase().endsWith('.pdf'))
+            .map(file => window.API.getPathForFile(file))
+            .filter(path => !!path);
+
+        if (files.length > 0) {
+            dispatch(loadFiles(files));
+        }
+    };
 
     // Initial mapping based on ISIN or Name
     useEffect(() => {
@@ -47,7 +77,7 @@ export default function ImportRoute() {
                     const sql = `INSERT INTO dividends (date, asset_ID, income) VALUES ('${record.date}', ${assetID}, ${record.totalAmount})`;
                     await window.API.sendToDB(sql);
                 } else {
-                    const type = record.type === 'Buy' ? 'BUY' : 'SELL';
+                    const type = record.type === 'Buy' ? 'Buy' : 'Sell';
                     const sql = `INSERT INTO transactions (date, type, asset_ID, amount, price_per_share, fee) VALUES ('${record.date}', '${type}', ${assetID}, ${record.shares}, ${record.pricePerShare}, ${record.fee})`;
                     await window.API.sendToDB(sql);
                 }
@@ -59,17 +89,30 @@ export default function ImportRoute() {
             await dispatch(dividendsReducer.loadDividends());
             
             dispatch(clearImport());
-            alert('Import completed successfully!');
+            setShowSuccessAlert(true);
         } catch (e) {
             console.error('Import failed:', e);
-            alert('Import failed. Check console for details.');
+            setShowErrorAlert(true);
         } finally {
             setImporting(false);
         }
     };
 
     return (
-        <div id="ImportRoute" className="w-full p-4 animate-in fade-in duration-500">
+        <div 
+            id="ImportRoute" 
+            className="relative w-full h-full p-4 animate-in fade-in duration-500"
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+        >
+            {isDragging && (
+                <div className="absolute inset-4 z-50 flex flex-col items-center justify-center bg-blue-600/20 backdrop-blur-md border-2 border-dashed border-blue-400 rounded-2xl pointer-events-none animate-in zoom-in duration-300">
+                    <Icon icon="cloud-upload" size={64} className="text-blue-400 mb-4" />
+                    <H3 className="text-white">Drop PDFs here to import</H3>
+                    <p className="text-blue-200">Release to start parsing Trade Republic documents</p>
+                </div>
+            )}
             <div className="mb-8 flex justify-between items-center">
                 <div>
                     <H3 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-500">
@@ -180,7 +223,7 @@ export default function ImportRoute() {
                                                     </div>
                                                 )}
                                             </td>
-                                            <td className="text-right font-mono text-blue-300">{record.shares ? record.shares.toFixed(4) : '-'}</td>
+                                            <td className="text-right font-mono text-blue-300">{record.shares ? record.shares.toFixed(6) : '-'}</td>
                                             <td className="text-right font-mono text-gray-300">{record.pricePerShare ? record.pricePerShare.toFixed(2) + ' €' : '-'}</td>
                                             <td className="text-right font-bold text-white font-mono">{record.totalAmount.toFixed(2)} €</td>
                                             <td className="text-right">
@@ -194,6 +237,34 @@ export default function ImportRoute() {
                     </Card>
                 </div>
             )}
+
+            <Alert
+                isOpen={showSuccessAlert}
+                onClose={() => setShowSuccessAlert(false)}
+                intent={Intent.SUCCESS}
+                icon="tick-circle"
+                confirmButtonText="Great!"
+                className="glass-card !p-8"
+            >
+                <div className="text-center py-4">
+                    <H3 className="text-emerald-400 mb-2">Import Successful</H3>
+                    <p className="text-gray-300">Your Trade Republic transactions have been successfully added to your portfolio.</p>
+                </div>
+            </Alert>
+
+            <Alert
+                isOpen={showErrorAlert}
+                onClose={() => setShowErrorAlert(false)}
+                intent={Intent.DANGER}
+                icon="error"
+                confirmButtonText="Dismiss"
+                className="glass-card !p-8"
+            >
+                <div className="text-center py-4">
+                    <H3 className="text-red-400 mb-2">Import Failed</H3>
+                    <p className="text-gray-300">Something went wrong while importing your transactions. Please check the console for logs.</p>
+                </div>
+            </Alert>
         </div>
     );
 }

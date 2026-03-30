@@ -44,16 +44,11 @@ export default function TransactionCreation() {
 						value={typeInput} 
 						onChange={(e) => dispatch(transactionCreationReducer.setTypeInput(e.target.value))} 
 						onBlur={() => dispatch(transactionCreationReducer.handleTypeInputGotTouched())}
-						className={`text-[10px] font-bold uppercase rounded-full px-3 py-1 border cursor-pointer appearance-none outline-none transition-all ${isBuy ? 'bg-blue-500/20 text-blue-400 border-blue-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}
+						className={`text-[10px] font-bold uppercase rounded-full px-3 py-1 border cursor-pointer appearance-none outline-none transition-all ${isBuy ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}
 					>
 						<option value="Buy">Buy</option>
 						<option value="Sell">Sell</option>
 					</select>
-					<Icon 
-						icon={isBuy ? "plus" : "minus"} 
-						size={8} 
-						className={`absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none ${isBuy ? 'text-blue-400' : 'text-red-400'}`} 
-					/>
 				</div>
       </TableCell>
 

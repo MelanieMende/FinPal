@@ -16,20 +16,27 @@ export interface ParsedTransaction {
 
 export class TradeRepublicParser {
   static parse(text: string): ParsedTransaction | null {
+    const lowerText = text.toLowerCase();
+
+    // 0. Skip cost information documents (regulatory requirements, not actual trades)
+    if (lowerText.includes('kosteninformation')) {
+      console.log('Skipping cost information document.');
+      return null;
+    }
+
     // 1. Determine Type
     let type: 'Buy' | 'Sell' | 'Dividend' | null = null;
-    const lowerText = text.toLowerCase();
-    if (lowerText.includes('wertpapierabrechnung') || lowerText.includes('abrechnung')) {
-      if (lowerText.includes('kauf')) type = 'Buy';
-      else if (lowerText.includes('verkauf')) type = 'Sell';
+    
+    if (lowerText.includes('wertpapierabrechnung') || lowerText.includes('abrechnung') || lowerText.includes('order')) {
+      if (lowerText.includes('kauf') || lowerText.includes('buy')) type = 'Buy';
+      else if (lowerText.includes('verkauf') || lowerText.includes('sell')) type = 'Sell';
     } else if (lowerText.includes('dividendengutschrift') || lowerText.includes('dividende')) {
       type = 'Dividend';
     }
 
     if (!type) {
-      // Fallback: check for keywords
-      if (lowerText.includes('kauf')) type = 'Buy';
-      else if (lowerText.includes('verkauf')) type = 'Sell';
+      if (lowerText.includes('buy') || lowerText.includes('kauf')) type = 'Buy';
+      else if (lowerText.includes('sell') || lowerText.includes('verkauf')) type = 'Sell';
       else if (lowerText.includes('dividende')) type = 'Dividend';
     }
 
@@ -39,7 +46,7 @@ export class TradeRepublicParser {
     }
 
     // 2. Extract Date
-    const dateMatch = text.match(/(?:Datum|Wertstellung|Valuta|Fälligkeit)\s+(\d{2}\.\d{2}\.\d{4})/i);
+    const dateMatch = text.match(/(?:Datum|Wertstellung|Valuta|Fälligkeit|am)\s+(\d{2}\.\d{2}\.\d{4})/i);
     let date = dateMatch ? dateMatch[1] : '';
     if (date) {
       try {
@@ -64,29 +71,38 @@ export class TradeRepublicParser {
       const lines = text.split('\n');
       const isinIndex = lines.findIndex(l => l.includes(isin));
       if (isinIndex > 0) {
-        // Try the line before ISIN
         assetName = lines[isinIndex - 1].trim();
-        // If the line before ISIN is just some header, try the one before that
-        if (assetName.match(/POSITION|BETRAG|STÜCKE/i) && isinIndex > 1) {
+        if (assetName.match(/POSITION|BETRAG|STÜCKE|WERTPAPIER|ÜBERSICHT/i) && isinIndex > 1) {
             assetName = lines[isinIndex - 2].trim();
         }
       }
     }
-    // Clean up name
     assetName = assetName.replace(/ISIN:?.*$/i, '').trim();
-    if (assetName === 'POSITION ANZAHL ERTRAG BETRAG') assetName = 'Unknown Asset';
+    if (assetName.match(/POSITION|BETRAG|STÜCKE|WERTPAPIER|ÜBERSICHT/i)) assetName = 'Unknown Asset';
 
-    // 5. Extract Shares
-    const sharesMatch = text.match(/([0-9.,]+)\s+(?:Stk\.|Stücke)/i);
-    const shares = sharesMatch ? parseFloat(sharesMatch[1].replace(/\./g, '').replace(',', '.')) : 0;
+    // 5. Extract Shares, Price and Total from compact table lines
+    // Example: 0,058139 Stk. 1.720,00 EUR 100,00 EUR
+    const compactMatch = text.match(/([0-9.,]+)\s+(?:Stk\.|Stücke)\s+([0-9.,]+)\s+(?:EUR|USD)\s+([0-9.,]+)\s+(?:EUR|USD)/i);
+    
+    let shares = 0;
+    let pricePerShare = 0;
+    let totalAmountFromCompact = 0;
 
-    // 6. Extract Price per Share
-    const priceMatch = text.match(/(?:Kurs|Preis)\s+([0-9.,]+)\s+(?:EUR|USD)/i);
-    const pricePerShare = priceMatch ? parseFloat(priceMatch[1].replace(/\./g, '').replace(',', '.')) : 0;
+    if (compactMatch) {
+        shares = this.parseNumber(compactMatch[1]);
+        pricePerShare = this.parseNumber(compactMatch[2]);
+        totalAmountFromCompact = this.parseNumber(compactMatch[3]);
+    } else {
+        const sharesMatch = text.match(/([0-9.,]+)\s+(?:Stk\.|Stücke)/i);
+        shares = this.parseNumber(sharesMatch ? sharesMatch[1] : '0');
+
+        const priceMatch = text.match(/(?:Kurs|Preis)\s+([0-9.,]+)\s+(?:EUR|USD)/i);
+        pricePerShare = this.parseNumber(priceMatch ? priceMatch[1] : '0');
+    }
 
     // 7. Extract Fee
-    const feeMatch = text.match(/(?:Fremdkostenzuschlag|Provision|Gebühr)\s+([0-9.,]+)\s+(?:EUR|USD)/i);
-    const fee = feeMatch ? parseFloat(feeMatch[1].replace(/\./g, '').replace(',', '.')) : 0;
+    const feeMatch = text.match(/(?:Fremdkostenzuschlag|Provision|Gebühr)\s+([0-9.,-]+)\s+(?:EUR|USD)/i);
+    const fee = feeMatch ? Math.abs(this.parseNumber(feeMatch[1])) : 0;
 
     // 8. Extract Tax
     let tax = 0;
@@ -96,17 +112,17 @@ export class TradeRepublicParser {
     }
 
     // 9. Extract Total Amount (Prefer EUR)
-    let totalAmount = 0;
-    const allTotalMatches = Array.from(text.matchAll(/(?:Gesamt|Betrag|Netto)\s+([0-9.,-]+)\s+(EUR|USD)/gi));
-    if (allTotalMatches.length > 0) {
-        // Prefer the last EUR match if it exists
-        const eurMatch = [...allTotalMatches].reverse().find(m => m[2] === 'EUR');
-        if (eurMatch) {
-            totalAmount = Math.abs(this.parseNumber(eurMatch[1]));
-        } else {
-            // Fallback to the last match
-            const lastMatch = allTotalMatches[allTotalMatches.length - 1];
-            totalAmount = Math.abs(this.parseNumber(lastMatch[1]));
+    let totalAmount = totalAmountFromCompact;
+    if (totalAmount === 0) {
+        const allTotalMatches = Array.from(text.matchAll(/(?:Gesamt|Betrag|Netto)\s+([0-9.,-]+)\s+(EUR|USD)/gi));
+        if (allTotalMatches.length > 0) {
+            const eurMatch = [...allTotalMatches].reverse().find(m => m[2] === 'EUR');
+            if (eurMatch) {
+                totalAmount = Math.abs(this.parseNumber(eurMatch[1]));
+            } else {
+                const lastMatch = allTotalMatches[allTotalMatches.length - 1];
+                totalAmount = Math.abs(this.parseNumber(lastMatch[1]));
+            }
         }
     }
 
@@ -115,9 +131,9 @@ export class TradeRepublicParser {
       type: type as any,
       assetName,
       isin,
-      shares: this.parseNumber(sharesMatch ? sharesMatch[1] : '0'),
-      pricePerShare: this.parseNumber(priceMatch ? priceMatch[1] : '0'),
-      fee: this.parseNumber(feeMatch ? feeMatch[1] : '0'),
+      shares,
+      pricePerShare,
+      fee,
       tax,
       totalAmount,
       rawText: text

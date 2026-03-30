@@ -15,6 +15,7 @@ declare global {
       sendToDivvyDiaryAPI?(args:{isin:string}):any,
       openFiles():Promise<string[]>,
       parsePDF(filePath:string):Promise<string>,
+      getPathForFile: (file: File) => string,
       quit?():any
     }
   }

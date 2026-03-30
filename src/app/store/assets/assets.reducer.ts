@@ -5,16 +5,19 @@ export const initialState = [] as Asset[]
 
 export const loadAssets = createAsyncThunk(
   'assets/loadAssets',
-  async (props, thunkAPI) => {
+  async (props: { assetIDs?: number[] } | undefined, thunkAPI) => {
 		console.log('loading assets from DB...')
 		let sql = 'SELECT * FROM assets_v'
+		if (props?.assetIDs && props.assetIDs.length > 0) {
+			sql += ` WHERE ID IN (${props.assetIDs.join(',')})`
+		}
 		let assets = await window.API.sendToDB(sql)
 		console.log('assets: ', assets)
 		for(const asset of assets) {
 			asset.currencySymbol = '€'
 		}
 		thunkAPI.dispatch(setAssets(assets))
-		thunkAPI.dispatch(loadPricesAndDividends())
+		thunkAPI.dispatch(loadPricesAndDividends({ assetIDs: props?.assetIDs }))
   }
 )
 
@@ -30,13 +33,13 @@ export const loadAsset = createAsyncThunk(
 			console.log('loaded asset: ', asset)
 			thunkAPI.dispatch(setAsset(asset))
 		}
-		thunkAPI.dispatch(loadPricesAndDividends())
+		thunkAPI.dispatch(loadPricesAndDividends({ assetIDs: [props.assetID] }))
   }
 )
 
 export const loadPricesAndDividends = createAsyncThunk(
   'assets/loadPrices',
-  async (props, thunkAPI) => {
+  async (props: { assetIDs?: number[] } | undefined, thunkAPI) => {
 
 		let state = thunkAPI.getState() as State
 
@@ -46,7 +49,12 @@ export const loadPricesAndDividends = createAsyncThunk(
 		const USD_conversion_rate = USD.rates.EUR
 		const DKK_conversion_rate = DKK.rates.EUR
 
-		for(const asset of state.assets.filter(a => a.is_watched)) {
+		let assetsToRefresh = state.assets.filter(a => a.is_watched)
+		if (props?.assetIDs && props.assetIDs.length > 0) {
+			assetsToRefresh = assetsToRefresh.filter(a => props.assetIDs.includes(a.ID))
+		}
+
+		for(const asset of assetsToRefresh) {
 			
 			console.log(asset.name, '-', asset.symbol)
 

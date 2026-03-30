@@ -12,8 +12,8 @@ const COLORS = ['#3b82f6', '#60a5fa', '#3b82f6', '#2563eb'];
 
 export default function DividendBarChart({ data }: DividendBarChartProps) {
 	return (
-		<div className="w-full h-full min-h-[300px]">
-			<ResponsiveContainer width="100%" height="100%">
+		<div className="w-full h-full min-h-[300px] min-w-0">
+			<ResponsiveContainer width="99%" height="99%">
 				<BarChart
 					data={data}
 					margin={{ top: 20, right: 30, left: 20, bottom: 5 }}

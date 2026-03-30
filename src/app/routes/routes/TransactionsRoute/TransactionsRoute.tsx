@@ -47,7 +47,8 @@ export default function TransactionsRoute() {
 								<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider">Shares</th>
 								<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider">Total Shares</th>
 								<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider">Price / Share</th>
-								<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider">Fees / Tax</th>
+								<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider">Fees</th>
+								<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider">Tax</th>
 								<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider">Total Invest</th>
 								<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider">In-/Outcome</th>
 								<th className="p-3 text-center text-[10px] uppercase font-bold text-gray-400 tracking-wider w-12 italic">Actions</th>

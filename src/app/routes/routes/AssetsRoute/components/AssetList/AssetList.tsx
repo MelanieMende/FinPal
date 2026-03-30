@@ -53,25 +53,12 @@ export default function AnalysisRoute() {
 				</tr>
 			</thead>
       <tbody>
-        <AssetListRows assets={sorted_Assets}/>
-        
 				{/* Totals Row */}
 				<tr className="bg-white/10 font-bold border-t-2 border-white/10">
-					<TableCell className="p-3 text-center">*</TableCell>
-					<TableCell className="p-3">Σ</TableCell>
-					<TableCell className="p-3"><NewAssetButton /></TableCell>
-					<TableCell className="p-3 text-right">—</TableCell>
-					<TableCell className="p-3 text-right">—</TableCell>
-					<TableCell className="p-3 text-right">{euroFormatter.format(sum_in_out - sum_dividends - sum_profit_lost)}</TableCell> {/* Simplified logic for demonstration, should match parent route */}
-					<TableCell className="p-3 text-center">
-						<div className={`px-3 py-1 rounded-full text-xs font-bold inline-block ${sum_profit_lost >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
-							{euroFormatter.format(sum_profit_lost)}
-						</div>
-					</TableCell>
-					<TableCell className="p-3 text-center">—</TableCell>
-					<TableCell className="p-3 text-right">—</TableCell>
-					<TableCell className="p-3 text-right text-emerald-400">{euroFormatter.format(sum_dividends)}</TableCell>
+					<TableCell className="p-3 text-center">*</TableCell><TableCell className="p-3">Σ</TableCell><TableCell className="p-3"><NewAssetButton /></TableCell><TableCell className="p-3 text-right">—</TableCell><TableCell className="p-3 text-right">—</TableCell><TableCell className="p-3 text-right">{euroFormatter.format(sum_in_out - sum_dividends - sum_profit_lost)}</TableCell><TableCell className="p-3 text-center"><div className={`px-3 py-1 rounded-full text-xs font-bold inline-block ${sum_profit_lost >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{euroFormatter.format(sum_profit_lost)}</div></TableCell><TableCell className="p-3 text-center">—</TableCell><TableCell className="p-3 text-right">—</TableCell><TableCell className="p-3 text-right text-emerald-400">{euroFormatter.format(sum_dividends)}</TableCell>
 				</tr>
+
+        <AssetListRows assets={sorted_Assets}/>
       </tbody>
     </Table>
 	);

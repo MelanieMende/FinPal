@@ -70,7 +70,7 @@ export default function DividendsRoute() {
 					<H5 className="text-gray-400 uppercase text-xs font-bold tracking-widest m-0">Monthly Breakdown ({currentYear})</H5>
 					<div className="text-sm font-semibold text-emerald-400">Total: {ytdIncome.toFixed(2)} €</div>
 				</div>
-				<div className="flex-grow">
+				<div className="flex-grow min-h-0">
 					<DividendBarChart data={monthlyData} />
 				</div>
 			</Card>

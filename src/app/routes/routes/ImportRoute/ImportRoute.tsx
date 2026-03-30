@@ -66,26 +66,30 @@ export default function ImportRoute() {
 
     const handleImportAll = async () => {
         setImporting(true);
+        const importedAssetIds = new Set<number>();
         try {
             for (let i = 0; i < pendingRecords.length; i++) {
                 const record = pendingRecords[i];
                 const assetID = mappings[i];
                 
                 if (!assetID) continue;
+                importedAssetIds.add(assetID);
 
                 if (record.type === 'Dividend') {
                     const sql = `INSERT INTO dividends (date, asset_ID, income) VALUES ('${record.date}', ${assetID}, ${record.totalAmount})`;
                     await window.API.sendToDB(sql);
                 } else {
                     const type = record.type === 'Buy' ? 'Buy' : 'Sell';
-                    const sql = `INSERT INTO transactions (date, type, asset_ID, amount, price_per_share, fee) VALUES ('${record.date}', '${type}', ${assetID}, ${record.shares}, ${record.pricePerShare}, ${record.fee})`;
+                    const sql = `INSERT INTO transactions (date, type, asset_ID, amount, price_per_share, fee, solidarity_surcharge) VALUES ('${record.date}', '${type}', ${assetID}, ${record.shares}, ${record.pricePerShare}, ${record.fee}, ${record.tax})`;
                     await window.API.sendToDB(sql);
                 }
             }
             
-            // Reload data
-            await dispatch(assetsReducer.loadAssets());
-            await dispatch(transactionsReducer.loadTransactions());
+            const assetIDs = Array.from(importedAssetIds);
+
+            // Reload only affected data
+            await dispatch(assetsReducer.loadAssets({ assetIDs }));
+            await dispatch(transactionsReducer.loadTransactions({ assetIDs }));
             await dispatch(dividendsReducer.loadDividends());
             
             dispatch(clearImport());
@@ -175,9 +179,11 @@ export default function ImportRoute() {
                                     <th>Asset (from PDF)</th>
                                     <th>ISIN</th>
                                     <th>Mapped To</th>
-                                    <th className="text-right">Shares</th>
-                                    <th className="text-right">Price</th>
-                                    <th className="text-right">Total</th>
+                                    <th style={{ textAlign: 'right' }}>Shares</th>
+                                    <th style={{ textAlign: 'right' }}>Price</th>
+                                    <th style={{ textAlign: 'right' }}>Fee</th>
+                                    <th style={{ textAlign: 'right' }}>Tax</th>
+                                    <th style={{ textAlign: 'right' }}>Total</th>
                                     <th></th>
                                 </tr>
                             </thead>
@@ -223,9 +229,11 @@ export default function ImportRoute() {
                                                     </div>
                                                 )}
                                             </td>
-                                            <td className="text-right font-mono text-blue-300">{record.shares ? record.shares.toFixed(6) : '-'}</td>
-                                            <td className="text-right font-mono text-gray-300">{record.pricePerShare ? record.pricePerShare.toFixed(2) + ' €' : '-'}</td>
-                                            <td className="text-right font-bold text-white font-mono">{record.totalAmount.toFixed(2)} €</td>
+                                            <td style={{ textAlign: 'right' }} className="font-mono text-blue-300">{record.shares ? record.shares.toFixed(6) : '-'}</td>
+                                            <td style={{ textAlign: 'right' }} className="font-mono text-gray-300">{record.pricePerShare ? record.pricePerShare.toFixed(2) + ' €' : '-'}</td>
+                                            <td style={{ textAlign: 'right' }} className="font-mono text-orange-300">{record.fee ? record.fee.toFixed(2) + ' €' : '0,00 €'}</td>
+                                            <td style={{ textAlign: 'right' }} className="font-mono text-red-300">{record.tax ? record.tax.toFixed(2) + ' €' : '0,00 €'}</td>
+                                            <td style={{ textAlign: 'right' }} className="font-bold text-white font-mono">{record.totalAmount.toFixed(2)} €</td>
                                             <td className="text-right">
                                                 <Button icon="trash" intent={Intent.DANGER} minimal onClick={() => dispatch(removeRecord(index))} />
                                             </td>

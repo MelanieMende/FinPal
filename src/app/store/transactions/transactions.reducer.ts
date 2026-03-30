@@ -5,7 +5,7 @@ export const initialState = [] as Transaction[]
 
 export const loadTransactions = createAsyncThunk(
   'transactions/loadTransactions',
-  async (props, thunkAPI) => {
+  async (props: { assetIDs?: number[] } | undefined, thunkAPI) => {
 		var sql = 'SELECT * FROM transactions_v'
 		console.log(sql)
 		var result = await window.API.sendToDB(sql)
@@ -28,15 +28,19 @@ export const loadTransactions = createAsyncThunk(
 		console.log('result - load transactions: ', result)
 
 		thunkAPI.dispatch(setTransactions(result))
-		thunkAPI.dispatch(updateCurrentInvest())
+		thunkAPI.dispatch(updateCurrentInvest({ assetIDs: props?.assetIDs }))
   }
 )
 
 export const updateCurrentInvest = createAsyncThunk(
   'assets/updateCurrentInvest',
-  async (props, thunkAPI) => {
+  async (props: { assetIDs?: number[] } | undefined, thunkAPI) => {
 		let state = thunkAPI.getState() as State
-		const assets = state.assets
+		let assets = state.assets
+		
+		if (props?.assetIDs && props.assetIDs.length > 0) {
+			assets = assets.filter(a => props.assetIDs.includes(a.ID))
+		}
 
 		assets.forEach((asset:Asset) => {
 			const filtered = state.transactions.filter((trans:Transaction) => trans.asset_ID == asset.ID)

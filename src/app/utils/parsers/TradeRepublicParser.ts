@@ -111,11 +111,21 @@ export class TradeRepublicParser {
         tax += Math.abs(this.parseNumber(match[1]));
     }
 
-    // 9. Extract Total Amount (Prefer EUR)
-    let totalAmount = totalAmountFromCompact;
-    if (totalAmount === 0) {
-        const allTotalMatches = Array.from(text.matchAll(/(?:Gesamt|Betrag|Netto)\s+([0-9.,-]+)\s+(EUR|USD)/gi));
-        if (allTotalMatches.length > 0) {
+    // 9. Extract Total Amount (Prefer EUR/Net/Gutschrift)
+    let totalAmount = 0;
+    const allTotalMatches = Array.from(text.matchAll(/(?:Gesamt|Betrag|Netto|Gutschrift|Zahlung|Überweisung)\s+([0-9.,-]+)\s+(EUR|USD)/gi));
+    
+    if (allTotalMatches.length > 0) {
+        // Priority: Gutschrift/Zahlung/Netto > Last match
+        const priorityMatch = [...allTotalMatches].reverse().find(m => 
+            m[0].toLowerCase().includes('gutschrift') || 
+            m[0].toLowerCase().includes('zahlung') || 
+            m[0].toLowerCase().includes('netto')
+        );
+        
+        if (priorityMatch) {
+            totalAmount = Math.abs(this.parseNumber(priorityMatch[1]));
+        } else {
             const eurMatch = [...allTotalMatches].reverse().find(m => m[2] === 'EUR');
             if (eurMatch) {
                 totalAmount = Math.abs(this.parseNumber(eurMatch[1]));
@@ -124,6 +134,11 @@ export class TradeRepublicParser {
                 totalAmount = Math.abs(this.parseNumber(lastMatch[1]));
             }
         }
+    }
+
+    // Fallback to compact amount if no keywords found or value is 0
+    if (totalAmount === 0) {
+        totalAmount = totalAmountFromCompact;
     }
 
     return {

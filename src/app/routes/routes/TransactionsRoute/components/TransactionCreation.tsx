@@ -98,27 +98,30 @@ export default function TransactionCreation() {
 				</div>
 			</TableCell>
 
-      <TableCell className="p-3 text-right group">
-				<div className="flex flex-col gap-1">
-					<input 
-						data-testid="feeInput" 
-						type="text" 
-						placeholder="Fee"
-						value={feeInput} 
-						onChange={(e) => dispatch(transactionCreationReducer.setFeeInput(e.target.value))} 
-						onBlur={() => dispatch(transactionCreationReducer.handleFeeInputGotTouched())} 
-						className="text-right glass-input-minimal text-[10px] bg-white/5 border border-white/10 rounded px-1 text-gray-300 w-16 ml-auto outline-none focus:border-blue-500/50"
-					/>
-					<input 
-						data-testid="solidaritySurchargeInput" 
-						type="text" 
-						placeholder="Tax"
-						value={solidaritySurchargeInput} 
-						onChange={(e) => dispatch(transactionCreationReducer.setSolidaritySurchargeInput(e.target.value))} 
-						onBlur={() => dispatch(transactionCreationReducer.handleSolidaritySurchargeInputGotTouched())} 
-						className="text-right glass-input-minimal text-[10px] bg-white/5 border border-white/10 rounded px-1 text-gray-500 w-16 ml-auto outline-none focus:border-blue-500/50"
-					/>
-				</div>
+			{/* Fee */}
+			<TableCell className="p-3 text-right">
+				<input 
+					data-testid="feeInput" 
+					type="text" 
+					placeholder="Fee"
+					value={feeInput} 
+					onChange={(e) => dispatch(transactionCreationReducer.setFeeInput(e.target.value))} 
+					onBlur={() => dispatch(transactionCreationReducer.handleFeeInputGotTouched())} 
+					className="text-right glass-input-minimal text-[10px] bg-white/5 border border-white/10 rounded px-1 text-gray-300 w-16 ml-auto outline-none focus:border-blue-500/50"
+				/>
+			</TableCell>
+
+			{/* Tax */}
+			<TableCell className="p-3 text-right">
+				<input 
+					data-testid="solidaritySurchargeInput" 
+					type="text" 
+					placeholder="Tax"
+					value={solidaritySurchargeInput} 
+					onChange={(e) => dispatch(transactionCreationReducer.setSolidaritySurchargeInput(e.target.value))} 
+					onBlur={() => dispatch(transactionCreationReducer.handleSolidaritySurchargeInputGotTouched())} 
+					className="text-right glass-input-minimal text-[10px] bg-white/5 border border-white/10 rounded px-1 text-red-400 w-16 ml-auto outline-none focus:border-blue-500/50"
+				/>
 			</TableCell>
 
 			<TableCell className="p-3 text-right text-gray-500 text-xs italic">

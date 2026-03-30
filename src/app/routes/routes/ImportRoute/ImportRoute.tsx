@@ -5,6 +5,9 @@ import { loadFiles, clearImport, removeRecord } from './../../../store/import/im
 import * as assetsReducer from './../../../store/assets/assets.reducer';
 import * as transactionsReducer from './../../../store/transactions/transactions.reducer';
 import * as dividendsReducer from './../../../store/dividends/dividends.reducer';
+import * as assetCreationReducer from './../../../store/assetCreation/assetCreation.reducer';
+import * as appStateReducer from './../../../store/appState/appState.reducer';
+import CreateAndEditAssetOverlay from '../AssetsRoute/components/CreateAndEditAssetOverlay';
 
 export default function ImportRoute() {
     const dispatch = useAppDispatch();
@@ -50,7 +53,7 @@ export default function ImportRoute() {
         const newMappings = { ...mappings };
         pendingRecords.forEach((record, index) => {
             if (newMappings[index] === undefined) {
-                const foundAsset = assets.find(a => a.isin === record.isin || a.name.toLowerCase() === record.assetName.toLowerCase());
+                const foundAsset = assets.find(a => (a.isin && a.isin === record.isin) || (a.name?.toLowerCase() === record.assetName?.toLowerCase() && a.name));
                 if (foundAsset) {
                     newMappings[index] = foundAsset.ID;
                 }
@@ -81,8 +84,13 @@ export default function ImportRoute() {
                     const sql = `INSERT INTO dividends (date, asset_ID, income) VALUES ('${record.date}', ${assetID}, ${record.totalAmount})`;
                     await window.API.sendToDB(sql);
                 } else {
+                    const mappedAsset = assets.find(a => a.ID === assetID);
+                    const isBond = mappedAsset?.type === 'Bond';
+                    const finalShares = isBond ? 1 : record.shares;
+                    const finalPrice = isBond ? record.totalAmount : record.pricePerShare;
+
                     const type = record.type === 'Buy' ? 'Buy' : 'Sell';
-                    const sql = `INSERT INTO transactions (date, type, asset_ID, amount, price_per_share, fee, solidarity_surcharge) VALUES ('${record.date}', '${type}', ${assetID}, ${record.shares}, ${record.pricePerShare}, ${record.fee}, ${record.tax})`;
+                    const sql = `INSERT INTO transactions (date, type, asset_ID, amount, price_per_share, fee, solidarity_surcharge) VALUES ('${record.date}', '${type}', ${assetID}, ${finalShares}, ${finalPrice}, ${record.fee}, ${record.tax})`;
                     await window.API.sendToDB(sql);
                 }
             }
@@ -216,7 +224,7 @@ export default function ImportRoute() {
 
                                     return (
                                         <tr key={index} className={isDuplicate ? "bg-orange-500/10 border-l-4 border-orange-500/50" : ""}>
-                                            <td className="p-3 text-gray-400 font-mono text-[10px]">
+                                            <td className="p-3 text-gray-400 font-mono text-sm">
                                                 <div className="flex flex-col gap-1 items-start">
                                                     {record.date}
                                                     {isDuplicate && (
@@ -243,7 +251,7 @@ export default function ImportRoute() {
                                                 </Tag>
                                             </td>
                                             <td className="font-semibold text-white">{record.assetName}</td>
-                                            <td className="text-gray-400 font-mono text-xs">{record.isin}</td>
+                                            <td className="text-gray-400 font-mono text-sm">{record.isin}</td>
                                             <td>
                                                 {isAutoMatched ? (
                                                     <div className="flex items-center gap-2">
@@ -264,11 +272,24 @@ export default function ImportRoute() {
                                                             <option value="">Select Asset...</option>
                                                             {assets.map(a => <option key={a.ID} value={a.ID}>{a.name}</option>)}
                                                         </select>
+                                                        <Button 
+                                                            icon="plus" 
+                                                            minimal 
+                                                            small 
+                                                            intent={Intent.PRIMARY}
+                                                            onClick={() => {
+                                                                dispatch(assetCreationReducer.prefillFromISIN({ isin: record.isin, fallbackName: record.assetName }));
+                                                                dispatch(appStateReducer.setAssetOverlayType(appStateReducer.AssetOverlayType.NEW));
+                                                                dispatch(appStateReducer.setShowAssetOverlay(true));
+                                                            }}
+                                                        >
+                                                            Create
+                                                        </Button>
                                                     </div>
                                                 )}
                                             </td>
-                                            <td style={{ textAlign: 'right' }} className="font-mono text-blue-300">{record.shares ? record.shares.toFixed(6) : '-'}</td>
-                                            <td style={{ textAlign: 'right' }} className="font-mono text-gray-300">{record.pricePerShare ? record.pricePerShare.toFixed(2) + ' €' : '-'}</td>
+                                            <td style={{ textAlign: 'right' }} className="font-mono text-blue-300">{mappedAsset?.type === 'Bond' ? '1.000000' : (record.shares ? record.shares.toFixed(6) : '-')}</td>
+                                            <td style={{ textAlign: 'right' }} className="font-mono text-gray-300">{mappedAsset?.type === 'Bond' ? record.totalAmount.toFixed(2) + ' €' : (record.pricePerShare ? record.pricePerShare.toFixed(2) + ' €' : '-')}</td>
                                             <td style={{ textAlign: 'right' }} className="font-mono text-orange-300">{record.fee ? record.fee.toFixed(2) + ' €' : '0,00 €'}</td>
                                             <td style={{ textAlign: 'right' }} className="font-mono text-red-300">{record.tax ? record.tax.toFixed(2) + ' €' : '0,00 €'}</td>
                                             <td style={{ textAlign: 'right' }} className="font-bold text-white font-mono">{record.totalAmount.toFixed(2)} €</td>
@@ -311,6 +332,7 @@ export default function ImportRoute() {
                     <p className="text-gray-300">Something went wrong while importing your transactions. Please check the console for logs.</p>
                 </div>
             </Alert>
+            <CreateAndEditAssetOverlay />
         </div>
     );
 }

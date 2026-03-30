@@ -16,16 +16,29 @@ export const validateAndSave = createAsyncThunk(
   async (props, thunkAPI) => {
 		let state = thunkAPI.getState() as State
     if(isValid(state.assetCreation)) {
-    let sql  = `
-      INSERT OR REPLACE INTO assets (ID, name, symbol, isin, kgv, type) 
+    let sql;
+    if (state.assetCreation.ID && state.assets.some(a => a.ID === state.assetCreation.ID)) {
+      sql = `
+        UPDATE assets SET 
+          name='${state.assetCreation.nameInput.replace('\'', '\'\'')}',
+          symbol='${state.assetCreation.symbolInput.replace('\'', '\'\'')}',
+          isin='${state.assetCreation.isinInput.replace('\'', '\'\'')}',
+          kgv='${state.assetCreation.kgvInput.replace('\'', '\'\'')}',
+          type='${state.assetCreation.typeInput}'
+        WHERE ID = ${state.assetCreation.ID}
+      `;
+    } else {
+      sql = `
+        INSERT INTO assets (name, symbol, isin, kgv, type) 
         VALUES (
-           ${state.assetCreation.ID},
           '${state.assetCreation.nameInput.replace('\'', '\'\'')}',
           '${state.assetCreation.symbolInput.replace('\'', '\'\'')}',
           '${state.assetCreation.isinInput.replace('\'', '\'\'')}',
           '${state.assetCreation.kgvInput.replace('\'', '\'\'')}',
           '${state.assetCreation.typeInput}'
-        )`
+        )
+      `;
+    }
      
     window.API.sendToDB(sql)
       .then((result:any) => {
@@ -53,6 +66,34 @@ export const validateAndSave = createAsyncThunk(
 export function isValid(assetCreation:AssetCreation) {
   return assetCreation.nameInput.length > 0 && assetCreation.symbolInput.length > 0 && assetCreation.isinInput.length == 12
 }
+
+export const prefillFromISIN = createAsyncThunk(
+  'assetCreation/prefillFromISIN',
+  async (props: { isin: string, fallbackName: string }, thunkAPI) => {
+    // Reset form first
+    thunkAPI.dispatch(setISINInput(props.isin))
+    thunkAPI.dispatch(setNameInput(props.fallbackName))
+    thunkAPI.dispatch(setSymbolInput(''))
+    thunkAPI.dispatch(setKGVInput(''))
+    thunkAPI.dispatch(setTypeInput('Stock'))
+
+    // Prepare ID
+    let sql  = 'SELECT MAX(ID) as ID FROM assets'
+    let result = await window.API.sendToDB(sql)
+    thunkAPI.dispatch(setID(result[0].ID + 1))
+
+    // Fetch from DivvyDiary
+    try {
+      const json = await window.API.sendToDivvyDiaryAPI({ isin: props.isin })
+      if (json) {
+        if (json.name) thunkAPI.dispatch(setNameInput(json.name))
+        if (json.symbol) thunkAPI.dispatch(setSymbolInput(json.symbol))
+      }
+    } catch (e) {
+      console.error('Failed to prefill from DivvyDiary:', e)
+    }
+  }
+)
 
 export const reset = createAsyncThunk(
   'assetCreation/reset',

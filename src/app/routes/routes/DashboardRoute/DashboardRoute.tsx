@@ -10,8 +10,15 @@ export default function DashboardRoute() {
 	const dividends = useAppSelector(state => state.dividends) || [];
 	const cash = useAppSelector(state => state.cash) || [];
 
+	// Asset Valuation Helper: Fallback to invested capital if no live price exists
+	const getAssetValue = (asset: any) => {
+		const shares = asset.current_shares || 0;
+		if (shares <= 0) return 0;
+		return asset.price && asset.price > 0 ? shares * asset.price : Math.abs(asset.current_invest || 0);
+	};
+
 	// Basic calculations
-	const totalAssetsValue = assets.reduce((acc: number, asset) => acc + ((asset.current_shares || 0) * (asset.price || 0)), 0);
+	const totalAssetsValue = assets.reduce((acc: number, asset) => acc + getAssetValue(asset), 0);
 	
 	const manualCash = cash.reduce((acc: number, c) => {
 		const amount = c.amount || 0;
@@ -31,7 +38,7 @@ export default function DashboardRoute() {
 			.filter(a => (a.current_shares || 0) > 0)
 			.map(a => ({
 				name: a.name || 'Unknown',
-				value: (a.current_shares || 0) * (a.price || 0)
+				value: getAssetValue(a)
 			})),
 		{ name: 'Cash', value: totalCash }
 	].sort((a, b) => b.value - a.value);
@@ -50,7 +57,7 @@ export default function DashboardRoute() {
 	const allocationByTypeData = Object.keys(typeLabels).map(type => {
 		const totalValue = assets
 			.filter(a => (a.type === type || (!a.type && type === 'Stock')) && (a.current_shares || 0) > 0)
-			.reduce((acc, a) => acc + (a.current_shares || 0) * (a.price || 0), 0);
+			.reduce((acc, a) => acc + getAssetValue(a), 0);
 		
 		return {
 			name: typeLabels[type],

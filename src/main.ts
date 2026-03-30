@@ -216,7 +216,8 @@ ipcMain.on('save-transactions-assetfilter', (event, arg) => {
 const sqlite3 = require('sqlite3').verbose();
 
 ipcMain.on('async-db-message', (event, arg) => {
-  const sql = arg;
+  const sql = arg.sql || arg;
+  const replyId = arg.replyId || 'async-db-reply';
   console.log("\nReceived SQL command:\n" + sql); 
   const database = new sqlite3.Database(appState.database, (err:any) => {
     if (err) console.error('Database opening error: ', err);
@@ -226,7 +227,7 @@ ipcMain.on('async-db-message', (event, arg) => {
     if(err && err.message) {
 			console.error(err.message)
 		}
-    event.reply('async-db-reply', (err && err.message) || rows);
+    event.reply(replyId, (err && err.message) || rows);
   });
   database.close()
 });

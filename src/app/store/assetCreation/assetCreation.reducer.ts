@@ -1,6 +1,6 @@
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit'
 import * as assetsReducer from '../assets/assets.reducer';
-import { AssetOverlayType } from '../appState/appState.reducer';
+import * as appStateReducer from '../appState/appState.reducer';
 
 export const initialState = {
   ID: null,
@@ -17,13 +17,16 @@ export const validateAndSave = createAsyncThunk(
 		let state = thunkAPI.getState() as State
     if(isValid(state.assetCreation)) {
     let sql;
+    let isinSql = state.assetCreation.isinInput.trim() ? `'${state.assetCreation.isinInput.trim().replace('\'', '\'\'')}'` : 'NULL';
+    let kgvSql = state.assetCreation.kgvInput.trim() ? `'${state.assetCreation.kgvInput.trim().replace('\'', '\'\'')}'` : 'NULL';
+
     if (state.assetCreation.ID && state.assets.some(a => a.ID === state.assetCreation.ID)) {
       sql = `
         UPDATE assets SET 
           name='${state.assetCreation.nameInput.replace('\'', '\'\'')}',
           symbol='${state.assetCreation.symbolInput.replace('\'', '\'\'')}',
-          isin='${state.assetCreation.isinInput.replace('\'', '\'\'')}',
-          kgv='${state.assetCreation.kgvInput.replace('\'', '\'\'')}',
+          isin=${isinSql},
+          kgv=${kgvSql},
           type='${state.assetCreation.typeInput}'
         WHERE ID = ${state.assetCreation.ID}
       `;
@@ -33,8 +36,8 @@ export const validateAndSave = createAsyncThunk(
         VALUES (
           '${state.assetCreation.nameInput.replace('\'', '\'\'')}',
           '${state.assetCreation.symbolInput.replace('\'', '\'\'')}',
-          '${state.assetCreation.isinInput.replace('\'', '\'\'')}',
-          '${state.assetCreation.kgvInput.replace('\'', '\'\'')}',
+          ${isinSql},
+          ${kgvSql},
           '${state.assetCreation.typeInput}'
         )
       `;
@@ -50,7 +53,8 @@ export const validateAndSave = createAsyncThunk(
             window.API.sendToDB(sql)
               .then((result:Asset[]) => {
                 console.log('result: ', result)
-                thunkAPI.dispatch(assetsReducer.loadAssets())
+                thunkAPI.dispatch(assetsReducer.loadAssets(undefined))
+                thunkAPI.dispatch(appStateReducer.setShowAssetOverlay(false))
                 thunkAPI.dispatch(reset())
                 return true;
               });
@@ -64,7 +68,7 @@ export const validateAndSave = createAsyncThunk(
 )
 
 export function isValid(assetCreation:AssetCreation) {
-  return assetCreation.nameInput.length > 0 && assetCreation.symbolInput.length > 0 && assetCreation.isinInput.length == 12
+  return assetCreation.nameInput.length > 0 && assetCreation.symbolInput.length > 0 && (assetCreation.isinInput.length === 12 || assetCreation.isinInput.trim() === '')
 }
 
 export const prefillFromISIN = createAsyncThunk(

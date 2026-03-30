@@ -22,9 +22,9 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 	const current_profit_loss_percentage = assetsSelector.get_current_profit_loss_percentage(props.asset)
 	const current_profit_loss_percentage_formatted = (current_profit_loss_percentage).toFixed(2)
 	const upcoming_dividends = (Math.round(assetsSelector.get_upcoming_dividends(props.asset).value * 1000) / 1000).toFixed(3)
-	const dividends_formatted = (Math.round(props.asset.dividends_earned * 100) / 100).toFixed(2)
-	const current_sum_in_out = props.asset.current_sum_in_out + assetsSelector.get_current_value(props.asset) + props.asset.dividends_earned
-	const current_sum_in_out_formatted = (Math.round((current_sum_in_out) * 100) / 100).toFixed(2)
+	const dividends_formatted = (Math.round((props.asset.dividends_earned || 0) * 100) / 100).toFixed(2)
+	const current_sum_in_out = (props.asset.current_sum_in_out || 0) + assetsSelector.get_current_value(props.asset) + (props.asset.dividends_earned || 0)
+	const current_sum_in_out_formatted = (Math.round(current_sum_in_out * 100) / 100).toFixed(2)
 
 	const options = { day: '2-digit', month: '2-digit', year: 'numeric' } as Intl.DateTimeFormatOptions;
 
@@ -66,7 +66,7 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
       <TableCell className="p-3">
 				<Button 
 					data-testid={"openOverlayButton_" + props.asset.ID} 
-					text={<span className="font-bold text-white group-hover:text-blue-400 transition-colors">{props.asset.name}</span>} 
+					text={<span className="font-bold text-white group-hover:text-blue-400 transition-colors">{props.asset.name || 'Unnamed Asset'}</span>} 
 					minimal 
 					fill 
 					alignText={Alignment.LEFT} 

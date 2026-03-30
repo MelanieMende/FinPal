@@ -97,9 +97,9 @@ export default function ImportRoute() {
             
             const assetIDs = Array.from(importedAssetIds);
 
-            // Reload only affected data
-            await dispatch(assetsReducer.loadAssets({ assetIDs }));
-            await dispatch(transactionsReducer.loadTransactions({ assetIDs }));
+            // Reload global data to reflect new transactions
+            await dispatch(assetsReducer.loadAssets(undefined));
+            await dispatch(transactionsReducer.loadTransactions(undefined));
             await dispatch(dividendsReducer.loadDividends());
             
             dispatch(clearImport());

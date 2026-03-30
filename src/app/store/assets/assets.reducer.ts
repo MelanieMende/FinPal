@@ -65,20 +65,27 @@ export const loadPricesAndDividends = createAsyncThunk(
 			
 			console.log(asset.name, '-', asset.symbol)
 
-			const resultYahooFinance:any = await callYahooFinanceAPI(asset.symbol)
-			console.log(asset.name, '- YahooFinance:', resultYahooFinance)
+			let resultYahooFinance:any = null;
+			try {
+				resultYahooFinance = await callYahooFinanceAPI(asset.symbol)
+				console.log(asset.name, '- YahooFinance:', resultYahooFinance)
 
-			let price = resultYahooFinance.price.regularMarketPrice
+				if (resultYahooFinance && resultYahooFinance.price) {
+					let price = resultYahooFinance.price.regularMarketPrice
 
-			if(resultYahooFinance.price.currency == 'USD') {
-				price *= USD_conversion_rate
+					if(resultYahooFinance.price.currency == 'USD') {
+						price *= USD_conversion_rate
+					}
+					else if(resultYahooFinance.price.currency == 'DKK') {
+						price *= DKK_conversion_rate
+					}
+					
+					thunkAPI.dispatch(setPrice({ asset, price }))
+					thunkAPI.dispatch(setDividendYield({ asset, dividendYield: resultYahooFinance.summaryDetail?.dividendYield })) // dividend per share
+				}
+			} catch (err) {
+				console.error(`Failed to fetch Yahoo Finance data for ${asset.symbol}:`, err)
 			}
-			else if(resultYahooFinance.price.currency == 'DKK') {
-				price *= DKK_conversion_rate
-			}
-			
-			thunkAPI.dispatch(setPrice({ asset, price }))
-			thunkAPI.dispatch(setDividendYield({ asset, dividendYield: resultYahooFinance.summaryDetail.dividendYield })) // dividend per share
 
 			try {
 				const json = await callDivvyDiaryAPI(asset.isin)
@@ -96,10 +103,10 @@ export const loadPricesAndDividends = createAsyncThunk(
 
 					let next_estimated_dividend_per_share = new Date(json.dividends[0].payDate) >= new Date() ? json.dividends[0].amount : 0
 
-					if(resultYahooFinance.price.currency == 'USD') {
+					if(resultYahooFinance?.price?.currency == 'USD') {
 						next_estimated_dividend_per_share *= USD_conversion_rate
 					}
-					else if(resultYahooFinance.price.currency == 'DKK') {
+					else if(resultYahooFinance?.price?.currency == 'DKK') {
 						next_estimated_dividend_per_share *= DKK_conversion_rate
 					}
 
@@ -174,8 +181,10 @@ const assetsSlice = createSlice({
 	reducers: {
 		setAsset(state, action) {
 			let mapped = state.map((item:Asset, index:number) => { 
-				if(item.ID === action.payload.asset.ID) {
-					return Object.assign({}, item, action.payload)
+				const assetData = action.payload.asset ? action.payload.asset : action.payload;
+				if(item.ID === assetData.ID) {
+					const additionalProps = action.payload.is_watched !== undefined ? { is_watched: action.payload.is_watched } : {};
+					return Object.assign({}, item, assetData, additionalProps);
 				}
 				else {
 					return item

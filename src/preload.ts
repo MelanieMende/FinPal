@@ -53,8 +53,9 @@ contextBridge.exposeInMainWorld('API', {
   sendToDB(sql:any) {
     console.log(sql)
     return new Promise((resolve) => {
-      ipcRenderer.send('async-db-message', sql);
-      ipcRenderer.once('async-db-reply', (_, arg) => {
+      const replyId = `async-db-reply-${Date.now()}-${Math.random()}`;
+      ipcRenderer.send('async-db-message', { sql, replyId });
+      ipcRenderer.once(replyId, (_, arg) => {
           resolve(arg);
       });
     });

@@ -1,7 +1,4 @@
-import { parse, format } from 'date-fns';
-
 export interface ParsedTransaction {
-  id?: string;
   date: string;
   type: 'Buy' | 'Sell' | 'Dividend';
   assetName: string;
@@ -14,163 +11,100 @@ export interface ParsedTransaction {
   rawText?: string;
 }
 
+/** Parser for German Trade Republic transaction PDFs. */
 export class TradeRepublicParser {
-  static parse(text: string): ParsedTransaction | null {
-    const lowerText = text.toLowerCase();
+  static parse(rawText: string): ParsedTransaction | null {
+    const text = this.normalize(rawText);
+    const lowerText = text.toLocaleLowerCase('de-DE');
+    if (/kosteninformation|ex-ante kosteninformation/.test(lowerText)) return null;
 
-    // 0. Skip cost information documents (regulatory requirements, not actual trades)
-    if (lowerText.includes('kosteninformation')) {
-      console.log('Skipping cost information document.');
-      return null;
+    const type = this.findType(lowerText);
+    if (!type) return null;
+
+    const date = this.findDate(text);
+    const isin = (text.match(/\b([A-Z]{2}[A-Z0-9]{9}[0-9])\b/i)?.[1] || '').toUpperCase();
+    const assetName = this.findAssetName(text, isin);
+    const compact = text.match(/([0-9][0-9.,]*)\s*(?:Stk\.?|Stück(?:e)?)\s+([0-9][0-9.,]*)\s*(?:EUR|€)\s+([+-]?[0-9][0-9.,]*)\s*(?:EUR|€)/i);
+    const shares = compact
+      ? this.parseNumber(compact[1])
+      : this.numberAfter(text, /(?:Anzahl|Stück(?:e)?|Position)/i, /(?:Stk\.?|Stück(?:e)?)/i);
+    let pricePerShare = compact
+      ? this.parseNumber(compact[2])
+      : this.numberAfter(text, /(?:Kurs|Preis)/i, /(?:EUR|€)/i);
+    const fee = this.sumAmounts(text, /(?:Fremdkostenzuschlag|Provision|Ordergebühr|Gebühr)/gi);
+    const tax = this.sumAmounts(text, /(?:Kapitalertragsteuer|Solidaritätszuschlag|Kirchensteuer|Quellensteuer)/gi);
+    const totals = Array.from(text.matchAll(/(?:Gesamt|Endbetrag|Abrechnungsbetrag|Ausmachender Betrag|Netto|Gutschrift|Zahlung)\s*([+-]?[0-9][0-9.,]*)\s*(?:EUR|€)/gi));
+    let totalAmount = totals.length
+      ? Math.abs(this.parseNumber(totals[totals.length - 1][1]))
+      : Math.abs(this.parseNumber(compact?.[3] || '0'));
+
+    if (!totalAmount && type === 'Dividend') {
+      const amount = text.match(/(?:Betrag|Ertrag)\s*([+-]?[0-9][0-9.,]*)\s*(?:EUR|€)/i);
+      totalAmount = Math.abs(this.parseNumber(amount?.[1] || '0'));
+    }
+    if (!pricePerShare && shares && totalAmount && type !== 'Dividend') {
+      pricePerShare = Math.max(0, (totalAmount - fee) / shares);
     }
 
-    // 1. Determine Type
-    let type: 'Buy' | 'Sell' | 'Dividend' | null = null;
-    
-    if (lowerText.includes('wertpapierabrechnung') || lowerText.includes('abrechnung') || lowerText.includes('order')) {
-      if (lowerText.includes('kauf') || lowerText.includes('buy')) type = 'Buy';
-      else if (lowerText.includes('verkauf') || lowerText.includes('sell')) type = 'Sell';
-    } else if (lowerText.includes('dividendengutschrift') || lowerText.includes('dividende')) {
-      type = 'Dividend';
-    }
-
-    if (!type) {
-      if (lowerText.includes('buy') || lowerText.includes('kauf')) type = 'Buy';
-      else if (lowerText.includes('sell') || lowerText.includes('verkauf')) type = 'Sell';
-      else if (lowerText.includes('dividende')) type = 'Dividend';
-    }
-
-    if (!type) {
-      console.warn('Could not determine Trade Republic document type.');
-      return null;
-    }
-
-    // 2. Extract Date
-    const dateMatch = text.match(/(?:Datum|Wertstellung|Valuta|Fälligkeit|am)\s+(\d{2}\.\d{2}\.\d{4})/i);
-    let date = dateMatch ? dateMatch[1] : '';
-    if (date) {
-      try {
-        const parsedDate = parse(date, 'dd.MM.yyyy', new Date());
-        date = format(parsedDate, 'yyyy-MM-dd');
-      } catch (e) {
-        console.error('Failed to parse date:', date);
-      }
-    }
-
-    // 3. Extract ISIN
-    const isinMatch = text.match(/(?:ISIN|Wertpapier-Kenn-Nr):\s*([A-Z0-9]{12})/i) || 
-                      text.match(/\b([A-Z]{2}[A-Z0-9]{9}\d)\b/);
-    const isin = isinMatch ? isinMatch[isinMatch.length - 1] : '';
-
-    // 4. Extract Asset Name
-    let assetName = 'Unknown Asset';
-    const nameMatch = text.match(/(?:Wertpapier|Bezeichnung)\s+(.+)/i);
-    if (nameMatch) {
-      assetName = nameMatch[1].replace(isin, '').trim();
-    } else if (isin) {
-      const lines = text.split('\n');
-      const isinIndex = lines.findIndex(l => l.includes(isin));
-      if (isinIndex > 0) {
-        assetName = lines[isinIndex - 1].trim();
-        if (assetName.match(/POSITION|BETRAG|STÜCKE|WERTPAPIER|ÜBERSICHT/i) && isinIndex > 1) {
-            assetName = lines[isinIndex - 2].trim();
-        }
-      }
-    }
-    assetName = assetName.replace(/ISIN:?.*$/i, '').trim();
-    if (assetName.match(/POSITION|BETRAG|STÜCKE|WERTPAPIER|ÜBERSICHT/i)) assetName = 'Unknown Asset';
-
-    // 5. Extract Shares, Price and Total from compact table lines
-    // Example: 0,058139 Stk. 1.720,00 EUR 100,00 EUR
-    const compactMatch = text.match(/([0-9.,]+)\s+(?:Stk\.|Stücke)\s+([0-9.,]+)\s+(?:EUR|USD)\s+([0-9.,]+)\s+(?:EUR|USD)/i);
-    
-    let shares = 0;
-    let pricePerShare = 0;
-    let totalAmountFromCompact = 0;
-
-    if (compactMatch) {
-        shares = this.parseNumber(compactMatch[1]);
-        pricePerShare = this.parseNumber(compactMatch[2]);
-        totalAmountFromCompact = this.parseNumber(compactMatch[3]);
-    } else {
-        const sharesMatch = text.match(/([0-9.,]+)\s+(?:Stk\.|Stücke)/i);
-        shares = this.parseNumber(sharesMatch ? sharesMatch[1] : '0');
-
-        const priceMatch = text.match(/(?:Kurs|Preis)\s+([0-9.,]+)\s+(?:EUR|USD)/i);
-        pricePerShare = this.parseNumber(priceMatch ? priceMatch[1] : '0');
-    }
-
-    // 7. Extract Fee
-    const feeMatch = text.match(/(?:Fremdkostenzuschlag|Provision|Gebühr)\s+([0-9.,-]+)\s+(?:EUR|USD)/i);
-    const fee = feeMatch ? Math.abs(this.parseNumber(feeMatch[1])) : 0;
-
-    // 8. Extract Tax
-    let tax = 0;
-    const taxMatches = text.matchAll(/(?:Kapitalertragsteuer|Solidaritätszuschlag|Kirchensteuer|Quellensteuer)\s+([0-9.,-]+)\s+(?:EUR|USD)/gi);
-    for (const match of taxMatches) {
-        tax += Math.abs(this.parseNumber(match[1]));
-    }
-
-    // 9. Extract Total Amount (Prefer EUR/Net/Gutschrift)
-    let totalAmount = 0;
-    const allTotalMatches = Array.from(text.matchAll(/(?:Gesamt|Betrag|Netto|Gutschrift|Zahlung|Überweisung)\s+([0-9.,-]+)\s+(EUR|USD)/gi));
-    
-    if (allTotalMatches.length > 0) {
-        // Priority: Gutschrift/Zahlung/Netto > Last match
-        const priorityMatch = [...allTotalMatches].reverse().find(m => 
-            m[0].toLowerCase().includes('gutschrift') || 
-            m[0].toLowerCase().includes('zahlung') || 
-            m[0].toLowerCase().includes('netto')
-        );
-        
-        if (priorityMatch) {
-            totalAmount = Math.abs(this.parseNumber(priorityMatch[1]));
-        } else {
-            const eurMatch = [...allTotalMatches].reverse().find(m => m[2] === 'EUR');
-            if (eurMatch) {
-                totalAmount = Math.abs(this.parseNumber(eurMatch[1]));
-            } else {
-                const lastMatch = allTotalMatches[allTotalMatches.length - 1];
-                totalAmount = Math.abs(this.parseNumber(lastMatch[1]));
-            }
-        }
-    }
-
-    // Fallback to compact amount if no keywords found or value is 0
-    if (totalAmount === 0) {
-        totalAmount = totalAmountFromCompact;
-    }
-
-    return {
-      date,
-      type: type as any,
-      assetName,
-      isin,
-      shares,
-      pricePerShare,
-      fee,
-      tax,
-      totalAmount,
-      rawText: text
-    };
+    // Incomplete records must never reach the database silently.
+    if (!date || !isin || !totalAmount || (type !== 'Dividend' && (!shares || !pricePerShare))) return null;
+    return { date, type, assetName, isin, shares, pricePerShare, fee, tax, totalAmount, rawText };
   }
 
-  private static parseNumber(val: string): number {
-    if (!val) return 0;
-    const cleaned = val.trim();
-    
-    // If it contains both dot and comma, assume dot is thousands and comma is decimal (German)
-    if (cleaned.includes('.') && cleaned.includes(',')) {
-      return parseFloat(cleaned.replace(/\./g, '').replace(',', '.'));
+  private static normalize(value: string): string {
+    return value
+      .replace(/FÃ¤lligkeit/g, 'Fälligkeit').replace(/GebÃ¼hr/g, 'Gebühr')
+      .replace(/SolidaritÃ¤tszuschlag/g, 'Solidaritätszuschlag')
+      .replace(/StÃ¼ck(?:e)?/g, 'Stücke').replace(/Ãœ/g, 'Ü')
+      .replace(/\u00a0/g, ' ').replace(/[ \t]+/g, ' ');
+  }
+
+  private static findType(text: string): ParsedTransaction['type'] | null {
+    if (/dividendengutschrift|dividende|ertragsabrechnung/.test(text)) return 'Dividend';
+    if (/verkauf|sell/.test(text)) return 'Sell';
+    if (/kauf|buy/.test(text)) return 'Buy';
+    return null;
+  }
+
+  private static findDate(text: string): string {
+    const labelled = text.match(/(?:Datum|Wertstellung|Valuta|Fälligkeit|Schlusstag|Handelstag|Ausführung(?:stag)?|am)\D{0,20}(\d{2}\.\d{2}\.\d{4})/i);
+    const candidate = labelled?.[1] || text.match(/\b(\d{2}\.\d{2}\.\d{4})\b/)?.[1];
+    if (!candidate) return '';
+    const [day, month, year] = candidate.split('.').map(Number);
+    const value = new Date(Date.UTC(year, month - 1, day));
+    if (value.getUTCFullYear() !== year || value.getUTCMonth() !== month - 1 || value.getUTCDate() !== day) return '';
+    return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+  }
+
+  private static findAssetName(text: string, isin: string): string {
+    const labelled = text.match(/(?:^|\n)\s*(?:Wertpapier|Bezeichnung)\s*:?[ \t]+([^\n\r]+)/im)?.[1];
+    if (labelled) return labelled.replace(isin, '').replace(/\s{2,}.*$/, '').trim() || 'Unbekanntes Wertpapier';
+    const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    const isinIndex = lines.findIndex(line => line.toUpperCase().includes(isin));
+    for (let index = isinIndex - 1; index >= Math.max(0, isinIndex - 3); index -= 1) {
+      const line = lines[index];
+      if (!/^(position|anzahl|kurs|betrag|isin|wertpapier)/i.test(line) && !/^\d/.test(line)) return line;
     }
-    
-    // If it contains only a comma, it's the decimal separator
-    if (cleaned.includes(',')) {
-      return parseFloat(cleaned.replace(',', '.'));
-    }
-    
-    // If it contains only a dot, and there's logic to think it's decimal (like 0.32)
-    // In these PDFs, a single dot is almost always a decimal.
-    return parseFloat(cleaned);
+    return 'Unbekanntes Wertpapier';
+  }
+
+  private static numberAfter(text: string, label: RegExp, suffix: RegExp): number {
+    const match = text.match(new RegExp(`${label.source}\\s*:?\\s*([0-9][0-9.,]*)\\s*${suffix.source}`, 'i'));
+    if (match) return this.parseNumber(match[1]);
+    const fallback = text.match(new RegExp(`([0-9][0-9.,]*)\\s*${suffix.source}`, 'i'));
+    return this.parseNumber(fallback?.[1] || '0');
+  }
+
+  private static sumAmounts(text: string, label: RegExp): number {
+    const expression = new RegExp(`${label.source}\\s*([+-]?[0-9][0-9.,]*)\\s*(?:EUR|€)`, 'gi');
+    return Array.from(text.matchAll(expression)).reduce((sum, match) => sum + Math.abs(this.parseNumber(match[1])), 0);
+  }
+
+  private static parseNumber(value: string): number {
+    const cleaned = value.trim().replace(/\s/g, '');
+    if (!cleaned) return 0;
+    const normalized = cleaned.includes(',') ? cleaned.replace(/\./g, '').replace(',', '.') : cleaned;
+    const result = Number(normalized);
+    return Number.isFinite(result) ? result : 0;
   }
 }

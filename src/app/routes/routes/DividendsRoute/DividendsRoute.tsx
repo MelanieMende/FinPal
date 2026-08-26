@@ -28,12 +28,11 @@ export default function DividendsRoute() {
 		.filter(d => new Date(d.date).getFullYear() === currentYear)
 		.reduce((acc, d) => acc + (d.income || 0), 0);
 	
-	const totalIncomeAllTime = dividends.reduce((acc, d) => acc + (d.income || 0), 0);
 	const currentMonthIndex = new Date().getMonth() + 1;
 	const avgMonthlyIncome = ytdIncome / (currentMonthIndex || 1);
 
 	return (
-		<div id="DividendsRoute" className="w-full p-4 animate-in fade-in duration-500">
+		<div id="DividendsRoute" data-testid="DividendsRoute" className="w-full p-4 animate-in fade-in duration-500">
 			{/* Summary Header */}
 			<div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
 				<div>

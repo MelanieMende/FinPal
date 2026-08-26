@@ -1,10 +1,9 @@
-import { useAppSelector, useAppDispatch } from './../../../../hooks'
+import { useAppSelector } from './../../../../hooks'
 
 import AssetFilter from './../../../../components/AssetFilter/AssetFilter'
 import DividendCreation from './DividendCreation';
 import DividendListItem from './DividendListItem';
 import Table from '../../../../components/Table/Table';
-import TableHeaderRow from '../../../../components/Table/TableHeaderRow/TableHeaderRow';
 import * as appStateReducer from '../../../../store/appState/appState.reducer';
 
 export default function DividendList() {
@@ -36,7 +35,7 @@ export default function DividendList() {
   ]
 
 	return (
-		<div className="w-full">
+		<div className="w-full" data-testid="DividendList">
       <Table className="w-full">
         <thead>
 					<tr className="bg-white/5">

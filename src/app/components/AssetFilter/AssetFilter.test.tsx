@@ -10,15 +10,13 @@ const mockOnChange = jest.fn();
 
 describe('AssetFilter component', () => {
 
-  const onChange = jest.fn()
-
   let store:any;
 
   beforeEach(() => {
     store = mockStore({
       assets: [
-        { ID: 1, name: 'Asset A' },
-        { ID: 2, name: 'Asset B' },
+        { ID: 1, type: 'Stock', name: 'Asset A' },
+        { ID: 2, type: 'Stock', name: 'Asset B' },
       ],
     });
   });
@@ -53,8 +51,8 @@ describe('AssetFilter component', () => {
 
   it('renders sorted assets in ascending order', async () => {
     const assets = [
-      { ID: 2, name: 'B Asset', symbol: 'symbol_b', isin: 'isin_b' },
-      { ID: 1, name: 'A Asset', symbol: 'symbol_a', isin: 'isin_a' },
+      { ID: 2, type: 'Stock' as const, name: 'B Asset', symbol: 'symbol_b', isin: 'isin_b' },
+      { ID: 1, type: 'Stock' as const, name: 'A Asset', symbol: 'symbol_a', isin: 'isin_a' },
     ];
 
     render(<AssetFilter filter={[]} onChange={mockOnChange} />, {
@@ -68,7 +66,7 @@ describe('AssetFilter component', () => {
     await waitFor(() => {
       const labels = screen
         .getAllByRole('checkbox')
-        .map((checkbox) => checkbox.nextSibling?.textContent);
+        .map((checkbox) => checkbox.getAttribute('aria-label'));
       expect(labels).toEqual(['A Asset', 'B Asset']);
     });
   });

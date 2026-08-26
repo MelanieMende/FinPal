@@ -50,7 +50,7 @@ describe('RootRoute component', () => {
 				})
 			});
 
-			it('sets selectedTab to "assetsTab" if "selectedTab":"databaseTab" and a database is set in the config file', async() => {
+			it('sets selectedTab to "dashboardTab" if "selectedTab":"databaseTab" and a database is set in the config file', async() => {
 
 				window.API = Object.assign({}, API, {
 					getConfig: jest.fn(() => { return {"selectedTab":"databaseTab","theme":"bp5-dark","database":"C:\\Users\\melan\\Dropbox\\#1 - Persöhnliche Ordner\\Melle\\Development\\FinPal\\db_test.sqlite3"} }),
@@ -65,7 +65,7 @@ describe('RootRoute component', () => {
 					)
 				})
 				await waitFor(() => {
-					expect(store.getState().appState.selectedTab).toEqual('assetsTab');
+					expect(store.getState().appState.selectedTab).toEqual('dashboardTab');
 				})
 			});
 

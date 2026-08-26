@@ -16,7 +16,7 @@ export default function AnalysisRoute() {
 	const profitLossPercentage = totalInvested !== 0 ? (totalProfitLoss / totalInvested) * 100 : 0;
 
 	return (
-		<div id="AssetsRoute" className="w-full p-4 animate-in fade-in duration-500">
+		<div id="AssetsRoute" data-testid="AssetsRoute" className="w-full p-4 animate-in fade-in duration-500">
 			{/* Summary Header */}
 			<div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
 				<div>

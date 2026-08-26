@@ -3,9 +3,9 @@ import { loadAsset, setCurrentInvest } from './../assets/assets.reducer'
 
 export const initialState = [] as Transaction[]
 
-export const loadTransactions = createAsyncThunk(
+export const loadTransactions = createAsyncThunk<void, { assetIDs?: number[] } | void>(
   'transactions/loadTransactions',
-  async (props: { assetIDs?: number[] } | undefined, thunkAPI) => {
+  async (props, thunkAPI) => {
 		var sql = 'SELECT * FROM transactions_v'
 		console.log(sql)
 		var result = await window.API.sendToDB(sql)
@@ -28,7 +28,7 @@ export const loadTransactions = createAsyncThunk(
 		console.log('result - load transactions: ', result)
 
 		thunkAPI.dispatch(setTransactions(result))
-		thunkAPI.dispatch(updateCurrentInvest({ assetIDs: props?.assetIDs }))
+		thunkAPI.dispatch(updateCurrentInvest({ assetIDs: props ? props.assetIDs : undefined }))
   }
 )
 

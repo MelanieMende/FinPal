@@ -20,7 +20,7 @@ export default function TransactionsRoute() {
 	});
 
 	return (
-		<div id="TransactionsRoute" className="w-full p-4 animate-in fade-in duration-500">
+		<div id="TransactionsRoute" data-testid="TransactionsRoute" className="w-full p-4 animate-in fade-in duration-500">
 			{/* Page Header */}
 			<div className="mb-8">
 				<H3 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-500">
@@ -70,4 +70,4 @@ export default function TransactionsRoute() {
 			</Card>
 		</div>
 	);
-}
+}

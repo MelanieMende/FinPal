@@ -1,4 +1,4 @@
-import { screen, fireEvent } from '@testing-library/react'
+import { screen } from '@testing-library/react'
 import { render } from '../../../../testing/test-utils'
 import CashRoute from './CashRoute'
 

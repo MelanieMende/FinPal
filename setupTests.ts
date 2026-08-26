@@ -9,5 +9,8 @@ window.API = {
   sendToDB: jest.fn((param) => { if(param == 'SELECT MAX(ID) as ID FROM assets') return [{ID: 1}] }),
   sendToYahooFinanceAPI: jest.fn(),
   sendToDivvyDiaryAPI: jest.fn(),
+  openFiles: jest.fn().mockResolvedValue([]),
+  parsePDF: jest.fn().mockResolvedValue(''),
+  getPathForFile: jest.fn().mockReturnValue(''),
   quit: jest.fn()
 }

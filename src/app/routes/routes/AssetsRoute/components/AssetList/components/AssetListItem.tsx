@@ -114,7 +114,9 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 
 			{/* Dates */}
 			<TableCell className="p-3 text-right">
-				<div className="text-xs font-medium text-white">{payDividendDateFormatted || '—'}</div>
+				<div id={`AssetListItem_${props.i}_exDividendDate`} className="text-xs font-medium text-white">{exDividendDateFormatted}</div>
+				<div className="text-[10px] text-gray-500 uppercase">Ex Date</div>
+				<div id={`AssetListItem_${props.i}_payDividendDate`} className="text-xs font-medium text-white">{payDividendDateFormatted}</div>
 				<div className="text-[10px] text-gray-500 uppercase">Pay Date</div>
 			</TableCell>
 

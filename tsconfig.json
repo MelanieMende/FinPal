@@ -1,18 +1,23 @@
 {
   "compilerOptions": {
     "jsx": "react-jsx",
-    "target": "ESNext",
-    "module": "commonjs",
+    "target": "ES2021",
+    "lib": ["ES2021", "DOM", "DOM.Iterable"],
+    "module": "Node16",
     "allowJs": true,
+    "checkJs": false,
     "skipLibCheck": true,
     "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
     "noImplicitAny": true,
+    "isolatedModules": true,
     "sourceMap": true,
-    "baseUrl": ".",
-    "outDir": "dist",
-    "moduleResolution": "node",
-    "resolveJsonModule": true
+    "noEmit": true,
+    "moduleResolution": "Node16",
+    "resolveJsonModule": true,
+    "forceConsistentCasingInFileNames": true,
+    "types": ["node", "jest", "@testing-library/jest-dom"]
   },
   "include": ["src", "setupTests.ts"],
-  "types": ["node", "jest", "@testing-library/jest-dom"]
+  "exclude": ["node_modules", ".vite", "dist", "coverage"]
 }

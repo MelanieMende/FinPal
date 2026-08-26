@@ -3,12 +3,12 @@ import { Convert } from "easy-currencies";
 
 export const initialState = [] as Asset[]
 
-export const loadAssets = createAsyncThunk(
+export const loadAssets = createAsyncThunk<void, { assetIDs?: number[] } | void>(
   'assets/loadAssets',
-  async (props: { assetIDs?: number[] } | undefined, thunkAPI) => {
+  async (props, thunkAPI) => {
 		console.log('loading assets from DB...')
 		let sql = 'SELECT * FROM assets_v'
-		if (props?.assetIDs && props.assetIDs.length > 0) {
+		if (props && props.assetIDs && props.assetIDs.length > 0) {
 			sql += ` WHERE ID IN (${props.assetIDs.join(',')})`
 		}
 		let assets = await window.API.sendToDB(sql)
@@ -24,7 +24,7 @@ export const loadAssets = createAsyncThunk(
 			asset.currencySymbol = '€'
 		}
 		thunkAPI.dispatch(setAssets(assets))
-		thunkAPI.dispatch(loadPricesAndDividends({ assetIDs: props?.assetIDs }))
+		thunkAPI.dispatch(loadPricesAndDividends({ assetIDs: props ? props.assetIDs : undefined }))
   }
 )
 

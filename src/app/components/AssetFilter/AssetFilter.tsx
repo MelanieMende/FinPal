@@ -10,8 +10,7 @@ import {
 	Checkbox,
 	Menu,
 	MenuItem,
-	Divider,
-	Icon
+	Divider
 } from '@blueprintjs/core';
 
 export default function AssetFilter(props: {filter:number[], onChange:any}) {
@@ -29,7 +28,7 @@ export default function AssetFilter(props: {filter:number[], onChange:any}) {
 
   function AssetFilterOptions() {
     return (
-      <div className="glass-card p-2 min-w-[240px] max-h-[400px] flex flex-col shadow-2xl">
+      <div data-testid="asset-filter-popup-content" className="glass-card p-2 min-w-[240px] max-h-[400px] flex flex-col shadow-2xl">
 				<div className="p-2 mb-2">
 					<InputGroup
 						placeholder="Search assets..."
@@ -62,6 +61,7 @@ export default function AssetFilter(props: {filter:number[], onChange:any}) {
 						{filtered_assets.map((asset) => (
 							<MenuItem
 								key={asset.ID}
+								data-testid={`asset-filter-item-${asset.ID}`}
 								className={`hover:bg-white/10 rounded-lg transition-colors py-2 ${props.filter && props.filter.includes(asset.ID) ? 'bg-blue-500/10' : ''}`}
 								text={
 									<div className="flex items-center justify-between w-full">
@@ -70,6 +70,12 @@ export default function AssetFilter(props: {filter:number[], onChange:any}) {
 											<span className="text-[10px] text-gray-500 uppercase">{asset.symbol}</span>
 										</div>
 										<Checkbox 
+											inputRef={(input) => {
+												if (input) {
+													input.dataset.testid = `asset-filter-checkbox-${asset.ID}`;
+													input.setAttribute('aria-label', asset.name);
+												}
+											}}
 											checked={props.filter ? props.filter.includes(asset.ID) : false}
 											onChange={() => dispatch(props.onChange(asset.ID))}
 											className="m-0"

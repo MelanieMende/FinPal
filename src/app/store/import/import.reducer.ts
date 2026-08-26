@@ -15,20 +15,25 @@ const initialState: ImportState = {
 
 export const loadFiles = createAsyncThunk(
   'import/loadFiles',
-  async (files: string[], thunkAPI) => {
+  async (files: string[]) => {
     const results: ParsedTransaction[] = [];
+    let skipped = 0;
     for (const file of files) {
       try {
         const text = await window.API.parsePDF(file);
         const parsed = TradeRepublicParser.parse(text);
         if (parsed) {
           results.push(parsed);
+        } else {
+          skipped += 1;
         }
       } catch (error) {
         console.error('Error parsing file:', file, error);
+        skipped += 1;
       }
     }
-    return results;
+    if (!results.length) throw new Error('Keine gültige Trade-Republic-Transaktion erkannt.');
+    return { records: results, skipped };
   }
 );
 
@@ -55,7 +60,10 @@ const importSlice = createSlice({
       })
       .addCase(loadFiles.fulfilled, (state, action) => {
         state.isLoading = false;
-        state.pendingRecords = [...state.pendingRecords, ...action.payload];
+        state.pendingRecords = [...state.pendingRecords, ...action.payload.records];
+        state.error = action.payload.skipped
+          ? `${action.payload.skipped} Datei(en) konnten nicht als Transaktion erkannt werden.`
+          : null;
       })
       .addCase(loadFiles.rejected, (state, action) => {
         state.isLoading = false;

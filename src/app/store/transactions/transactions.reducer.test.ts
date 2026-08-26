@@ -10,7 +10,7 @@ import transactionsReducer, {
 describe('Transactions Reducer', () => {
 
   it('should return the initial state', () => {
-    const result = transactionsReducer(undefined, { type: undefined });
+    const result = transactionsReducer(undefined, { type: '' });
     expect(result).toEqual(initialState);
   });
 

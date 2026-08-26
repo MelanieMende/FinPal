@@ -1,4 +1,5 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { waitFor } from '@testing-library/react'
+import { ReactNode } from 'react';
 import { render } from '../../../../../../../testing/test-utils'
 import AssetListSumRow from './AssetListSumRow';
 
@@ -6,7 +7,7 @@ describe('AssetListSumRow component', () => {
 
 	it('renders', async() => {
 
-    const columns: any[] = []
+    const columns: ReactNode[] = []
     
     const {getAllById} = render(<AssetListSumRow columns={columns} />) 
 		

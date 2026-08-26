@@ -1,6 +1,5 @@
 import Table from '../../../../components/Table/Table';
 import TableCell from '../../../../components/Table/TableCell/TableCell';
-import TableHeaderCell from '../../../../components/Table/TableHeaderCell/TableHeaderCell';
 import { useAppSelector } from './../../../../hooks'
 
 export default function DividendCalendar() {
@@ -46,6 +45,7 @@ export function DividendsInYear(props:{year:number, dividends:Dividend[]}) {
                 {monthNames[i]}
               </TableCell>
               <TableCell 
+                id={`${props.year}-${i}`}
                 className={`py-2 text-right text-xs font-mono ${month.sum > 0 ? 'text-emerald-400' : 'text-gray-600'}`}
                 tooltip={month.tooltip}>
                 {month.sum > 0 ? `${month.sum.toFixed(2)} €` : '—'}

@@ -21,6 +21,21 @@ export default function ImportRoute() {
     const [showSuccessAlert, setShowSuccessAlert] = useState(false);
     const [showErrorAlert, setShowErrorAlert] = useState(false);
 
+    const isDuplicate = (record: typeof pendingRecords[number], assetID?: number) => {
+        if (!assetID) return false;
+        if (record.type === 'Dividend') {
+            return dividends.some(d => d.date === record.date && d.asset_ID === assetID && Math.abs(d.income - record.totalAmount) < 0.01);
+        }
+        return transactions.some(t =>
+            t.date === record.date && t.asset_ID === assetID && t.type === record.type &&
+            Math.abs(Math.abs(t.in_out) - record.totalAmount) < 0.05
+        );
+    };
+
+    const importableCount = pendingRecords.filter((record, index) =>
+        !!mappings[index] && !isDuplicate(record, mappings[index])
+    ).length;
+
     const handleDragOver = (e: React.DragEvent) => {
         e.preventDefault();
         e.stopPropagation();
@@ -70,19 +85,22 @@ export default function ImportRoute() {
     };
 
     const handleImportAll = async () => {
+        if (!importableCount) {
+            setShowErrorAlert(true);
+            return;
+        }
         setImporting(true);
-        const importedAssetIds = new Set<number>();
         try {
             for (let i = 0; i < pendingRecords.length; i++) {
                 const record = pendingRecords[i];
                 const assetID = mappings[i];
                 
-                if (!assetID) continue;
-                importedAssetIds.add(assetID);
+                if (!assetID || isDuplicate(record, assetID)) continue;
 
                 if (record.type === 'Dividend') {
                     const sql = `INSERT INTO dividends (date, asset_ID, income) VALUES ('${record.date}', ${assetID}, ${record.totalAmount})`;
-                    await window.API.sendToDB(sql);
+                    const result = await window.API.sendToDB(sql);
+                    if (typeof result === 'string') throw new Error(result);
                 } else {
                     const mappedAsset = assets.find(a => a.ID === assetID);
                     const isBond = mappedAsset?.type === 'Bond';
@@ -91,11 +109,10 @@ export default function ImportRoute() {
 
                     const type = record.type === 'Buy' ? 'Buy' : 'Sell';
                     const sql = `INSERT INTO transactions (date, type, asset_ID, amount, price_per_share, fee, solidarity_surcharge) VALUES ('${record.date}', '${type}', ${assetID}, ${finalShares}, ${finalPrice}, ${record.fee}, ${record.tax})`;
-                    await window.API.sendToDB(sql);
+                    const result = await window.API.sendToDB(sql);
+                    if (typeof result === 'string') throw new Error(result);
                 }
             }
-            
-            const assetIDs = Array.from(importedAssetIds);
 
             // Reload global data to reflect new transactions
             await dispatch(assetsReducer.loadAssets(undefined));
@@ -153,7 +170,7 @@ export default function ImportRoute() {
                             loading={importing}
                             className="glass-button"
                         >
-                            Import {pendingRecords.length} Items
+                            {importableCount} importieren
                         </Button>
                     )}
                 </div>
@@ -204,30 +221,14 @@ export default function ImportRoute() {
                                     
                                     // Duplicate Detection
                                     const assetID = mappings[index];
-                                    let isDuplicate = false;
-                                    if (assetID) {
-                                        if (record.type === 'Dividend') {
-                                            isDuplicate = dividends.some(d => 
-                                                d.date === record.date && 
-                                                d.asset_ID === assetID && 
-                                                Math.abs(d.income - record.totalAmount) < 0.01
-                                            );
-                                        } else {
-                                            isDuplicate = transactions.some(t => 
-                                                t.date === record.date && 
-                                                t.asset_ID === assetID && 
-                                                t.type === record.type && 
-                                                Math.abs(Math.abs(t.in_out) - record.totalAmount) < 0.05
-                                            );
-                                        }
-                                    }
+                                    const duplicate = isDuplicate(record, assetID);
 
                                     return (
-                                        <tr key={index} className={isDuplicate ? "bg-orange-500/10 border-l-4 border-orange-500/50" : ""}>
+                                        <tr key={index} className={duplicate ? "bg-orange-500/10 border-l-4 border-orange-500/50" : ""}>
                                             <td className="p-3 text-gray-400 font-mono text-sm">
                                                 <div className="flex flex-col gap-1 items-start">
                                                     {record.date}
-                                                    {isDuplicate && (
+                                                    {duplicate && (
                                                         <Tag 
                                                             intent={Intent.WARNING} 
                                                             minimal 
@@ -258,7 +259,14 @@ export default function ImportRoute() {
                                                         <Tag intent={Intent.SUCCESS} minimal icon="tick-circle">
                                                             {mappedAsset.name}
                                                         </Tag>
-                                                        <Button icon="edit" minimal small />
+                                                        <select
+                                                            aria-label="Asset-Zuordnung ändern"
+                                                            value={mappings[index] || ''}
+                                                            className="bg-gray-800 border border-gray-600 rounded text-xs p-1"
+                                                            onChange={(e) => setMappings({ ...mappings, [index]: Number(e.target.value) })}
+                                                        >
+                                                            {assets.map(a => <option key={a.ID} value={a.ID}>{a.name}</option>)}
+                                                        </select>
                                                     </div>
                                                 ) : (
                                                     <div className="flex items-center gap-2">

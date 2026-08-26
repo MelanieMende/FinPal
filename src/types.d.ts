@@ -13,9 +13,9 @@ declare global {
       sendToDB?(sql:string):any,
       sendToYahooFinanceAPI?(args:{symbol:string}):any,
       sendToDivvyDiaryAPI?(args:{isin:string}):any,
-      openFiles():Promise<string[]>,
-      parsePDF(filePath:string):Promise<string>,
-      getPathForFile: (file: File) => string,
+      openFiles?():Promise<string[]>,
+      parsePDF?(filePath:string):Promise<string>,
+      getPathForFile?: (file: File) => string,
       quit?():any
     }
   }

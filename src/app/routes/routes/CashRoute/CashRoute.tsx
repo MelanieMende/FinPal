@@ -12,11 +12,12 @@ export default function CashRoute() {
 
   // compute totals
   const totalFee = cash.reduce((sum, entry) => sum + (entry.fee || 0), 0);
-  
+  const totalAmount = cash.reduce((sum, entry) => sum + (entry.amount || 0), 0);
+
   const totalDeposits = cash
     .filter(entry => entry.type === 'Deposit')
     .reduce((sum, entry) => sum + (entry.amount || 0), 0);
-    
+
   const totalWithdrawals = cash
     .filter(entry => entry.type === 'Withdrawal')
     .reduce((sum, entry) => sum + (entry.amount || 0), 0);
@@ -29,7 +30,7 @@ export default function CashRoute() {
   const euroFormatter = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
 
   return (
-    <div id="CashRoute" className="w-full p-4 animate-in fade-in duration-500">
+    <div id="CashRoute" data-testid="CashRoute" className="w-full p-4 animate-in fade-in duration-500">
       {/* Page Header */}
       <div className="mb-8 flex flex-col xl:flex-row justify-between items-start xl:items-center gap-6">
         <div>
@@ -38,7 +39,7 @@ export default function CashRoute() {
           </H3>
           <p className="text-gray-400 font-medium">Track your deposits, withdrawals, and liquidity.</p>
         </div>
-        
+
         <div className="flex flex-wrap gap-4">
           <div className="p-3 bg-blue-500/10 rounded-xl border border-blue-500/20 flex items-center gap-3">
             <div className="p-2 bg-blue-500/20 rounded-lg">
@@ -95,7 +96,7 @@ export default function CashRoute() {
                 <TableCell className="p-3 text-center"><Icon icon="calculator" size={12} className="text-gray-500" /></TableCell>
                 <TableCell className="p-3">—</TableCell>
                 <TableCell className="p-3 font-bold text-emerald-400">Σ TOTALS</TableCell>
-                <TableCell className="p-3 text-right text-white font-black text-base">{euroFormatter.format(totalLiquidity || 0)}</TableCell>
+                <TableCell className="p-3 text-right text-white font-black text-base">{euroFormatter.format(totalAmount || 0)}</TableCell>
                 <TableCell className="p-3 text-right text-gray-400">{euroFormatter.format(totalFee || 0)}</TableCell>
                 <TableCell className="p-3 text-left pl-3">
                   <span className="text-blue-400 text-[10px] bg-blue-400/10 px-2 py-0.5 rounded-full mr-2">In/Out: {euroFormatter.format(totalDeposits - totalWithdrawals || 0)}</span>
@@ -114,4 +115,4 @@ export default function CashRoute() {
       </Card>
     </div>
   );
-}
+}

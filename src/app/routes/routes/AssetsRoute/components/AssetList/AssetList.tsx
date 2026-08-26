@@ -6,14 +6,15 @@ import TableCell from '../../../../../components/Table/TableCell/TableCell';
 import * as assetsSelector from '../../../../../store/assets/assets.selectors';
 import RefreshButton from './../../components/RefreshButton';
 import NewAssetButton from './components/NewAssetButton';
+import AssetListSumRow from './components/AssetListSumRow';
 
 export default function AnalysisRoute() {
 
 	const assets = useAppSelector(state => state.assets)
 
-	var sum_profit_lost = 0
-	var sum_dividends = 0
-	var sum_in_out = 0
+	let sum_profit_lost = 0
+	let sum_dividends = 0
+	let sum_in_out = 0
 
 	assets.forEach(asset => {
 		const current_price = asset.price || 0
@@ -28,9 +29,7 @@ export default function AnalysisRoute() {
 		sum_in_out += current_sum_in_out + dividends_earned + (current_shares * current_price)
 	});
 	
-	var sum_profit_loss_formatted = (Math.round(sum_profit_lost * 100) / 100).toFixed(2) + " €"
-	var sum_dividends_formatted = (Math.round(sum_dividends * 100) / 100).toFixed(2) + " €"
-	var sum_in_out_formatted = (Math.round(sum_in_out  * 100) / 100).toFixed(2) + " €"
+	const sum_profit_loss_formatted = (Math.round(sum_profit_lost * 100) / 100).toFixed(2) + " €"
 
 	const sorted_Assets = assetsSelector.selectAssetsSortedByProfitLoss(assets, 'desc')
 
@@ -54,9 +53,9 @@ export default function AnalysisRoute() {
 			</thead>
       <tbody>
 				{/* Totals Row */}
-				<tr className="bg-white/10 font-bold border-t-2 border-white/10">
-					<TableCell className="p-3 text-center">*</TableCell><TableCell className="p-3">Σ</TableCell><TableCell className="p-3"><NewAssetButton /></TableCell><TableCell className="p-3 text-right">—</TableCell><TableCell className="p-3 text-right">—</TableCell><TableCell className="p-3 text-right">{euroFormatter.format(sum_in_out - sum_dividends - sum_profit_lost)}</TableCell><TableCell className="p-3 text-center"><div className={`px-3 py-1 rounded-full text-xs font-bold inline-block ${sum_profit_lost >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{euroFormatter.format(sum_profit_lost)}</div></TableCell><TableCell className="p-3 text-center">—</TableCell><TableCell className="p-3 text-right">—</TableCell><TableCell className="p-3 text-right text-emerald-400">{euroFormatter.format(sum_dividends)}</TableCell>
-				</tr>
+				<AssetListSumRow>
+					<TableCell className="p-3 text-center">*</TableCell><TableCell className="p-3">Σ</TableCell><TableCell className="p-3"><NewAssetButton /></TableCell><TableCell className="p-3 text-right">—</TableCell><TableCell className="p-3 text-right">—</TableCell><TableCell className="p-3 text-right">{euroFormatter.format(sum_in_out - sum_dividends - sum_profit_lost)}</TableCell><TableCell id="TableCellSumProfitLoss" className="p-3 text-center"><div className={`px-3 py-1 rounded-full text-xs font-bold inline-block ${sum_profit_lost >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{sum_profit_loss_formatted}</div></TableCell><TableCell className="p-3 text-center">—</TableCell><TableCell className="p-3 text-right">—</TableCell><TableCell className="p-3 text-right text-emerald-400">{euroFormatter.format(sum_dividends)}</TableCell>
+				</AssetListSumRow>
         <AssetListRows assets={sorted_Assets}/>
       </tbody>
     </Table>

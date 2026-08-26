@@ -30,7 +30,7 @@ export default function AssetOverlay() {
 				canOutsideClickClose={true}
 				style={{ width: '500px', backgroundColor: 'transparent' }}
 			>
-				<div className="p-6 border-b border-white/10 flex items-center justify-between bg-white/5">
+				<div id="AssetOverlay" className="p-6 border-b border-white/10 flex items-center justify-between bg-white/5">
 					<div className="flex items-center gap-3">
 						<div className="p-2 bg-blue-500/20 rounded-lg">
 							<Icon icon={appState.assetOverlayType == appStateReducer.AssetOverlayType.NEW ? "plus" : "edit"} className="text-blue-400" size={20} />
@@ -39,13 +39,14 @@ export default function AssetOverlay() {
 							{appState.assetOverlayType == appStateReducer.AssetOverlayType.NEW ? "Add New Asset" : "Edit Asset Details"}
 						</H3>
 					</div>
-					<Button minimal icon="cross" onClick={() => handleOnClose()} className="text-gray-500 hover:text-white" />
+					<Button id="CloseButton" aria-label="Close" minimal icon="cross" onClick={() => handleOnClose()} className="text-gray-500 hover:text-white" />
 				</div>
 
         <DialogBody className="p-6 space-y-6">
 					<div className="grid grid-cols-2 gap-4">
 						<FormGroup label="Asset Name" labelInfo="(required)" className="col-span-2">
 							<InputGroup 
+								id="nameInput"
 								placeholder="e.g. Apple Inc." 
 								value={nameInput} 
 								onChange={(e) => dispatch(assetCreationReducer.setNameInput(e.target.value))}
@@ -74,6 +75,7 @@ export default function AssetOverlay() {
 
 						<FormGroup label="Ticker Symbol" labelInfo="(required)">
 							<InputGroup 
+								id="symbolInput"
 								placeholder="e.g. AAPL" 
 								value={symbolInput} 
 								onChange={(e) => dispatch(assetCreationReducer.setSymbolInput(e.target.value))}
@@ -83,6 +85,7 @@ export default function AssetOverlay() {
 
 						<FormGroup label="ISIN" labelInfo="(12 chars)">
 							<InputGroup 
+								id="isinInput"
 								placeholder="e.g. US0378331005" 
 								value={isinInput} 
 								maxLength={12}
@@ -93,6 +96,7 @@ export default function AssetOverlay() {
 
 						<FormGroup label="Current Price/Earnings (KGV)" helperText="Optional valuation metric">
 							<InputGroup 
+								id="kgvInput"
 								placeholder="0.00" 
 								value={kgvInput} 
 								onChange={(e) => dispatch(assetCreationReducer.setKGVInput(e.target.value))}
@@ -137,6 +141,7 @@ export default function AssetOverlay() {
         <DialogFooter className="p-6 bg-white/5 border-t border-white/10" actions={
           <div className="flex gap-3">
             <Button 
+							id="SaveButton"
 							minimal 
 							text="Cancel" 
 							onClick={() => handleOnClose()} 
@@ -154,4 +159,4 @@ export default function AssetOverlay() {
       </Dialog>
     </OverlaysProvider>
 	);
-}
+}

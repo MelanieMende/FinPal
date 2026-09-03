@@ -64,6 +64,20 @@ describe('DividendListItem component', () => {
 			expect(incomeInput.getAttribute("value")).toEqual('1.23');
 		});
 	});
+
+	it('always displays dividend income with two decimal places', async () => {
+		window.API = {
+			sendToDB: jest.fn().mockResolvedValue([]),
+		};
+		const dividend = { ID: 1, date: "2024-11-01", asset_ID: 14, asset_name: "AssetName", income: 1.2 };
+		render(<DividendListItem i={1} dividend={dividend} />);
+		const incomeInput = screen.getByDisplayValue('1.20') as HTMLInputElement;
+
+		fireEvent.change(incomeInput, { target: { value: '2.5' } });
+		fireEvent.blur(incomeInput);
+
+		await waitFor(() => expect(incomeInput.value).toBe('2.50'));
+	});
 /*
 	it('dispatches validateAndSave on blur', async () => {
 		const dividend = { ID: 1, date: "2024-11-01", asset_ID: 14, asset_name: "AssetName", income: 0.39 };

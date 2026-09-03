@@ -3,6 +3,11 @@ import { useState } from 'react';
 import * as dividendsReducer from '../../../../store/dividends/dividends.reducer';
 import TableCell from '../../../../components/Table/TableCell/TableCell';
 
+function formatIncome(value: string | number) {
+	const parsed = Number(value.toString().replace(',', '.'));
+	return Number.isFinite(parsed) ? parsed.toFixed(2) : value.toString();
+}
+
 export default function DividendListItem(props: {i: number, dividend:Dividend}) {
 
 	const assets = useAppSelector(state => state.assets)
@@ -10,14 +15,20 @@ export default function DividendListItem(props: {i: number, dividend:Dividend}) 
   const dispatch = useAppDispatch();
   const [dateInput, setDateInput] = useState(props.dividend.date || '');
 	const [assetInput, setAssetInput] = useState(props.dividend.asset_ID);
-	const [incomeInput, setIncomeInput] = useState(props.dividend.income || '');
+	const [incomeInput, setIncomeInput] = useState(
+		props.dividend.income === null || props.dividend.income === undefined
+			? ''
+			: formatIncome(props.dividend.income)
+	);
 
 	function validateAndSave() {
+		const formattedIncome = formatIncome(incomeInput);
+		setIncomeInput(formattedIncome);
 		dispatch(dividendsReducer.saveDividend({
 			dividend: props.dividend,
 			dateInput,
 			assetInput,
-			incomeInput: incomeInput.toString(),
+			incomeInput: formattedIncome,
 		}));
 	}
 

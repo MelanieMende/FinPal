@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Button, Card, H3, HTMLTable, Icon, Intent, NonIdealState, Spinner, Callout, Tag, Alert } from '@blueprintjs/core';
 import { useAppDispatch, useAppSelector } from './../../../hooks';
-import { loadFiles, clearImport, removeRecord } from './../../../store/import/import.reducer';
+import { loadFiles, removeRecord, setPendingRecords } from './../../../store/import/import.reducer';
 import * as assetsReducer from './../../../store/assets/assets.reducer';
 import * as transactionsReducer from './../../../store/transactions/transactions.reducer';
 import * as dividendsReducer from './../../../store/dividends/dividends.reducer';
@@ -10,6 +10,7 @@ import * as appStateReducer from './../../../store/appState/appState.reducer';
 import CreateAndEditAssetOverlay from '../AssetsRoute/components/CreateAndEditAssetOverlay';
 
 export default function ImportRoute() {
+    const pendingImportStorageKey = 'finpal.pendingTradeRepublicImport.v1';
     const dispatch = useAppDispatch();
     const assets = useAppSelector(state => state.assets);
     const transactions = useAppSelector(state => state.transactions);
@@ -20,6 +21,35 @@ export default function ImportRoute() {
     const [isDragging, setIsDragging] = useState(false);
     const [showSuccessAlert, setShowSuccessAlert] = useState(false);
     const [showErrorAlert, setShowErrorAlert] = useState(false);
+    const [trStatus, setTrStatus] = useState<{ runnerAvailable: boolean; hasSavedCredentials: boolean } | null>(null);
+    const [trPhone, setTrPhone] = useState('');
+    const [trPin, setTrPin] = useState('');
+    const [rememberTr, setRememberTr] = useState(true);
+    const [syncingTr, setSyncingTr] = useState(false);
+    const [trMessage, setTrMessage] = useState<string | null>(null);
+    const [pendingCacheReady, setPendingCacheReady] = useState(false);
+    const [showDuplicates, setShowDuplicates] = useState(false);
+    useEffect(() => {
+        if (pendingRecords.length > 0) return;
+        try {
+            const storedRecords = JSON.parse(localStorage.getItem(pendingImportStorageKey) || '[]');
+            if (Array.isArray(storedRecords) && storedRecords.length > 0) dispatch(setPendingRecords(storedRecords));
+        } catch {
+            localStorage.removeItem(pendingImportStorageKey);
+        } finally {
+            setPendingCacheReady(true);
+        }
+    }, []);
+
+    useEffect(() => {
+        if (!pendingCacheReady) return;
+        if (pendingRecords.length > 0) localStorage.setItem(pendingImportStorageKey, JSON.stringify(pendingRecords));
+        else localStorage.removeItem(pendingImportStorageKey);
+    }, [pendingRecords, pendingCacheReady]);
+
+    useEffect(() => {
+        window.API.getTradeRepublicStatus?.().then(setTrStatus).catch(() => setTrStatus({ runnerAvailable: false, hasSavedCredentials: false }));
+    }, []);
 
     const isDuplicate = (record: typeof pendingRecords[number], assetID?: number) => {
         if (!assetID) return false;
@@ -34,6 +64,9 @@ export default function ImportRoute() {
 
     const importableCount = pendingRecords.filter((record, index) =>
         !!mappings[index] && !isDuplicate(record, mappings[index])
+    ).length;
+    const duplicateCount = pendingRecords.filter((record, index) =>
+        isDuplicate(record, mappings[index])
     ).length;
 
     const handleDragOver = (e: React.DragEvent) => {
@@ -55,7 +88,7 @@ export default function ImportRoute() {
 
         const files = Array.from(e.dataTransfer.files)
             .filter(file => file.name.toLowerCase().endsWith('.pdf'))
-            .map(file => window.API.getPathForFile(file))
+            .map(file => window.API.getPathForFile?.(file) ?? '')
             .filter(path => !!path);
 
         if (files.length > 0) {
@@ -78,10 +111,43 @@ export default function ImportRoute() {
     }, [pendingRecords, assets]);
 
     const handleSelectFiles = async () => {
-        const files = await window.API.openFiles();
+        const files = await window.API.openFiles?.() ?? [];
         if (files && files.length > 0) {
             dispatch(loadFiles(files));
         }
+    };
+
+    const handleTradeRepublicSync = async () => {
+        setSyncingTr(true);
+        setTrMessage('FinPal richtet beim ersten Mal die Synchronisierung ein. Bestätige anschließend die Anmeldung in deiner Trade-Republic-App.');
+        try {
+            if (!window.API.syncTradeRepublic) throw new Error('Die Trade-Republic-Schnittstelle ist nicht verfügbar.');
+            const result = await window.API.syncTradeRepublic({
+                phone: trStatus?.hasSavedCredentials && !trPhone && !trPin ? undefined : trPhone,
+                pin: trStatus?.hasSavedCredentials && !trPhone && !trPin ? undefined : trPin,
+                remember: rememberTr,
+            });
+            if (!result.records.length) {
+                throw new Error(`Keine importierbaren Transaktionen empfangen (${result.skipped} Buchungen übersprungen). Die bisherige Liste bleibt erhalten.`);
+            }
+            // Persist before updating Redux so a renderer reload between both
+            // operations cannot lose an otherwise successful broker response.
+            localStorage.setItem(pendingImportStorageKey, JSON.stringify(result.records));
+            dispatch(setPendingRecords(result.records));
+            setTrPin('');
+            setTrStatus({ runnerAvailable: true, hasSavedCredentials: rememberTr || !!trStatus?.hasSavedCredentials });
+            setTrMessage(`${result.records.length} Transaktion(en) geladen${result.skipped ? `, ${result.skipped} nicht unterstützte Buchung(en) übersprungen` : ''}.`);
+        } catch (syncError) {
+            setTrMessage(syncError instanceof Error ? syncError.message : 'Synchronisierung fehlgeschlagen.');
+        } finally {
+            setSyncingTr(false);
+        }
+    };
+
+    const forgetTradeRepublicCredentials = async () => {
+        await window.API.forgetTradeRepublicCredentials?.();
+        setTrStatus(current => ({ runnerAvailable: current?.runnerAvailable ?? true, hasSavedCredentials: false }));
+        setTrMessage('Gespeicherte Zugangsdaten wurden gelöscht.');
     };
 
     const handleImportAll = async () => {
@@ -91,6 +157,7 @@ export default function ImportRoute() {
         }
         setImporting(true);
         try {
+            const importedIndices = new Set<number>();
             for (let i = 0; i < pendingRecords.length; i++) {
                 const record = pendingRecords[i];
                 const assetID = mappings[i];
@@ -112,6 +179,7 @@ export default function ImportRoute() {
                     const result = await window.API.sendToDB(sql);
                     if (typeof result === 'string') throw new Error(result);
                 }
+                importedIndices.add(i);
             }
 
             // Reload global data to reflect new transactions
@@ -119,7 +187,8 @@ export default function ImportRoute() {
             await dispatch(transactionsReducer.loadTransactions(undefined));
             await dispatch(dividendsReducer.loadDividends());
             
-            dispatch(clearImport());
+            dispatch(setPendingRecords(pendingRecords.filter((_record, index) => !importedIndices.has(index))));
+            setMappings({});
             setShowSuccessAlert(true);
         } catch (e) {
             console.error('Import failed:', e);
@@ -176,6 +245,36 @@ export default function ImportRoute() {
                 </div>
             </div>
 
+            <Card className="glass-card mb-6 p-5">
+                <div className="flex flex-wrap justify-between gap-4">
+                    <div className="min-w-64 flex-1">
+                        <H3 className="m-0 mb-1 text-lg">Trade Republic automatisch synchronisieren</H3>
+                        <p className="text-gray-400 mb-4">FinPal lädt die strukturierten Umsatzdaten direkt über den lokalen pytr-Client. PDFs sind nicht erforderlich.</p>
+                        {trStatus?.runnerAvailable === false && <Callout intent={Intent.WARNING}>Diese Funktion wird derzeit nur unter Windows x64 unterstützt.</Callout>}
+                        {trStatus?.runnerAvailable && <p className="text-xs text-gray-500">Die benötigte Laufzeitkomponente wird beim ersten Start automatisch und geprüft eingerichtet.</p>}
+                        {trMessage && <Callout className="mt-3" intent={trMessage.includes('fehl') || trMessage.includes('Bitte Telefonnummer') ? Intent.DANGER : Intent.PRIMARY}>{trMessage}</Callout>}
+                    </div>
+                    <div className="w-full max-w-md space-y-3">
+                        {!trStatus?.hasSavedCredentials && (
+                            <>
+                                <input aria-label="Trade Republic Telefonnummer" type="tel" placeholder="Telefonnummer, z. B. +491701234567" value={trPhone} onChange={event => setTrPhone(event.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2" />
+                                <input aria-label="Trade Republic PIN" type="password" placeholder="PIN" value={trPin} onChange={event => setTrPin(event.target.value)} className="w-full bg-gray-900 border border-gray-600 rounded px-3 py-2" />
+                                <label className="flex items-center gap-2 text-sm text-gray-300">
+                                    <input type="checkbox" checked={rememberTr} onChange={event => setRememberTr(event.target.checked)} />
+                                    Lokal mit Windows-DPAPI verschlüsselt speichern
+                                </label>
+                            </>
+                        )}
+                        <div className="flex gap-2 justify-end">
+                            {trStatus?.hasSavedCredentials && <Button minimal intent={Intent.DANGER} onClick={forgetTradeRepublicCredentials}>Zugangsdaten löschen</Button>}
+                            <Button icon="refresh" intent={Intent.SUCCESS} loading={syncingTr} disabled={syncingTr} onClick={handleTradeRepublicSync}>
+                                Jetzt synchronisieren
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+            </Card>
+
             {isLoading ? (
                 <div className="flex flex-col items-center justify-center h-64">
                     <Spinner size={50} />
@@ -195,16 +294,26 @@ export default function ImportRoute() {
                     {error && <Callout intent={Intent.DANGER} icon="error" title="Error">{error}</Callout>}
                     
                     <Card className="glass-card p-0 overflow-hidden">
-                        <div className="p-4 border-b border-white/5 bg-white/5">
+                        <div className="p-4 border-b border-white/5 bg-white/5 flex items-center justify-between gap-3">
                             <H3 className="m-0 text-sm font-bold uppercase tracking-wider text-gray-300">Review Transactions</H3>
+                            <Button
+                                small
+                                minimal
+                                icon={showDuplicates ? 'eye-off' : 'eye-open'}
+                                active={!showDuplicates}
+                                disabled={duplicateCount === 0}
+                                onClick={() => setShowDuplicates(value => !value)}
+                            >
+                                {showDuplicates ? `Duplikate ausblenden (${duplicateCount})` : `Duplikate einblenden (${duplicateCount})`}
+                            </Button>
                         </div>
                         <HTMLTable interactive striped className="w-full text-left">
                             <thead>
                                 <tr>
                                     <th>Date</th>
                                     <th>Type</th>
-                                    <th>Asset (from PDF)</th>
                                     <th>ISIN</th>
+                                    <th>Asset (from PDF)</th>
                                     <th>Mapped To</th>
                                     <th style={{ textAlign: 'right' }}>Shares</th>
                                     <th style={{ textAlign: 'right' }}>Price</th>
@@ -215,7 +324,9 @@ export default function ImportRoute() {
                                 </tr>
                             </thead>
                             <tbody>
-                                {pendingRecords.map((record, index) => {
+                                {pendingRecords.map((record, index) => ({ record, index }))
+                                    .filter(({ record, index }) => showDuplicates || !isDuplicate(record, mappings[index]))
+                                    .map(({ record, index }) => {
                                     const mappedAsset = assets.find(a => a.ID === mappings[index]);
                                     const isAutoMatched = !!mappedAsset;
                                     
@@ -226,7 +337,7 @@ export default function ImportRoute() {
                                     return (
                                         <tr key={index} className={duplicate ? "bg-orange-500/10 border-l-4 border-orange-500/50" : ""}>
                                             <td className="p-3 text-gray-400 font-mono text-sm">
-                                                <div className="flex flex-col gap-1 items-start">
+                                                <div className="flex flex-col gap-1 items-start text-nowrap">
                                                     {record.date}
                                                     {duplicate && (
                                                         <Tag 
@@ -251,8 +362,8 @@ export default function ImportRoute() {
                                                     {record.type}
                                                 </Tag>
                                             </td>
-                                            <td className="font-semibold text-white">{record.assetName}</td>
                                             <td className="text-gray-400 font-mono text-sm">{record.isin}</td>
+                                            <td className="font-semibold text-white">{record.assetName}</td>
                                             <td>
                                                 {isAutoMatched ? (
                                                     <div className="flex items-center gap-2">
@@ -297,10 +408,10 @@ export default function ImportRoute() {
                                                 )}
                                             </td>
                                             <td style={{ textAlign: 'right' }} className="font-mono text-blue-300">{mappedAsset?.type === 'Bond' ? '1.000000' : (record.shares ? record.shares.toFixed(6) : '-')}</td>
-                                            <td style={{ textAlign: 'right' }} className="font-mono text-gray-300">{mappedAsset?.type === 'Bond' ? record.totalAmount.toFixed(2) + ' €' : (record.pricePerShare ? record.pricePerShare.toFixed(2) + ' €' : '-')}</td>
-                                            <td style={{ textAlign: 'right' }} className="font-mono text-orange-300">{record.fee ? record.fee.toFixed(2) + ' €' : '0,00 €'}</td>
-                                            <td style={{ textAlign: 'right' }} className="font-mono text-red-300">{record.tax ? record.tax.toFixed(2) + ' €' : '0,00 €'}</td>
-                                            <td style={{ textAlign: 'right' }} className="font-bold text-white font-mono">{record.totalAmount.toFixed(2)} €</td>
+                                            <td style={{ textAlign: 'right' }} className="font-mono text-gray-300 text-nowrap">{mappedAsset?.type === 'Bond' ? record.totalAmount.toFixed(2) + ' €' : (record.pricePerShare ? record.pricePerShare.toFixed(2) + ' €' : '-')}</td>
+                                            <td style={{ textAlign: 'right' }} className="font-mono text-orange-300 text-nowrap">{record.fee ? record.fee.toFixed(2) + ' €' : '0,00 €'}</td>
+                                            <td style={{ textAlign: 'right' }} className="font-mono text-red-300 text-nowrap">{record.tax ? record.tax.toFixed(2) + ' €' : '0,00 €'}</td>
+                                            <td style={{ textAlign: 'right' }} className="font-bold text-white font-mono text-nowrap">{record.totalAmount.toFixed(2)} €</td>
                                             <td className="text-right">
                                                 <Button icon="trash" intent={Intent.DANGER} minimal onClick={() => dispatch(removeRecord(index))} />
                                             </td>

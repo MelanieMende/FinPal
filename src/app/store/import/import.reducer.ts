@@ -20,6 +20,7 @@ export const loadFiles = createAsyncThunk(
     let skipped = 0;
     for (const file of files) {
       try {
+        if (!window.API.parsePDF) throw new Error('Die PDF-Schnittstelle ist nicht verfügbar.');
         const text = await window.API.parsePDF(file);
         const parsed = TradeRepublicParser.parse(text);
         if (parsed) {

@@ -10,12 +10,15 @@ declare global {
       saveDatabase?(database:string):any,
       saveSelectedTab?(selectedTab:string):any,
       saveTransactionsAssetFilter?(transactions_AssetFilter:any):any,
-      sendToDB?(sql:string):any,
+      sendToDB(sql:string):any,
       sendToYahooFinanceAPI?(args:{symbol:string}):any,
       sendToDivvyDiaryAPI?(args:{isin:string}):any,
       openFiles?():Promise<string[]>,
       parsePDF?(filePath:string):Promise<string>,
       getPathForFile?: (file: File) => string,
+      getTradeRepublicStatus?():Promise<{runnerAvailable:boolean; hasSavedCredentials:boolean}>,
+      syncTradeRepublic?(args:{phone?:string; pin?:string; remember?:boolean}):Promise<{records:import('./tradeRepublicSync').TradeRepublicRecord[]; skipped:number}>,
+      forgetTradeRepublicCredentials?():Promise<boolean>,
       quit?():any
     }
   }

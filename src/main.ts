@@ -3,6 +3,7 @@ import path from 'node:path';
 import fs from 'fs';
 import started from 'electron-squirrel-startup';
 import installExtension, { REDUX_DEVTOOLS, REACT_DEVELOPER_TOOLS } from 'electron-devtools-installer';
+import { TradeRepublicSync } from './tradeRepublicSync';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -24,6 +25,7 @@ else {
 
 const dataPath = app.getPath('userData');
 const filePath = path.join(dataPath, 'config.json');
+const tradeRepublicSync = new TradeRepublicSync(dataPath);
 
 let appState: {
   dataPath: string;
@@ -184,6 +186,21 @@ ipcMain.handle('get-config', async (event) => {
   console.log('get-config called in main process with filePath:', filePath);
   return appState
 })
+
+ipcMain.handle('trade-republic:status', async () => ({
+  runnerAvailable: await tradeRepublicSync.isRunnerAvailable(),
+  hasSavedCredentials: tradeRepublicSync.hasSavedCredentials(),
+}));
+
+ipcMain.handle('trade-republic:sync', async (_event, args: { phone?: string; pin?: string; remember?: boolean }) => {
+  const credentials = args.phone && args.pin ? { phone: args.phone, pin: args.pin } : null;
+  return tradeRepublicSync.sync(credentials, !!args.remember);
+});
+
+ipcMain.handle('trade-republic:forget', async () => {
+  tradeRepublicSync.forgetCredentials();
+  return true;
+});
 
 ipcMain.on('save-theme', (event, arg) => {
   Object.assign(appState, { theme: arg });

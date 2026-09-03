@@ -79,4 +79,7 @@ contextBridge.exposeInMainWorld('API', {
   openFiles: () => ipcRenderer.invoke('dialog:openFiles'),
   parsePDF: (filePath: string) => ipcRenderer.invoke('pdf:parse', filePath),
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
+  getTradeRepublicStatus: () => ipcRenderer.invoke('trade-republic:status'),
+  syncTradeRepublic: (args: { phone?: string; pin?: string; remember?: boolean }) => ipcRenderer.invoke('trade-republic:sync', args),
+  forgetTradeRepublicCredentials: () => ipcRenderer.invoke('trade-republic:forget'),
 })

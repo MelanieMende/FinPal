@@ -8,6 +8,7 @@ import * as dividendsReducer from './../../../store/dividends/dividends.reducer'
 import * as assetCreationReducer from './../../../store/assetCreation/assetCreation.reducer';
 import * as appStateReducer from './../../../store/appState/appState.reducer';
 import CreateAndEditAssetOverlay from '../AssetsRoute/components/CreateAndEditAssetOverlay';
+import { isImportedRecord } from '../../../utils/isImportedRecord';
 
 export default function ImportRoute() {
     const pendingImportStorageKey = 'finpal.pendingTradeRepublicImport.v1';
@@ -52,14 +53,7 @@ export default function ImportRoute() {
     }, []);
 
     const isDuplicate = (record: typeof pendingRecords[number], assetID?: number) => {
-        if (!assetID) return false;
-        if (record.type === 'Dividend') {
-            return dividends.some(d => d.date === record.date && d.asset_ID === assetID && Math.abs(d.income - record.totalAmount) < 0.01);
-        }
-        return transactions.some(t =>
-            t.date === record.date && t.asset_ID === assetID && t.type === record.type &&
-            Math.abs(Math.abs(t.in_out) - record.totalAmount) < 0.05
-        );
+        return isImportedRecord(record, assetID, transactions, dividends);
     };
 
     const importableCount = pendingRecords.filter((record, index) =>
@@ -304,7 +298,7 @@ export default function ImportRoute() {
                                 disabled={duplicateCount === 0}
                                 onClick={() => setShowDuplicates(value => !value)}
                             >
-                                {showDuplicates ? `Duplikate ausblenden (${duplicateCount})` : `Duplikate einblenden (${duplicateCount})`}
+                                {showDuplicates ? `Bereits importierte ausblenden (${duplicateCount})` : `Bereits importierte einblenden (${duplicateCount})`}
                             </Button>
                         </div>
                         <HTMLTable interactive striped className="w-full text-left">
@@ -348,7 +342,7 @@ export default function ImportRoute() {
                                                             className="animate-pulse shadow-sm"
                                                         >
                                                             <Icon icon="duplicate" size={10} className="mr-1" />
-                                                            DUPLICATE
+                                                            BEREITS IMPORTIERT
                                                         </Tag>
                                                     )}
                                                 </div>

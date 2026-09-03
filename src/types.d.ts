@@ -17,7 +17,7 @@ declare global {
       parsePDF?(filePath:string):Promise<string>,
       getPathForFile?: (file: File) => string,
       getTradeRepublicStatus?():Promise<{runnerAvailable:boolean; hasSavedCredentials:boolean}>,
-      syncTradeRepublic?(args:{phone?:string; pin?:string; remember?:boolean}):Promise<{records:import('./tradeRepublicSync').TradeRepublicRecord[]; skipped:number}>,
+      syncTradeRepublic?(args:{phone?:string; pin?:string; remember?:boolean}):Promise<{records:import('./app/utils/tradeRepublicSync').TradeRepublicRecord[]; skipped:number}>,
       forgetTradeRepublicCredentials?():Promise<boolean>,
       quit?():any
     }

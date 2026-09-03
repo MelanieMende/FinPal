@@ -22,6 +22,23 @@ describe('DividendListItem component', () => {
 			expect(dateInput.getAttribute("value")).toEqual('2024-12-01');
 		});
 	});
+
+	it('saves a changed date for the edited dividend', async () => {
+		window.API = {
+			sendToDB: jest.fn().mockResolvedValue([]),
+		};
+		const dividend = { ID: 1, date: "2024-11-01", asset_ID: 14, asset_name: "AssetName", income: 0.39 };
+		render(<DividendListItem i={1} dividend={dividend} />);
+		const dateInput = screen.getByTestId('dateInput_1');
+
+		fireEvent.change(dateInput, { target: { value: '2024-12-01' } });
+		fireEvent.blur(dateInput);
+
+		await waitFor(() => {
+			expect(window.API.sendToDB).toHaveBeenCalledWith(expect.stringContaining("'2024-12-01'"));
+			expect(window.API.sendToDB).toHaveBeenCalledWith(expect.stringContaining("'1'"));
+		});
+	});
 /*
 	it('updates asset select value', async () => {
 		const dividend = { ID: 1, date: "2024-11-01", asset_ID: 14, asset_name: "AssetName", income: 0.39 };

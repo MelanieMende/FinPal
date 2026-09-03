@@ -1,6 +1,6 @@
 import { useAppSelector, useAppDispatch } from '../../../../hooks'
 import { useState } from 'react';
-import * as dividendCreationReducer from '../../../../store/dividendCreation/dividendCreation.reducer';
+import * as dividendsReducer from '../../../../store/dividends/dividends.reducer';
 import TableCell from '../../../../components/Table/TableCell/TableCell';
 
 export default function DividendListItem(props: {i: number, dividend:Dividend}) {
@@ -12,6 +12,15 @@ export default function DividendListItem(props: {i: number, dividend:Dividend}) 
 	const [assetInput, setAssetInput] = useState(props.dividend.asset_ID);
 	const [incomeInput, setIncomeInput] = useState(props.dividend.income || '');
 
+	function validateAndSave() {
+		dispatch(dividendsReducer.saveDividend({
+			dividend: props.dividend,
+			dateInput,
+			assetInput,
+			incomeInput: incomeInput.toString(),
+		}));
+	}
+
   return (
     <tr data-testid={"DividendListItem_" + props.i} className="border-b border-white/5 last:border-0 hover:bg-white/5 transition-colors">
 			<TableCell className="p-3 text-gray-500 font-mono text-xs">{props.i}</TableCell>
@@ -22,7 +31,7 @@ export default function DividendListItem(props: {i: number, dividend:Dividend}) 
 					value={dateInput} 
 					className="bg-transparent border-0 text-sm text-gray-200 focus:ring-0 w-full"
 					onChange={(e) => setDateInput(e.target.value)} 
-					onBlur={(e) => dispatch(dividendCreationReducer.validateAndSave())} 
+					onBlur={validateAndSave}
 				/>
 			</TableCell>
       <TableCell className="p-3">
@@ -32,7 +41,7 @@ export default function DividendListItem(props: {i: number, dividend:Dividend}) 
 					value={assetInput} 
 					className="bg-transparent border-0 text-sm text-gray-200 focus:ring-0 w-full cursor-pointer"
 					onChange={(e) => setAssetInput(Number.parseInt(e.target.value))} 
-					onBlur={(e) => dispatch(dividendCreationReducer.validateAndSave())}>
+					onBlur={validateAndSave}>
           {assets.map((asset, i) => {
 							return (<option key={asset.ID} value={asset.ID}>{asset.name}</option>)
 					})}
@@ -46,7 +55,7 @@ export default function DividendListItem(props: {i: number, dividend:Dividend}) 
 						value={incomeInput} 
 						className="bg-transparent border-0 text-right text-sm focus:ring-0 w-24"
 						onChange={(e) => setIncomeInput(e.target.value)} 
-						onBlur={(e) => dispatch(dividendCreationReducer.validateAndSave())} 
+						onBlur={validateAndSave}
 					/>
 					<span className="ml-1">€</span>
 				</div>

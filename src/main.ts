@@ -3,7 +3,7 @@ import path from 'node:path';
 import fs from 'fs';
 import started from 'electron-squirrel-startup';
 import installExtension, { REDUX_DEVTOOLS, REACT_DEVELOPER_TOOLS } from 'electron-devtools-installer';
-import { TradeRepublicSync } from './tradeRepublicSync';
+import { TradeRepublicSync } from './app/utils/tradeRepublicSync';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {

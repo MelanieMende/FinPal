@@ -1,4 +1,5 @@
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit'
+import { loadAsset } from './../assets/assets.reducer'
 
 export const initialState = [] as Dividend[]
 
@@ -10,7 +11,9 @@ export const loadDividends = createAsyncThunk(
 		var result = await window.API.sendToDB(sql)
 		console.log('result - load dividends: ', result)
 
-		thunkAPI.dispatch(setDividends(result))
+		// Complete the state update before callers continue. The import list derives
+		// its "Bereits importiert" status from this dividends state.
+		await thunkAPI.dispatch(setDividends(result))
   }
 )
 
@@ -20,6 +23,27 @@ export const setDividends = createAsyncThunk(
 		const sorted = dividends.slice().sort((a:Dividend, b:Dividend) => sortBy(a, b, 'date', 'desc'))
 		thunkAPI.dispatch(setDividendsInternal(sorted))
   }
+)
+
+export const saveDividend = createAsyncThunk(
+	'dividends/saveDividend',
+	async (props: { dividend: Dividend, dateInput: string, assetInput: number, incomeInput: string }, thunkAPI) => {
+		if (!props.dateInput || !props.assetInput || !props.incomeInput) return
+
+		const income = props.incomeInput.replace(',', '.')
+		const sql = `
+			INSERT OR REPLACE INTO dividends (ID, date, asset_ID, income)
+			VALUES (
+				'${props.dividend.ID}',
+				'${props.dateInput}',
+				'${props.assetInput}',
+				'${income}'
+			)`
+
+		await window.API.sendToDB(sql)
+		await thunkAPI.dispatch(loadDividends())
+		await thunkAPI.dispatch(loadAsset({ assetID: props.assetInput }))
+	}
 )
 
 export function sortBy(a:Dividend, b:Dividend, property:string, direction:'asc'|'desc') {

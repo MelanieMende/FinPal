@@ -19,6 +19,7 @@ export default function ImportRoute() {
     const { pendingRecords, isLoading, error } = useAppSelector(state => state.import);
     const [mappings, setMappings] = useState<{ [key: string]: number }>({});
     const [importing, setImporting] = useState(false);
+    const [importingRecordIndex, setImportingRecordIndex] = useState<number | null>(null);
     const [isDragging, setIsDragging] = useState(false);
     const [showSuccessAlert, setShowSuccessAlert] = useState(false);
     const [showErrorAlert, setShowErrorAlert] = useState(false);
@@ -30,6 +31,15 @@ export default function ImportRoute() {
     const [trMessage, setTrMessage] = useState<string | null>(null);
     const [pendingCacheReady, setPendingCacheReady] = useState(false);
     const [showDuplicates, setShowDuplicates] = useState(false);
+
+    const recordMappingKey = (record: typeof pendingRecords[number]) => JSON.stringify([
+        record.date,
+        record.type,
+        record.isin,
+        record.assetName,
+        record.shares,
+        record.totalAmount,
+    ]);
     useEffect(() => {
         if (pendingRecords.length > 0) return;
         try {
@@ -56,11 +66,11 @@ export default function ImportRoute() {
         return isImportedRecord(record, assetID, transactions, dividends);
     };
 
-    const importableCount = pendingRecords.filter((record, index) =>
-        !!mappings[index] && !isDuplicate(record, mappings[index])
+    const importableCount = pendingRecords.filter(record =>
+        !!mappings[recordMappingKey(record)] && !isDuplicate(record, mappings[recordMappingKey(record)])
     ).length;
-    const duplicateCount = pendingRecords.filter((record, index) =>
-        isDuplicate(record, mappings[index])
+    const duplicateCount = pendingRecords.filter(record =>
+        isDuplicate(record, mappings[recordMappingKey(record)])
     ).length;
 
     const handleDragOver = (e: React.DragEvent) => {
@@ -92,16 +102,20 @@ export default function ImportRoute() {
 
     // Initial mapping based on ISIN or Name
     useEffect(() => {
-        const newMappings = { ...mappings };
-        pendingRecords.forEach((record, index) => {
-            if (newMappings[index] === undefined) {
+        setMappings(currentMappings => {
+            const newMappings = { ...currentMappings };
+            let changed = false;
+            pendingRecords.forEach(record => {
+                const mappingKey = recordMappingKey(record);
+                if (newMappings[mappingKey] !== undefined) return;
                 const foundAsset = assets.find(a => (a.isin && a.isin === record.isin) || (a.name?.toLowerCase() === record.assetName?.toLowerCase() && a.name));
                 if (foundAsset) {
-                    newMappings[index] = foundAsset.ID;
+                    newMappings[mappingKey] = foundAsset.ID;
+                    changed = true;
                 }
-            }
+            });
+            return changed ? newMappings : currentMappings;
         });
-        setMappings(newMappings);
     }, [pendingRecords, assets]);
 
     const handleSelectFiles = async () => {
@@ -144,6 +158,52 @@ export default function ImportRoute() {
         setTrMessage('Gespeicherte Zugangsdaten wurden gelöscht.');
     };
 
+    const importRecord = async (record: typeof pendingRecords[number], assetID: number) => {
+        if (record.type === 'Dividend') {
+            const sql = `INSERT INTO dividends (date, asset_ID, income) VALUES ('${record.date}', ${assetID}, ${record.totalAmount})`;
+            const result = await window.API.sendToDB(sql);
+            if (typeof result === 'string') throw new Error(result);
+            return;
+        }
+
+        const mappedAsset = assets.find(asset => asset.ID === assetID);
+        const isBond = mappedAsset?.type === 'Bond';
+        const finalShares = isBond ? 1 : record.shares;
+        const finalPrice = isBond ? record.totalAmount : record.pricePerShare;
+        const type = record.type === 'Buy' ? 'Buy' : 'Sell';
+        const sql = `INSERT INTO transactions (date, type, asset_ID, amount, price_per_share, fee, solidarity_surcharge) VALUES ('${record.date}', '${type}', ${assetID}, ${finalShares}, ${finalPrice}, ${record.fee}, ${record.tax})`;
+        const result = await window.API.sendToDB(sql);
+        if (typeof result === 'string') throw new Error(result);
+    };
+
+    const reloadPortfolioData = async () => {
+        await dispatch(assetsReducer.loadAssets(undefined));
+        await dispatch(transactionsReducer.loadTransactions(undefined));
+        await dispatch(dividendsReducer.loadDividends());
+    };
+
+    const handleImportOne = async (index: number) => {
+        const record = pendingRecords[index];
+        const assetID = record ? mappings[recordMappingKey(record)] : undefined;
+        if (!record || !assetID || isDuplicate(record, assetID)) {
+            setShowErrorAlert(true);
+            return;
+        }
+
+        setImportingRecordIndex(index);
+        try {
+            await importRecord(record, assetID);
+            await reloadPortfolioData();
+
+            dispatch(setPendingRecords(pendingRecords.filter((_pendingRecord, oldIndex) => oldIndex !== index)));
+        } catch (error) {
+            console.error('Import failed:', error);
+            setShowErrorAlert(true);
+        } finally {
+            setImportingRecordIndex(null);
+        }
+    };
+
     const handleImportAll = async () => {
         if (!importableCount) {
             setShowErrorAlert(true);
@@ -154,35 +214,24 @@ export default function ImportRoute() {
             const importedIndices = new Set<number>();
             for (let i = 0; i < pendingRecords.length; i++) {
                 const record = pendingRecords[i];
-                const assetID = mappings[i];
+                const assetID = mappings[recordMappingKey(record)];
                 
                 if (!assetID || isDuplicate(record, assetID)) continue;
 
-                if (record.type === 'Dividend') {
-                    const sql = `INSERT INTO dividends (date, asset_ID, income) VALUES ('${record.date}', ${assetID}, ${record.totalAmount})`;
-                    const result = await window.API.sendToDB(sql);
-                    if (typeof result === 'string') throw new Error(result);
-                } else {
-                    const mappedAsset = assets.find(a => a.ID === assetID);
-                    const isBond = mappedAsset?.type === 'Bond';
-                    const finalShares = isBond ? 1 : record.shares;
-                    const finalPrice = isBond ? record.totalAmount : record.pricePerShare;
-
-                    const type = record.type === 'Buy' ? 'Buy' : 'Sell';
-                    const sql = `INSERT INTO transactions (date, type, asset_ID, amount, price_per_share, fee, solidarity_surcharge) VALUES ('${record.date}', '${type}', ${assetID}, ${finalShares}, ${finalPrice}, ${record.fee}, ${record.tax})`;
-                    const result = await window.API.sendToDB(sql);
-                    if (typeof result === 'string') throw new Error(result);
-                }
+                await importRecord(record, assetID);
                 importedIndices.add(i);
             }
 
-            // Reload global data to reflect new transactions
-            await dispatch(assetsReducer.loadAssets(undefined));
-            await dispatch(transactionsReducer.loadTransactions(undefined));
-            await dispatch(dividendsReducer.loadDividends());
+            await reloadPortfolioData();
             
-            dispatch(setPendingRecords(pendingRecords.filter((_record, index) => !importedIndices.has(index))));
-            setMappings({});
+            const remainingRecords = pendingRecords.filter((_record, index) => !importedIndices.has(index));
+            dispatch(setPendingRecords(remainingRecords));
+            setMappings(currentMappings => Object.fromEntries(
+                remainingRecords
+                    .map(record => recordMappingKey(record))
+                    .filter(mappingKey => currentMappings[mappingKey] !== undefined)
+                    .map(mappingKey => [mappingKey, currentMappings[mappingKey]])
+            ));
             setShowSuccessAlert(true);
         } catch (e) {
             console.error('Import failed:', e);
@@ -319,13 +368,14 @@ export default function ImportRoute() {
                             </thead>
                             <tbody>
                                 {pendingRecords.map((record, index) => ({ record, index }))
-                                    .filter(({ record, index }) => showDuplicates || !isDuplicate(record, mappings[index]))
+                                    .filter(({ record }) => showDuplicates || !isDuplicate(record, mappings[recordMappingKey(record)]))
                                     .map(({ record, index }) => {
-                                    const mappedAsset = assets.find(a => a.ID === mappings[index]);
+                                    const mappingKey = recordMappingKey(record);
+                                    const mappedAsset = assets.find(a => a.ID === mappings[mappingKey]);
                                     const isAutoMatched = !!mappedAsset;
                                     
                                     // Duplicate Detection
-                                    const assetID = mappings[index];
+                                    const assetID = mappings[mappingKey];
                                     const duplicate = isDuplicate(record, assetID);
 
                                     return (
@@ -359,32 +409,25 @@ export default function ImportRoute() {
                                             <td className="text-gray-400 font-mono text-sm">{record.isin}</td>
                                             <td className="font-semibold text-white">{record.assetName}</td>
                                             <td>
-                                                {isAutoMatched ? (
-                                                    <div className="flex items-center gap-2">
-                                                        <Tag intent={Intent.SUCCESS} minimal icon="tick-circle">
-                                                            {mappedAsset.name}
-                                                        </Tag>
-                                                        <select
-                                                            aria-label="Asset-Zuordnung ändern"
-                                                            value={mappings[index] || ''}
-                                                            className="bg-gray-800 border border-gray-600 rounded text-xs p-1"
-                                                            onChange={(e) => setMappings({ ...mappings, [index]: Number(e.target.value) })}
-                                                        >
-                                                            {assets.map(a => <option key={a.ID} value={a.ID}>{a.name}</option>)}
-                                                        </select>
-                                                    </div>
-                                                ) : (
-                                                    <div className="flex items-center gap-2">
-                                                        <Tag intent={Intent.WARNING} minimal icon="warning-sign">
-                                                            Needs Mapping
-                                                        </Tag>
-                                                        <select 
-                                                            className="bg-gray-800 border border-gray-600 rounded text-xs p-1"
-                                                            onChange={(e) => setMappings({ ...mappings, [index]: parseInt(e.target.value) })}
-                                                        >
+                                                <div className="flex items-center gap-2">
+                                                    <Tag
+                                                        intent={isAutoMatched ? Intent.SUCCESS : Intent.WARNING}
+                                                        minimal
+                                                        icon={isAutoMatched ? 'tick-circle' : 'warning-sign'}
+                                                        title={isAutoMatched ? 'Asset zugeordnet' : 'Zuordnung fehlt'}
+                                                    />
+                                                    <select
+                                                        aria-label="Asset-Zuordnung ändern"
+                                                        value={mappings[mappingKey] || ''}
+                                                        className="bg-gray-800 border border-gray-600 rounded text-xs p-1"
+                                                        onChange={(e) => setMappings({ ...mappings, [mappingKey]: Number(e.target.value) })}
+                                                    >
+                                                        {!isAutoMatched && (
                                                             <option value="">Select Asset...</option>
-                                                            {assets.map(a => <option key={a.ID} value={a.ID}>{a.name}</option>)}
-                                                        </select>
+                                                        )}
+                                                        {assets.map(a => <option key={a.ID} value={a.ID}>{a.name}</option>)}
+                                                    </select>
+                                                    {!isAutoMatched && (
                                                         <Button 
                                                             icon="plus" 
                                                             minimal 
@@ -398,8 +441,8 @@ export default function ImportRoute() {
                                                         >
                                                             Create
                                                         </Button>
-                                                    </div>
-                                                )}
+                                                    )}
+                                                </div>
                                             </td>
                                             <td style={{ textAlign: 'right' }} className="font-mono text-blue-300">{mappedAsset?.type === 'Bond' ? '1.000000' : (record.shares ? record.shares.toFixed(6) : '-')}</td>
                                             <td style={{ textAlign: 'right' }} className="font-mono text-gray-300 text-nowrap">{mappedAsset?.type === 'Bond' ? record.totalAmount.toFixed(2) + ' €' : (record.pricePerShare ? record.pricePerShare.toFixed(2) + ' €' : '-')}</td>
@@ -407,7 +450,31 @@ export default function ImportRoute() {
                                             <td style={{ textAlign: 'right' }} className="font-mono text-red-300 text-nowrap">{record.tax ? record.tax.toFixed(2) + ' €' : '0,00 €'}</td>
                                             <td style={{ textAlign: 'right' }} className="font-bold text-white font-mono text-nowrap">{record.totalAmount.toFixed(2)} €</td>
                                             <td className="text-right">
-                                                <Button icon="trash" intent={Intent.DANGER} minimal onClick={() => dispatch(removeRecord(index))} />
+                                                <div className="flex justify-end gap-1">
+                                                    {!duplicate && (
+                                                        <Button
+                                                            icon={assetID ? 'cloud-upload' : 'warning-sign'}
+                                                            text={assetID ? 'Importieren' : 'Zuordnung fehlt'}
+                                                            title={!assetID ? 'Zuerst Asset zuordnen' : 'Einzeln importieren'}
+                                                            intent={assetID ? Intent.SUCCESS : Intent.NONE}
+                                                            small
+                                                            loading={importingRecordIndex === index}
+                                                            disabled={importing || importingRecordIndex !== null || !assetID}
+                                                            onClick={() => handleImportOne(index)}
+                                                            className={assetID
+                                                                ? 'w-36 justify-center font-semibold !text-white'
+                                                                : 'w-36 justify-center font-semibold !bg-gray-700 !text-gray-400 !border-gray-600 disabled:opacity-70'
+                                                            }
+                                                        />
+                                                    )}
+                                                    <Button
+                                                        icon="trash"
+                                                        intent={Intent.DANGER}
+                                                        minimal
+                                                        disabled={importing || importingRecordIndex !== null}
+                                                        onClick={() => dispatch(removeRecord(index))}
+                                                    />
+                                                </div>
                                             </td>
                                         </tr>
                                     );

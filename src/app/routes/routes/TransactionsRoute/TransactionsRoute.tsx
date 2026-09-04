@@ -47,7 +47,7 @@ export default function TransactionsRoute() {
 										<AssetFilter filter={filterForAssets} onChange={appStateReducer.transactions_AssetFilter_ToggleAsset} />
 									</div>
 								</th>
-								<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider">Shares</th>
+								<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider w-[130px] min-w-[130px]">Shares</th>
 								<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider">Total Shares</th>
 								<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider">Price / Share</th>
 								<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider">Fees</th>

@@ -75,7 +75,7 @@ export default function TransactionCreation() {
 					value={amountInput} 
 					onChange={(e) => dispatch(transactionCreationReducer.setAmountInput(e.target.value))} 
 					onBlur={() => dispatch(transactionCreationReducer.handleAmountInputGotTouched())} 
-					className="text-right glass-input-minimal text-sm font-bold bg-white/5 border border-white/10 rounded px-1 text-white w-20 outline-none focus:border-blue-500/50"
+					className="text-right glass-input-minimal text-sm font-bold bg-white/5 border border-white/10 rounded px-1 text-white w-full outline-none focus:border-blue-500/50"
 				/>
 			</TableCell>
 
@@ -139,4 +139,4 @@ export default function TransactionCreation() {
 			</TableCell>
     </tr>
 	);
-}
+}

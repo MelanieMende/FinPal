@@ -91,6 +91,33 @@ describe('AssetFilter component', () => {
     expect(checkbox2).not.toBeChecked();
   });
 
+  it('toggles an asset only once when its checkbox is clicked', async () => {
+		const onChange = (assetID: number) => ({ type: 'filter/toggle', payload: assetID });
+		await act(async () => render(
+			<Provider store={store}>
+				<AssetFilter filter={[]} onChange={onChange} />
+			</Provider>
+		));
+		fireEvent.click(screen.getByTestId('asset-filter-button'));
+
+		fireEvent.click(screen.getByTestId('asset-filter-checkbox-1'));
+
+		expect(store.getActions()).toEqual([{ type: 'filter/toggle', payload: 1 }]);
+	});
+
+	it('supports assets without a symbol', async () => {
+		store = mockStore({ assets: [{ ID: 1, type: 'Stock', name: 'Asset without symbol' }] });
+		await act(async () => render(
+			<Provider store={store}>
+				<AssetFilter filter={[]} onChange={mockOnChange} />
+			</Provider>
+		));
+
+		fireEvent.click(screen.getByTestId('asset-filter-button'));
+
+		expect(screen.getByTestId('asset-filter-item-1')).toBeInTheDocument();
+	});
+
   it('renders no items when the assets list is empty', async () => {
     store = mockStore({ assets: [] });
 

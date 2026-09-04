@@ -33,6 +33,12 @@ describe('AppState reducer', () => {
 	})
 
 	describe('toggleTransactionsAssetFilter', () => {
+		it('recovers from a missing persisted filter and normalizes string IDs', () => {
+			const brokenState = Object.assign({}, appStateReducer.initialState, { transactions_AssetFilter: undefined });
+			const normalized = reducer(brokenState, appStateReducer.setTransactionsAssetFilter(['2']));
+			expect(normalized.transactions_AssetFilter).toEqual([2]);
+			expect(reducer(brokenState, appStateReducer.toggleTransactionsAssetFilter(1)).transactions_AssetFilter).toEqual([1]);
+		})
 		it('should add AssetID if not yet in array', () => {
 			expect(reducer(appStateReducer.initialState, appStateReducer.toggleTransactionsAssetFilter(1))).toEqual(
 				Object.assign({}, appStateReducer.initialState, {

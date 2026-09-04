@@ -37,7 +37,7 @@ export const transactions_AssetFilter_ToggleAsset = createAsyncThunk(
 		console.log("Toggling asset with ID: " + assetID)
 		thunkAPI.dispatch(toggleTransactionsAssetFilter(assetID))
 		let state:any = thunkAPI.getState()
-		window.API.saveTransactionsAssetFilter(state.appState.transactions_AssetFilter)
+		await window.API.saveTransactionsAssetFilter?.(state.appState.transactions_AssetFilter)
 	}
 )
 
@@ -61,17 +61,22 @@ const appStateSlice = createSlice({
 			state.showAssetOverlay = action.payload
 		},
 		setTransactionsAssetFilter(state, action) {
-			state.transactions_AssetFilter = action.payload
+			state.transactions_AssetFilter = Array.isArray(action.payload)
+				? action.payload.map(Number).filter(Number.isFinite)
+				: []
 		},
 		toggleTransactionsAssetFilter(state, action: { payload: number }) {
+			if (!Array.isArray(state.transactions_AssetFilter)) state.transactions_AssetFilter = []
+			const assetID = Number(action.payload)
+			if (!Number.isFinite(assetID)) return
 			console.log("Toggling asset with ID: " + action.payload)
-			if(!state.transactions_AssetFilter.includes(action.payload)) {
+			if(!state.transactions_AssetFilter.includes(assetID)) {
 				console.log("Adding asset to filter")
-				state.transactions_AssetFilter.push(action.payload)
+				state.transactions_AssetFilter.push(assetID)
 			}
       else {
 				console.log("Removing asset from filter")
-				state.transactions_AssetFilter.splice(state.transactions_AssetFilter.indexOf(action.payload), 1)
+				state.transactions_AssetFilter.splice(state.transactions_AssetFilter.indexOf(assetID), 1)
 			}
 		},
 		dividends_AssetFilter_ToggleAsset(state, action: { payload: number }) {

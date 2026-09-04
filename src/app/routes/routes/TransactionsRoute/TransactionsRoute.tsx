@@ -9,12 +9,15 @@ import Table from '../../../components/Table/Table';
 import * as appStateReducer from '../../../store/appState/appState.reducer';
 
 export default function TransactionsRoute() {
-	const filterForAssets = useAppSelector(state => state.appState.transactions_AssetFilter);
+	const storedAssetFilter = useAppSelector(state => state.appState.transactions_AssetFilter);
+	const filterForAssets = Array.isArray(storedAssetFilter)
+		? storedAssetFilter.map(Number).filter(Number.isFinite)
+		: [];
 	const transactions = useAppSelector(state => state.transactions);
 
 	const filteredTransactions = transactions.filter((transaction) => {
 		if (filterForAssets && filterForAssets.length > 0) {
-			return filterForAssets.includes(transaction.asset_ID);
+			return filterForAssets.includes(Number(transaction.asset_ID));
 		}
 		return true;
 	});

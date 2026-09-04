@@ -7,7 +7,7 @@ import {
 	Intent,
 	Popover,
 	InputGroup,
-	Checkbox,
+	Icon,
 	Menu,
 	MenuItem,
 	Divider
@@ -20,8 +20,8 @@ export default function AssetFilter(props: {filter:number[], onChange:any}) {
 	
 	const sorted_assets = assetSelector.selectAssetsSortedByName(assets, 'asc');
 	const filtered_assets = sorted_assets.filter(asset => 
-		asset.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
-		asset.symbol.toLowerCase().includes(searchTerm.toLowerCase())
+		(asset.name || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
+		(asset.symbol || '').toLowerCase().includes(searchTerm.toLowerCase())
 	);
 
 	const activeCount = props.filter ? props.filter.length : 0;
@@ -46,9 +46,7 @@ export default function AssetFilter(props: {filter:number[], onChange:any}) {
 						small 
 						text="Clear All" 
 						onClick={() => {
-							// For each asset currently in filter, toggle it (since clear isn't a single action in the reducer)
-							// Actually, the reducer handles toggling. If we want to clear all, we need a better action.
-							// For now, let's just use the toggle logic as requested.
+							props.filter.forEach(assetID => dispatch(props.onChange(assetID)));
 						}} 
 						className="text-[10px] uppercase font-bold text-gray-400 hover:text-white"
 					/>
@@ -69,17 +67,19 @@ export default function AssetFilter(props: {filter:number[], onChange:any}) {
 											<span className="text-sm font-semibold text-white">{asset.name}</span>
 											<span className="text-[10px] text-gray-500 uppercase">{asset.symbol}</span>
 										</div>
-										<Checkbox 
-											inputRef={(input) => {
-												if (input) {
-													input.dataset.testid = `asset-filter-checkbox-${asset.ID}`;
-													input.setAttribute('aria-label', asset.name);
-												}
-											}}
-											checked={props.filter ? props.filter.includes(asset.ID) : false}
-											onChange={() => dispatch(props.onChange(asset.ID))}
-											className="m-0"
-										/>
+									<span
+										data-testid={`asset-filter-checkbox-${asset.ID}`}
+										aria-label={asset.name}
+										aria-checked={props.filter ? props.filter.includes(asset.ID) : false}
+										role="checkbox"
+										className={`w-4 h-4 shrink-0 rounded-sm border flex items-center justify-center ${
+											props.filter && props.filter.includes(asset.ID)
+												? 'bg-blue-500 border-blue-400 text-white'
+												: 'border-gray-500 bg-transparent'
+										}`}
+									>
+										{props.filter && props.filter.includes(asset.ID) && <Icon icon="tick" size={11} />}
+									</span>
 									</div>
 								}
 								onClick={() => dispatch(props.onChange(asset.ID))}

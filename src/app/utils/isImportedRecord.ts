@@ -16,10 +16,15 @@ export function isImportedRecord(
         );
     }
 
-    return transactions.some(transaction =>
-        transaction.date === record.date &&
-        transaction.asset_ID === assetID &&
-        transaction.type === record.type &&
-        Math.abs(Math.abs(transaction.in_out) - record.totalAmount) < 0.05
-    );
+    return transactions.some(transaction => {
+        const sameTransaction = transaction.date.slice(0, 10) === record.date &&
+            transaction.asset_ID === assetID &&
+            transaction.type.toLowerCase() === record.type.toLowerCase();
+        if (!sameTransaction) return false;
+
+        const shareTolerance = Math.max(0.000001, record.shares * 0.00001);
+        const sameShares = Math.abs(Math.abs(transaction.amount) - record.shares) <= shareTolerance;
+        const sameTotal = Math.abs(Math.abs(transaction.in_out) - record.totalAmount) < 0.05;
+        return sameShares || sameTotal;
+    });
 }

@@ -51,9 +51,14 @@ export function parsePytrJsonLines(contents: string): { records: TradeRepublicRe
       || !totalAmount || (type !== 'Dividend' && !shares)) {
       skipped += 1; continue;
     }
+    const pricePerShare = type === 'Dividend'
+      ? 0
+      : type === 'Sell'
+        ? Math.max(0, (totalAmount + fee + tax) / shares)
+        : Math.max(0, (totalAmount - fee - tax) / shares);
     records.push({
       date, type, assetName: stringValue(row.Note ?? row.note) || isin, isin, shares, fee, tax, totalAmount,
-      pricePerShare: type === 'Dividend' ? 0 : Math.max(0, (totalAmount - fee - tax) / shares),
+      pricePerShare,
     });
   }
   return { records, skipped };

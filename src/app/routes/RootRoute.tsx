@@ -194,7 +194,10 @@ export function setDatabase(database:string, dispatch:any) {
 }
 
 export function setTransactionsAssetFilter(assetIDs:number[], dispatch:any) {
-	dispatch(appStateReducer.setTransactionsAssetFilter(assetIDs))
+	const normalizedAssetIDs = Array.isArray(assetIDs)
+		? assetIDs.map(Number).filter(Number.isFinite)
+		: [];
+	dispatch(appStateReducer.setTransactionsAssetFilter(normalizedAssetIDs))
 }
 
 export function Content() {

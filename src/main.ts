@@ -223,11 +223,14 @@ ipcMain.on('save-selected-tab', (event, arg) => {
   return event.reply('save-selected-tab', true);
 });
 
-ipcMain.on('save-transactions-assetfilter', (event, arg) => {
-  Object.assign(appState, { transactions_AssetFilter: arg.assetIDs });
-  console.log("Saving transactions asset-filter: " + arg.assetIDs);
+ipcMain.on('save-transactions-assetfilter', (event, assetIDs: number[]) => {
+  const normalizedAssetIDs = Array.isArray(assetIDs)
+    ? assetIDs.map(Number).filter(Number.isFinite)
+    : [];
+  Object.assign(appState, { transactions_AssetFilter: normalizedAssetIDs });
+  console.log("Saving transactions asset-filter: " + normalizedAssetIDs);
   fs.writeFileSync( filePath, JSON.stringify(appState))
-  return event.reply('save-selected-tab', true);
+  return event.reply('save-transactions-assetfilter', true);
 });
 
 const sqlite3 = require('sqlite3').verbose();

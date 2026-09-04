@@ -27,4 +27,15 @@ describe('parsePytrJsonLines', () => {
 
     expect(parsePytrJsonLines(input)).toEqual({ records: [], skipped: 3 });
   });
+
+  it('reconstructs the gross Tesla sell price from net value, fees and taxes', () => {
+    const input = JSON.stringify({
+      Date: '2024-12-04', Type: 'Sell', Value: 101.72, Note: 'Tesla',
+      ISIN: 'US88160R1014', Shares: 0.308928, Fees: 1, Taxes: 0.26,
+    });
+
+    const result = parsePytrJsonLines(input);
+
+    expect(result.records[0].pricePerShare).toBeCloseTo(333.35, 2);
+  });
 });

@@ -43,7 +43,9 @@ export class TradeRepublicParser {
       totalAmount = Math.abs(this.parseNumber(amount?.[1] || '0'));
     }
     if (!pricePerShare && shares && totalAmount && type !== 'Dividend') {
-      pricePerShare = Math.max(0, (totalAmount - fee) / shares);
+      pricePerShare = type === 'Sell'
+        ? Math.max(0, (totalAmount + fee + tax) / shares)
+        : Math.max(0, (totalAmount - fee - tax) / shares);
     }
 
     // Incomplete records must never reach the database silently.

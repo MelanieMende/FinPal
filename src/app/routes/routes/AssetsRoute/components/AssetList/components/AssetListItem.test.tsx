@@ -41,6 +41,15 @@ describe('AssetsListItem component', () => {
 		expect(screen.getByTestId('current-invest-1')).toHaveTextContent(/-101,00\s*€/);
 	});
 
+	it('grays out shares, current investment and current value when they are zero', () => {
+		const asset = {ID: 1, type: 'Stock', name: 'test1', symbol: 'TST', isin: 'test_isin_1', current_shares: 0, price: 50, current_invest: 0, avg_price_paid: 50} as Asset;
+		render(<table><tbody><AssetListItem i={1} asset={asset} /></tbody></table>);
+
+		expect(screen.getByTestId('current-shares-1')).toHaveClass('text-slate-500');
+		expect(screen.getByTestId('current-invest-1')).toHaveClass('text-slate-500');
+		expect(screen.getByTestId('current-value-1')).toHaveClass('text-slate-500');
+	});
+
 	it('toggles the transactions belonging to the asset when its row is clicked', () => {
 		const asset = {ID: 1, type: 'Stock', name: 'test1', symbol: 'TST', isin: 'test_isin_1', current_shares: 1, price: 50, current_invest: -50, avg_price_paid: 50} as Asset;
 		const transactions = [

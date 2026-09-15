@@ -107,7 +107,7 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 
 			{/* Shares */}
 			<TableCell className="p-3 text-right">
-				<div className="font-semibold text-white">{shareFormatter.format(props.asset.current_shares || 0)}</div>
+				<div data-testid={"current-shares-" + props.asset.ID} className={`font-semibold ${assetsSelector.get_current_shares_textColor(props.asset) === 'inherit' ? 'text-white' : assetsSelector.get_current_shares_textColor(props.asset)}`}>{shareFormatter.format(props.asset.current_shares || 0)}</div>
 			</TableCell>
 
 			{/* Avg Price Paid */}
@@ -126,12 +126,12 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 
 			{/* Current Invest */}
 			<TableCell className="p-3 text-right">
-				<div data-testid={"current-invest-" + props.asset.ID} className="font-semibold text-blue-300">{euroFormatter.format(current_invest)}</div>
+				<div data-testid={"current-invest-" + props.asset.ID} className={`font-semibold ${assetsSelector.get_current_invest_textColor(props.asset) === 'inherit' ? 'text-blue-300' : assetsSelector.get_current_invest_textColor(props.asset)}`}>{euroFormatter.format(current_invest)}</div>
 			</TableCell>
 
 			{/* Value */}
 			<TableCell className="p-3 text-right">
-				<div className="font-bold text-white">{euroFormatter.format(assetsSelector.get_current_value(props.asset) || 0)}</div>
+				<div data-testid={"current-value-" + props.asset.ID} className={`font-bold ${assetsSelector.get_current_value_textColor(props.asset) === 'inherit' ? 'text-white' : assetsSelector.get_current_value_textColor(props.asset)}`}>{euroFormatter.format(assetsSelector.get_current_value(props.asset) || 0)}</div>
 			</TableCell>
 
 			{/* Profit / Loss */}

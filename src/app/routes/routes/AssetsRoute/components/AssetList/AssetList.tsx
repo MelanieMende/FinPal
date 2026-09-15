@@ -14,21 +14,21 @@ export default function AnalysisRoute() {
 
 	let sum_profit_lost = 0
 	let sum_dividends = 0
-	let sum_in_out = 0
 	let sum_current_invest = 0
+	let sum_current_value = 0
 
 	assets.forEach(asset => {
 		const current_price = asset.price || 0
 		const current_shares = asset.current_shares || 0
 		const current_invest = asset.current_invest || 0
 		const dividends_earned = asset.dividends_earned || 0
-		const current_sum_in_out = asset.current_sum_in_out || 0
+		const current_value = current_shares * current_price
 
-		const current_profit_loss = (current_shares * current_price) + current_invest
+		const current_profit_loss = current_value + current_invest
 		sum_profit_lost += current_profit_loss
 		sum_dividends += dividends_earned
-		sum_in_out += current_sum_in_out + dividends_earned + (current_shares * current_price)
 		sum_current_invest += current_invest
+		sum_current_value += current_value
 	});
 	
 	const sum_profit_loss_formatted = (Math.round(sum_profit_lost * 100) / 100).toFixed(2) + " €"
@@ -65,7 +65,7 @@ export default function AnalysisRoute() {
 					<TableCell className="p-3 text-right">—</TableCell>
 					<TableCell className="p-3 text-right">—</TableCell>
 					<TableCell className="p-3 text-right text-blue-300">{euroFormatter.format(sum_current_invest)}</TableCell>
-					<TableCell className="p-3 text-right">{euroFormatter.format(sum_in_out - sum_dividends - sum_profit_lost)}</TableCell>
+					<TableCell dataTestID="CurrentValueSum" className="p-3 text-right">{euroFormatter.format(sum_current_value)}</TableCell>
 					<TableCell id="TableCellSumProfitLoss" className="p-3 text-center">
 						<div className={`px-3 py-1 rounded-full text-xs font-bold inline-block ${sum_profit_lost >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
 							{sum_profit_loss_formatted}

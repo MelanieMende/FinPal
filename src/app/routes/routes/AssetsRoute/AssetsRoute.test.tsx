@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import { render } from '../../../../testing/test-utils'
 import AssetsRoute from './AssetsRoute';
 
@@ -25,6 +25,17 @@ describe('AssetsRoute component', () => {
       const { getByText } = within(getAllById('TableCellSumProfitLoss')[0])
       expect(getByText('400.00 €')).toBeDefined()
     })
+  });
+
+  it('sums current value from the shares and current price of every asset', () => {
+    const assets = [
+      {ID: 1, name: 'Asset 1', symbol: 'A1', isin: 'ISIN1', current_shares: 2, price: 50, current_invest: -80},
+      {ID: 2, name: 'Asset 2', symbol: 'A2', isin: 'ISIN2', current_shares: 3, price: 25, current_invest: -60},
+    ] as Asset[];
+
+    render(<AssetsRoute />, { preloadedState: { assets } });
+
+    expect(screen.getByTestId('TableCellCurrentValueSum')).toHaveTextContent(/175,00\s*€/);
   });
 
   it('renders correctly with empty assets', async () => {

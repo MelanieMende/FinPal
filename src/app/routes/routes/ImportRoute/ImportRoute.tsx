@@ -11,6 +11,7 @@ import CreateAndEditAssetOverlay from '../AssetsRoute/components/CreateAndEditAs
 import { isImportedRecord } from '../../../utils/isImportedRecord';
 import { normalizePendingRecord } from '../../../utils/normalizePendingRecord';
 import { selectAssetsSortedByName } from '../../../store/assets/assets.selectors';
+import { getImportTransactionValues } from '../../../utils/getImportTransactionValues';
 
 export default function ImportRoute() {
     const pendingImportStorageKey = 'finpal.pendingTradeRepublicImport.v1';
@@ -187,10 +188,9 @@ export default function ImportRoute() {
 
         const mappedAsset = assets.find(asset => asset.ID === assetID);
         const isBond = mappedAsset?.type === 'Bond';
-        const finalShares = isBond ? 1 : record.shares;
-        const finalPrice = isBond ? record.totalAmount : record.pricePerShare;
+        const transactionValues = getImportTransactionValues(record, isBond);
         const type = record.type === 'Buy' ? 'Buy' : 'Sell';
-        const sql = `INSERT INTO transactions (date, type, asset_ID, amount, price_per_share, fee, solidarity_surcharge) VALUES ('${record.date}', '${type}', ${assetID}, ${finalShares}, ${finalPrice}, ${record.fee}, ${record.tax})`;
+        const sql = `INSERT INTO transactions (date, type, asset_ID, amount, price_per_share, fee, solidarity_surcharge) VALUES ('${record.date}', '${type}', ${assetID}, ${transactionValues.shares}, ${transactionValues.pricePerShare}, ${record.fee}, ${record.tax})`;
         const result = await window.API.sendToDB(sql);
         if (typeof result === 'string') throw new Error(result);
     };
@@ -392,6 +392,7 @@ export default function ImportRoute() {
                                     const mappingKey = recordMappingKey(record);
                                     const mappedAsset = assets.find(a => a.ID === mappings[mappingKey]);
                                     const isAutoMatched = !!mappedAsset;
+                                    const previewValues = getImportTransactionValues(record, mappedAsset?.type === 'Bond');
                                     
                                     // Duplicate Detection
                                     const assetID = mappings[mappingKey];
@@ -461,8 +462,8 @@ export default function ImportRoute() {
                                                     )}
                                                 </div>
                                             </td>
-                                            <td style={{ textAlign: 'right' }} className="font-mono text-blue-300">{mappedAsset?.type === 'Bond' ? '1.000000' : (record.shares ? record.shares.toFixed(6) : '-')}</td>
-                                            <td style={{ textAlign: 'right' }} className="font-mono text-gray-300 text-nowrap">{mappedAsset?.type === 'Bond' ? record.totalAmount.toFixed(2) + ' €' : (record.pricePerShare ? record.pricePerShare.toFixed(2) + ' €' : '-')}</td>
+                                            <td style={{ textAlign: 'right' }} className="font-mono text-blue-300">{previewValues.shares ? previewValues.shares.toFixed(6) : '-'}</td>
+                                            <td style={{ textAlign: 'right' }} className="font-mono text-gray-300 text-nowrap">{previewValues.pricePerShare ? previewValues.pricePerShare.toFixed(2) + ' €' : '-'}</td>
                                             <td style={{ textAlign: 'right' }} className="font-mono text-orange-300 text-nowrap">{record.fee ? record.fee.toFixed(2) + ' €' : '0,00 €'}</td>
                                             <td style={{ textAlign: 'right' }} className="font-mono text-red-300 text-nowrap">{record.tax ? record.tax.toFixed(2) + ' €' : '0,00 €'}</td>
                                             <td style={{ textAlign: 'right' }} className="font-bold text-white font-mono text-nowrap">{record.totalAmount.toFixed(2)} €</td>

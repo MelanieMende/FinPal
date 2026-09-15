@@ -38,4 +38,16 @@ describe('parsePytrJsonLines', () => {
 
     expect(result.records[0].pricePerShare).toBeCloseTo(333.35, 2);
   });
+
+  it('uses the cash-flow sign to recognize the Nikola row as a sell', () => {
+    const input = JSON.stringify({
+      Date: '2025-03-17', Type: 'Buy', Value: 0.95, Note: 'Nikola',
+      ISIN: 'US6541103031', Shares: 0.532481, Fees: 1, Taxes: 0,
+    });
+
+    const result = parsePytrJsonLines(input);
+
+    expect(result.records[0]).toEqual(expect.objectContaining({ type: 'Sell' }));
+    expect(result.records[0].pricePerShare).toBeCloseTo(3.66, 2);
+  });
 });

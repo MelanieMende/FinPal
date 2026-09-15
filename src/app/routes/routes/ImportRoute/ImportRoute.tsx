@@ -9,11 +9,14 @@ import * as assetCreationReducer from './../../../store/assetCreation/assetCreat
 import * as appStateReducer from './../../../store/appState/appState.reducer';
 import CreateAndEditAssetOverlay from '../AssetsRoute/components/CreateAndEditAssetOverlay';
 import { isImportedRecord } from '../../../utils/isImportedRecord';
+import { normalizePendingRecord } from '../../../utils/normalizePendingRecord';
+import { selectAssetsSortedByName } from '../../../store/assets/assets.selectors';
 
 export default function ImportRoute() {
     const pendingImportStorageKey = 'finpal.pendingTradeRepublicImport.v1';
     const dispatch = useAppDispatch();
     const assets = useAppSelector(state => state.assets);
+    const sortedAssets = selectAssetsSortedByName(assets, 'asc');
     const transactions = useAppSelector(state => state.transactions);
     const dividends = useAppSelector(state => state.dividends);
     const { pendingRecords, isLoading, error } = useAppSelector(state => state.import);
@@ -57,6 +60,13 @@ export default function ImportRoute() {
         if (pendingRecords.length > 0) localStorage.setItem(pendingImportStorageKey, JSON.stringify(pendingRecords));
         else localStorage.removeItem(pendingImportStorageKey);
     }, [pendingRecords, pendingCacheReady]);
+
+    useEffect(() => {
+        const normalizedRecords = pendingRecords.map(normalizePendingRecord);
+        if (normalizedRecords.some((record, index) => record !== pendingRecords[index])) {
+            dispatch(setPendingRecords(normalizedRecords));
+        }
+    }, [pendingRecords]);
 
     useEffect(() => {
         window.API.getTradeRepublicStatus?.().then(setTrStatus).catch(() => setTrStatus({ runnerAvailable: false, hasSavedCredentials: false }));
@@ -123,6 +133,15 @@ export default function ImportRoute() {
         if (files && files.length > 0) {
             dispatch(loadFiles(files));
         }
+    };
+
+    const handleAssetMappingChange = (mappingKey: string, value: string) => {
+        setMappings(currentMappings => {
+            const newMappings = { ...currentMappings };
+            if (value === '') delete newMappings[mappingKey];
+            else newMappings[mappingKey] = Number(value);
+            return newMappings;
+        });
     };
 
     const handleTradeRepublicSync = async () => {
@@ -420,12 +439,10 @@ export default function ImportRoute() {
                                                         aria-label="Asset-Zuordnung ändern"
                                                         value={mappings[mappingKey] || ''}
                                                         className="bg-gray-800 border border-gray-600 rounded text-xs p-1"
-                                                        onChange={(e) => setMappings({ ...mappings, [mappingKey]: Number(e.target.value) })}
+                                                        onChange={(e) => handleAssetMappingChange(mappingKey, e.target.value)}
                                                     >
-                                                        {!isAutoMatched && (
-                                                            <option value="">Select Asset...</option>
-                                                        )}
-                                                        {assets.map(a => <option key={a.ID} value={a.ID}>{a.name}</option>)}
+                                                        <option value="">Keine Zuordnung</option>
+                                                        {sortedAssets.map(a => <option key={a.ID} value={a.ID}>{a.name}</option>)}
                                                     </select>
                                                     {!isAutoMatched && (
                                                         <Button 

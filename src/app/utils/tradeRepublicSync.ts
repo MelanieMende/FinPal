@@ -38,7 +38,7 @@ export function parsePytrJsonLines(contents: string): { records: TradeRepublicRe
     let row: PytrRow;
     try { row = JSON.parse(line) as PytrRow; } catch { skipped += 1; continue; }
     const rawType = stringValue(row.Type ?? row.type).toLowerCase();
-    const type = rawType.includes('buy') ? 'Buy'
+    let type: TradeRepublicRecord['type'] | null = rawType.includes('buy') ? 'Buy'
       : rawType.includes('sell') ? 'Sell'
       : (rawType.includes('dividend') || rawType.includes('distribution')) ? 'Dividend' : null;
     const date = stringValue(row.Date ?? row.date).slice(0, 10);
@@ -46,7 +46,11 @@ export function parsePytrJsonLines(contents: string): { records: TradeRepublicRe
     const shares = Math.abs(numberValue(row.Shares ?? row.shares));
     const fee = Math.abs(numberValue(row.Fees ?? row.fees));
     const tax = Math.abs(numberValue(row.Taxes ?? row.taxes));
-    const totalAmount = Math.abs(numberValue(row.Value ?? row.value));
+    const signedValue = numberValue(row.Value ?? row.value);
+    const totalAmount = Math.abs(signedValue);
+	if ((type === 'Buy' || type === 'Sell') && signedValue !== 0) {
+		type = signedValue < 0 ? 'Buy' : 'Sell';
+	}
     if (!type || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(isin)
       || !totalAmount || (type !== 'Dividend' && !shares)) {
       skipped += 1; continue;

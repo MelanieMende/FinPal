@@ -76,7 +76,6 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 			{/* Shares */}
 			<TableCell className="p-3 text-right">
 				<div className="font-semibold text-white">{shareFormatter.format(props.asset.current_shares || 0)}</div>
-				<div className="text-[10px] text-gray-500 uppercase">{props.asset.symbol}</div>
 			</TableCell>
 
 			{/* Price / Avg */}
@@ -90,7 +89,6 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 			{/* Value */}
 			<TableCell className="p-3 text-right">
 				<div className="font-bold text-white">{euroFormatter.format(assetsSelector.get_current_value(props.asset) || 0)}</div>
-				<div className="text-[10px] text-gray-500 uppercase">Current Value</div>
 			</TableCell>
 
 			{/* Profit / Loss */}

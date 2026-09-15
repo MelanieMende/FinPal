@@ -31,7 +31,7 @@ export default function AnalysisRoute() {
 		sum_current_value += current_value
 	});
 	
-	const sum_profit_loss_formatted = (Math.round(sum_profit_lost * 100) / 100).toFixed(2) + " €"
+	const sum_profit_loss_percentage = sum_current_invest !== 0 ? -sum_profit_lost / sum_current_invest * 100 : 0
 
 	const sorted_Assets = assetsSelector.selectAssetsSortedByProfitLoss(assets, 'desc')
 
@@ -49,7 +49,6 @@ export default function AnalysisRoute() {
 					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Current Price</th>
 					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 text-nowrap">Current Invest</th>
 					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Current Value</th>
-					<th className="p-3 text-center text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 min-w-[200px]">Profit / Loss</th>
 					<th className="p-3 text-center text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Yield / Div</th>
 					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 text-nowrap">Ex / Pay Date</th>
 					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 text-nowrap">Total Earned</th>
@@ -65,10 +64,10 @@ export default function AnalysisRoute() {
 					<TableCell className="p-3 text-right">—</TableCell>
 					<TableCell className="p-3 text-right">—</TableCell>
 					<TableCell className="p-3 text-right text-blue-300">{euroFormatter.format(sum_current_invest)}</TableCell>
-					<TableCell dataTestID="CurrentValueSum" className="p-3 text-right">{euroFormatter.format(sum_current_value)}</TableCell>
-					<TableCell id="TableCellSumProfitLoss" className="p-3 text-center">
-						<div className={`px-3 py-1 rounded-full text-xs font-bold inline-block ${sum_profit_lost >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
-							{sum_profit_loss_formatted}
+					<TableCell dataTestID="CurrentValueSum" className="p-3 text-right">
+						<div className="font-bold text-white">{euroFormatter.format(sum_current_value)}</div>
+						<div id="TableCellSumProfitLoss" className={`mt-1 inline-flex rounded border px-2 py-0.5 text-s font-bold ${sum_profit_lost >= 0 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-red-500/15 text-red-400 border-red-500/30'}`}>
+							{sum_profit_lost >= 0 ? '+' : ''}{euroFormatter.format(sum_profit_lost)} / {sum_profit_loss_percentage >= 0 ? '+' : ''}{sum_profit_loss_percentage.toFixed(2)}%
 						</div>
 					</TableCell>
 					<TableCell className="p-3 text-center">—</TableCell>

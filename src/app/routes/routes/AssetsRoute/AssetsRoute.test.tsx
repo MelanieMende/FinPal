@@ -23,7 +23,7 @@ describe('AssetsRoute component', () => {
 
     await waitFor(() => {
       const { getByText } = within(getAllById('TableCellSumProfitLoss')[0])
-      expect(getByText('400.00 €')).toBeDefined()
+      expect(getByText(/\+400,00\s*€ \/ \+266\.67%/)).toBeDefined()
     })
   });
 

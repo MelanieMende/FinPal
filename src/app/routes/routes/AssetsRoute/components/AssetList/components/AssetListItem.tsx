@@ -32,6 +32,7 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 	const dividends_formatted = (Math.round((props.asset.dividends_earned || 0) * 100) / 100).toFixed(2)
 	const current_sum_in_out = (props.asset.current_sum_in_out || 0) + assetsSelector.get_current_value(props.asset) + (props.asset.dividends_earned || 0)
 	const current_sum_in_out_formatted = (Math.round(current_sum_in_out * 100) / 100).toFixed(2)
+	const currentPriceColor = price_comparison === '>' ? 'text-red-500' : 'text-emerald-500'
 
 	const options = { day: '2-digit', month: '2-digit', year: 'numeric' } as Intl.DateTimeFormatOptions;
 
@@ -119,7 +120,7 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 
 			{/* Current Price */}
 			<TableCell className="p-3 text-right">
-				<div className={`text-sm font-medium uppercase ${price_comparison === '<' ? 'text-emerald-500' : 'text-red-500'}`}>
+				<div data-testid={"current-price-" + props.asset.ID} className={`text-sm font-medium uppercase ${currentPriceColor}`}>
 					{euroFormatter.format(props.asset.price || 0)}
 				</div>
 			</TableCell>
@@ -132,18 +133,8 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 			{/* Value */}
 			<TableCell className="p-3 text-right">
 				<div data-testid={"current-value-" + props.asset.ID} className={`font-bold ${assetsSelector.get_current_value_textColor(props.asset) === 'inherit' ? 'text-white' : assetsSelector.get_current_value_textColor(props.asset)}`}>{euroFormatter.format(assetsSelector.get_current_value(props.asset) || 0)}</div>
-			</TableCell>
-
-			{/* Profit / Loss */}
-			<TableCell className="p-3">
-				<div className="flex flex-col items-center">
-					<div className={`px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1 ${current_profit_loss >= 0 ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 border border-red-500/20'}`}>
-						<Icon icon={current_profit_loss >= 0 ? "arrow-up" : "arrow-down"} size={10} />
-						{euroFormatter.format(current_profit_loss || 0)}
-					</div>
-					<div className={`text-[10px] mt-1 font-semibold ${current_profit_loss >= 0 ? 'text-emerald-500/60' : 'text-red-500/60'}`}>
-						{current_profit_loss_percentage >= 0 ? "+" : ""}{(current_profit_loss_percentage || 0).toFixed(2)}%
-					</div>
+				<div data-testid={"profit-loss-" + props.asset.ID} className={`mt-1 inline-flex rounded border px-2 py-0.5 text-s font-bold ${current_profit_loss >= 0 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-red-500/15 text-red-400 border-red-500/30'}`}>
+					{current_profit_loss >= 0 ? '+' : ''}{euroFormatter.format(current_profit_loss || 0)} / {current_profit_loss_percentage >= 0 ? '+' : ''}{(current_profit_loss_percentage || 0).toFixed(2)}%
 				</div>
 			</TableCell>
 
@@ -169,7 +160,7 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
     </tr>
 		{showTransactions && (
 			<tr data-testid={"asset-transactions-" + props.asset.ID} className="bg-slate-950/50 border-b border-blue-500/20">
-				<td colSpan={12} className="px-10 py-4">
+				<td colSpan={11} className="px-10 py-4">
 					{assetTransactions.length === 0 ? (
 						<div className="text-sm text-gray-500 italic">No transactions for this asset.</div>
 					) : (

@@ -41,6 +41,31 @@ describe('AssetsListItem component', () => {
 		expect(screen.getByTestId('current-invest-1')).toHaveTextContent(/-101,00\s*€/);
 	});
 
+	it('renders profit and loss below current value separated by a slash', () => {
+		const asset = {ID: 1, type: 'Stock', name: 'test1', symbol: 'TST', isin: 'test_isin_1', current_shares: 2, price: 50, current_invest: -80, avg_price_paid: 40} as Asset;
+		render(<table><tbody><AssetListItem i={1} asset={asset} /></tbody></table>);
+
+		expect(screen.getByTestId('profit-loss-1')).toHaveTextContent(/\+20,00\s*€ \/ \+25\.00%/);
+	});
+
+	it.each([
+		{ price: 90, average: 100, color: 'text-emerald-500' },
+		{ price: 110, average: 100, color: 'text-red-500' },
+		{ price: 100, average: 100, color: 'text-emerald-500' },
+	])('uses the correct current price color for $price compared with $average', ({ price, average, color }) => {
+		const asset = {ID: 1, type: 'Stock', name: 'test1', symbol: 'TST', isin: 'test_isin_1', current_shares: 1, price, current_invest: -100, avg_price_paid: average} as Asset;
+		render(<table><tbody><AssetListItem i={1} asset={asset} /></tbody></table>);
+
+		expect(screen.getByTestId('current-price-1')).toHaveClass(color);
+	});
+
+	it('uses a vivid badge for profit and loss below current value', () => {
+		const asset = {ID: 1, type: 'Stock', name: 'test1', symbol: 'TST', isin: 'test_isin_1', current_shares: 2, price: 50, current_invest: -80, avg_price_paid: 40} as Asset;
+		render(<table><tbody><AssetListItem i={1} asset={asset} /></tbody></table>);
+
+		expect(screen.getByTestId('profit-loss-1')).toHaveClass('bg-emerald-500/15', 'text-emerald-400', 'border-emerald-500/30', 'font-bold');
+	});
+
 	it('grays out shares, current investment and current value when they are zero', () => {
 		const asset = {ID: 1, type: 'Stock', name: 'test1', symbol: 'TST', isin: 'test_isin_1', current_shares: 0, price: 50, current_invest: 0, avg_price_paid: 50} as Asset;
 		render(<table><tbody><AssetListItem i={1} asset={asset} /></tbody></table>);

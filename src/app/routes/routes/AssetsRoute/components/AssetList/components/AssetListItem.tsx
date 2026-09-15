@@ -22,7 +22,7 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 	const current_price = (Math.round((props.asset.price || 0) * 100) / 100).toFixed(2)
 	const avg_price_paid_formatted = (Math.round(props.asset.avg_price_paid * 100) / 100).toFixed(2)
 	const price_comparison = props.asset.price < props.asset.avg_price_paid ? "<" : props.asset.price > props.asset.avg_price_paid ? ">" : "="
-	const current_invest = (Math.round(props.asset.current_invest * 100) / 100).toFixed(2)
+	const current_invest = Math.round((props.asset.current_invest || 0) * 100) / 100
 	const current_value_formatted = (Math.round(assetsSelector.get_current_value(props.asset) * 100) / 100).toFixed(2)
 	const current_profit_loss = assetsSelector.get_current_profit_loss(props.asset)
 	const current_profit_loss_formatted = (Math.round(current_profit_loss * 100) / 100).toFixed(2)
@@ -110,12 +110,23 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 				<div className="font-semibold text-white">{shareFormatter.format(props.asset.current_shares || 0)}</div>
 			</TableCell>
 
-			{/* Price / Avg */}
+			{/* Avg Price Paid */}
 			<TableCell className="p-3 text-right">
-				<div className="text-sm font-medium text-white">{euroFormatter.format(props.asset.price || 0)}</div>
-				<div className={`text-[10px] uppercase ${price_comparison === '>' ? 'text-emerald-500' : 'text-red-500'}`}>
-					Avg: {euroFormatter.format(props.asset.avg_price_paid || 0)}
+				<div className="text-sm font-medium text-white">
+					{euroFormatter.format(props.asset.avg_price_paid || 0)}
 				</div>
+			</TableCell>
+
+			{/* Current Price */}
+			<TableCell className="p-3 text-right">
+				<div className={`text-sm font-medium uppercase ${price_comparison === '<' ? 'text-emerald-500' : 'text-red-500'}`}>
+					{euroFormatter.format(props.asset.price || 0)}
+				</div>
+			</TableCell>
+
+			{/* Current Invest */}
+			<TableCell className="p-3 text-right">
+				<div data-testid={"current-invest-" + props.asset.ID} className="font-semibold text-blue-300">{euroFormatter.format(current_invest)}</div>
 			</TableCell>
 
 			{/* Value */}
@@ -158,7 +169,7 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
     </tr>
 		{showTransactions && (
 			<tr data-testid={"asset-transactions-" + props.asset.ID} className="bg-slate-950/50 border-b border-blue-500/20">
-				<td colSpan={10} className="px-10 py-4">
+				<td colSpan={12} className="px-10 py-4">
 					{assetTransactions.length === 0 ? (
 						<div className="text-sm text-gray-500 italic">No transactions for this asset.</div>
 					) : (

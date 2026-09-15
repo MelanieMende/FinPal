@@ -15,6 +15,7 @@ export default function AnalysisRoute() {
 	let sum_profit_lost = 0
 	let sum_dividends = 0
 	let sum_in_out = 0
+	let sum_current_invest = 0
 
 	assets.forEach(asset => {
 		const current_price = asset.price || 0
@@ -27,6 +28,7 @@ export default function AnalysisRoute() {
 		sum_profit_lost += current_profit_loss
 		sum_dividends += dividends_earned
 		sum_in_out += current_sum_in_out + dividends_earned + (current_shares * current_price)
+		sum_current_invest += current_invest
 	});
 	
 	const sum_profit_loss_formatted = (Math.round(sum_profit_lost * 100) / 100).toFixed(2) + " €"
@@ -43,8 +45,10 @@ export default function AnalysisRoute() {
 					<th className="p-3 text-left w-12">#</th>
 					<th className="p-3 text-left min-w-[150px] text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Name</th>
 					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Shares</th>
-					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 text-nowrap">Price / Avg</th>
-					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Value</th>
+					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Avg Price Paid</th>
+					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Current Price</th>
+					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 text-nowrap">Current Invest</th>
+					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Current Value</th>
 					<th className="p-3 text-center text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 min-w-[200px]">Profit / Loss</th>
 					<th className="p-3 text-center text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Yield / Div</th>
 					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 text-nowrap">Ex / Pay Date</th>
@@ -54,7 +58,22 @@ export default function AnalysisRoute() {
       <tbody>
 				{/* Totals Row */}
 				<AssetListSumRow>
-					<TableCell className="p-3 text-center">*</TableCell><TableCell className="p-3">Σ</TableCell><TableCell className="p-3"><NewAssetButton /></TableCell><TableCell className="p-3 text-right">—</TableCell><TableCell className="p-3 text-right">—</TableCell><TableCell className="p-3 text-right">{euroFormatter.format(sum_in_out - sum_dividends - sum_profit_lost)}</TableCell><TableCell id="TableCellSumProfitLoss" className="p-3 text-center"><div className={`px-3 py-1 rounded-full text-xs font-bold inline-block ${sum_profit_lost >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>{sum_profit_loss_formatted}</div></TableCell><TableCell className="p-3 text-center">—</TableCell><TableCell className="p-3 text-right">—</TableCell><TableCell className="p-3 text-right text-emerald-400">{euroFormatter.format(sum_dividends)}</TableCell>
+					<TableCell className="p-3 text-center">*</TableCell>
+					<TableCell className="p-3">Σ</TableCell>
+					<TableCell className="p-3"><NewAssetButton /></TableCell>
+					<TableCell className="p-3 text-right">—</TableCell>
+					<TableCell className="p-3 text-right">—</TableCell>
+					<TableCell className="p-3 text-right">—</TableCell>
+					<TableCell className="p-3 text-right text-blue-300">{euroFormatter.format(sum_current_invest)}</TableCell>
+					<TableCell className="p-3 text-right">{euroFormatter.format(sum_in_out - sum_dividends - sum_profit_lost)}</TableCell>
+					<TableCell id="TableCellSumProfitLoss" className="p-3 text-center">
+						<div className={`px-3 py-1 rounded-full text-xs font-bold inline-block ${sum_profit_lost >= 0 ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
+							{sum_profit_loss_formatted}
+						</div>
+					</TableCell>
+					<TableCell className="p-3 text-center">—</TableCell>
+					<TableCell className="p-3 text-right">—</TableCell>
+					<TableCell className="p-3 text-right text-emerald-400">{euroFormatter.format(sum_dividends)}</TableCell>
 				</AssetListSumRow>
         <AssetListRows assets={sorted_Assets}/>
       </tbody>

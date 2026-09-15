@@ -442,7 +442,7 @@ export default function ImportRoute() {
                                                         className="bg-gray-800 border border-gray-600 rounded text-xs p-1"
                                                         onChange={(e) => handleAssetMappingChange(mappingKey, e.target.value)}
                                                     >
-                                                        <option value="">Keine Zuordnung</option>
+												<option value="">No asset selected</option>
                                                         {sortedAssets.map(a => <option key={a.ID} value={a.ID}>{a.name}</option>)}
                                                     </select>
                                                     {!isAutoMatched && (

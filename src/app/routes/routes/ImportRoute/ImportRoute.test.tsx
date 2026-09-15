@@ -34,7 +34,7 @@ describe('ImportRoute asset mapping', () => {
 
         const select = screen.getByRole('combobox', { name: /Asset-Zuordnung/i });
         const optionLabels = Array.from((select as HTMLSelectElement).options).map(option => option.text);
-        expect(optionLabels).toEqual(['Keine Zuordnung', 'Alpha', 'Zebra']);
+        expect(optionLabels).toEqual(['No asset selected', 'Alpha', 'Zebra']);
 
         fireEvent.change(select, { target: { value: '2' } });
         await waitFor(() => expect(screen.queryByText('Create')).not.toBeInTheDocument());

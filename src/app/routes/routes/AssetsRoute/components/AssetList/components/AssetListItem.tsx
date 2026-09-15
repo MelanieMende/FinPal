@@ -1,3 +1,4 @@
+import { Fragment, useState } from 'react';
 import { useAppSelector, useAppDispatch } from '../../../../../../hooks'
 import * as selectors from '../../../../../../selectors';
 import TableCell from '../../../../../../components/Table/TableCell/TableCell'
@@ -10,6 +11,12 @@ import * as assetReducer from '../../../../../../store/assets/assets.reducer';
 export default function AssetListItem(props: {i: number, asset:Asset}) {
 
   const dispatch = useAppDispatch();
+	const transactions = useAppSelector(state => state.transactions);
+	const [showTransactions, setShowTransactions] = useState(false);
+	const assetTransactions = transactions
+		.filter(transaction => transaction.asset_ID === props.asset.ID)
+		.slice()
+		.sort((a, b) => b.date.localeCompare(a.date));
 
 	const shares_formatted = (Math.round(props.asset.current_shares * 1000) / 1000).toFixed(3)
 	const current_price = (Math.round((props.asset.price || 0) * 100) / 100).toFixed(2)
@@ -31,7 +38,7 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 	const exDividendDate = new Date(props.asset.exDividendDate != null ? props.asset.exDividendDate : '')
 	const exDividendDateFormatted = isNaN(exDividendDate.getTime()) ? '' : exDividendDate.toLocaleDateString("de-DE", options)
 
-	const payDividendDate = new Date(props.asset.payDividendDate)
+	const payDividendDate = new Date(props.asset.payDividendDate ?? '')
 	const payDividendDateFormatted = isNaN(payDividendDate.getTime()) ? '' : payDividendDate.toLocaleDateString("de-DE", options)
 
 	const dividendYieldFormatted = assetsSelector.get_dividend_yield_formatted(props.asset)
@@ -41,26 +48,48 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 	const bgColor_InOut = assetsSelector.get_current_sum_in_out_bgColor(current_sum_in_out)
 	
 	const theme = useAppSelector(state => state.appState.theme)
-	const button_text_color = selectors.get_button_text_color(theme)
+	const button_text_color = selectors.get_button_text_color(theme ?? '')
 
   const euroFormatter = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
   const shareFormatter = new Intl.NumberFormat('de-DE', { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 
   return (
-    <tr id={"AssetListItem_" + props.i} className="border-b border-white/5 last:border-0 hover:bg-white/5 transition-colors group">
+		<Fragment>
+    <tr
+			id={"AssetListItem_" + props.i}
+			data-testid={"asset-row-" + props.asset.ID}
+			aria-expanded={showTransactions}
+			tabIndex={0}
+			onClick={() => setShowTransactions(current => !current)}
+			onKeyDown={(event) => {
+				if (event.key === 'Enter' || event.key === ' ') {
+					event.preventDefault();
+					setShowTransactions(current => !current);
+				}
+			}}
+			className="border-b border-white/5 last:border-0 hover:bg-white/5 transition-colors group cursor-pointer focus:outline-none focus:bg-white/5"
+		>
 			{/* Watch Icon */}
 			<TableCell className="p-3 text-center">
 				<Button 
 					data-testid={"toggleIsWatched_" + props.asset.ID} 
 					minimal 
 					small
-					onClick={(e) => toggleIsWatched(props.asset)}>
+					onClick={(event) => {
+						event.stopPropagation();
+						toggleIsWatched(props.asset);
+					}}>
 						<Icon icon={props.asset.is_watched ? "eye-open" : "eye-off"} className={props.asset.is_watched ? "text-blue-400" : "text-gray-600"} />
 				</Button>
 			</TableCell>
 
 			{/* Index */}
-			<TableCell className="p-3 text-gray-500 font-mono text-xs text-left">{props.i}</TableCell>
+			<TableCell className="p-3 text-gray-500 font-mono text-xs text-left">
+				<div className="flex items-center gap-2">
+					<Icon icon={showTransactions ? 'chevron-down' : 'chevron-right'} size={12} />
+					{props.i}
+				</div>
+			</TableCell>
 
 			{/* Name */}
       <TableCell className="p-3">
@@ -70,7 +99,10 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 					minimal 
 					fill 
 					alignText={Alignment.LEFT} 
-					onClick={(e) => openAssetOverlay()} />
+					onClick={(event) => {
+						event.stopPropagation();
+					openAssetOverlay();
+				}} />
 			</TableCell>
 
 			{/* Shares */}
@@ -124,7 +156,49 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 				<div className="text-[10px] text-emerald-400/50 uppercase">Total Divs</div>
 			</TableCell>
     </tr>
+		{showTransactions && (
+			<tr data-testid={"asset-transactions-" + props.asset.ID} className="bg-slate-950/50 border-b border-blue-500/20">
+				<td colSpan={10} className="px-10 py-4">
+					{assetTransactions.length === 0 ? (
+						<div className="text-sm text-gray-500 italic">No transactions for this asset.</div>
+					) : (
+						<table className="w-full text-sm">
+							<thead>
+								<tr className="text-[10px] uppercase tracking-wider text-gray-500">
+									<th className="pb-2 text-left">Date</th>
+									<th className="pb-2 text-left">Type</th>
+									<th className="pb-2 text-right">Shares</th>
+									<th className="pb-2 text-right">Price</th>
+									<th className="pb-2 text-right">Fee</th>
+									<th className="pb-2 text-right">Tax</th>
+									<th className="pb-2 text-right">Outcome</th>
+								</tr>
+							</thead>
+							<tbody>
+								{assetTransactions.map(transaction => (
+									<tr key={transaction.ID} className="border-t border-white/5 text-gray-300">
+										<td className="py-2 text-left font-mono">{formatDate(transaction.date)}</td>
+										<td className={transaction.type === 'Buy' ? 'py-2 text-left text-emerald-400' : 'py-2 text-left text-red-400'}>{transaction.type}</td>
+										<td className="py-2 text-right font-mono">{shareFormatter.format(transaction.amount || 0)}</td>
+										<td className="py-2 text-right font-mono">{euroFormatter.format(transaction.price_per_share || 0)}</td>
+										<td className="py-2 text-right font-mono">{euroFormatter.format(transaction.fee || 0)}</td>
+										<td className="py-2 text-right font-mono">{euroFormatter.format(transaction.solidarity_surcharge || 0)}</td>
+										<td className={`py-2 text-right font-mono font-bold ${(transaction.in_out || 0) >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{euroFormatter.format(transaction.in_out || 0)}</td>
+									</tr>
+								))}
+							</tbody>
+						</table>
+					)}
+				</td>
+			</tr>
+		)}
+		</Fragment>
   );
+
+	function formatDate(date: string) {
+		const parsedDate = new Date(`${date}T00:00:00`);
+		return isNaN(parsedDate.getTime()) ? date : parsedDate.toLocaleDateString('de-DE');
+	}
 
 	function openAssetOverlay() {
 		dispatch(appStateReducer.setAssetOverlayType(appStateReducer.AssetOverlayType.EDIT))

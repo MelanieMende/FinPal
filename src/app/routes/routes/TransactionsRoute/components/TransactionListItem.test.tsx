@@ -54,4 +54,13 @@ describe('TransactionListItem component', () => {
 		});
 		expect(typeInput).toHaveValue('Sell');
 	});
+
+	it('uses a readable dark color scheme for the asset dropdown', () => {
+		const store = setupStore({ assets: [{ ID: 1, type: 'Stock', name: '3M', symbol: 'MMM', isin: 'US88579Y1010' }] });
+		render(<Provider store={store}><table><tbody><TransactionListItem i={1} transaction={transaction} /></tbody></table></Provider>);
+
+		const assetSelect = screen.getByRole('combobox', { name: 'Asset' });
+		expect(assetSelect).toHaveStyle({ colorScheme: 'dark' });
+		expect(screen.getByRole('option', { name: '3M' })).toHaveClass('bg-gray-800', 'text-white');
+	});
 });

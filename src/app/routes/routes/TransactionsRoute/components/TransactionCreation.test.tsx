@@ -100,6 +100,19 @@ describe('TransactionCreation Component', () => {
     expect(assetOptions[1].textContent).toBe('Asset 2');
   });
 
+  it('uses readable colors for the asset dropdown options', () => {
+    render(
+      <Provider store={store}>
+        <table><tbody><TransactionsRoute /></tbody></table>
+      </Provider>
+    );
+
+    expect(screen.getByTestId('assetInput')).toHaveStyle({ colorScheme: 'dark' });
+    screen.getAllByTestId('asset-option').forEach(option => {
+      expect(option).toHaveClass('bg-gray-800', 'text-white');
+    });
+  });
+
   it('dispatches setAmountInput action on amount input change', () => {
     render(
       <Provider store={store}>

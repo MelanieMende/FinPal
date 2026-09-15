@@ -59,10 +59,11 @@ export default function TransactionCreation() {
 					value={assetInput} 
 					onChange={(e) => dispatch(transactionCreationReducer.setAssetInput(e.target.value))} 
 					onBlur={() => dispatch(transactionCreationReducer.handleAssetInputGotTouched())}
-					className="glass-input-minimal text-sm font-semibold bg-white/5 border border-white/10 rounded px-1 text-white w-full outline-none focus:border-blue-500/50"
+					style={{ colorScheme: 'dark' }}
+					className="glass-input-minimal text-sm font-semibold bg-gray-800 border border-gray-600 rounded px-1 text-white w-full outline-none focus:border-blue-500/50"
 				>
           {sorted_Assets.map((asset) => (
-						<option data-testid="asset-option" key={'asset_' + asset.ID} value={asset.ID}>{asset.name}</option>
+						<option data-testid="asset-option" key={'asset_' + asset.ID} value={asset.ID} className="bg-gray-800 text-white">{asset.name}</option>
 					))}
         </select>
       </TableCell>

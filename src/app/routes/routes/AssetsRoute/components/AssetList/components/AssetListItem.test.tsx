@@ -48,6 +48,13 @@ describe('AssetsListItem component', () => {
 		expect(screen.getByTestId('profit-loss-1')).toHaveTextContent(/\+20,00\s*€ \/ \+25\.00%/);
 	});
 
+	it('renders only realized gain/loss plus dividends', () => {
+		const asset = {ID: 1, type: 'Stock', name: 'test1', symbol: 'TST', isin: 'test_isin_1', current_shares: 2, price: 100, current_sum_in_out: -70, current_invest: -80, dividends_earned: 12, avg_price_paid: 40} as Asset;
+		render(<table><tbody><AssetListItem i={1} asset={asset} /></tbody></table>);
+
+		expect(screen.getByTestId('gain-loss-1')).toHaveTextContent(/\+22,00\s*€/);
+	});
+
 	it.each([
 		{ price: 90, average: 100, color: 'text-emerald-500' },
 		{ price: 110, average: 100, color: 'text-red-500' },
@@ -73,6 +80,14 @@ describe('AssetsListItem component', () => {
 		expect(screen.getByTestId('current-shares-1')).toHaveClass('text-slate-500');
 		expect(screen.getByTestId('current-invest-1')).toHaveClass('text-slate-500');
 		expect(screen.getByTestId('current-value-1')).toHaveClass('text-slate-500');
+	});
+
+	it('does not render the current value profit/loss badge when no shares are held', () => {
+		const asset = {ID: 1, type: 'Stock', name: 'test1', symbol: 'TST', isin: 'test_isin_1', current_shares: 0, price: 50, current_invest: 0, avg_price_paid: 50} as Asset;
+		render(<table><tbody><AssetListItem i={1} asset={asset} /></tbody></table>);
+
+		expect(screen.getByTestId('current-value-1')).toHaveTextContent(/0,00\s*€/);
+		expect(screen.queryByTestId('profit-loss-1')).not.toBeInTheDocument();
 	});
 
 	it('toggles the transactions belonging to the asset when its row is clicked', () => {

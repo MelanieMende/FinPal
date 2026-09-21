@@ -16,6 +16,7 @@ export default function AnalysisRoute() {
 	let sum_dividends = 0
 	let sum_current_invest = 0
 	let sum_current_value = 0
+	let sum_gain_loss = 0
 
 	assets.forEach(asset => {
 		const current_price = asset.price || 0
@@ -29,6 +30,7 @@ export default function AnalysisRoute() {
 		sum_dividends += dividends_earned
 		sum_current_invest += current_invest
 		sum_current_value += current_value
+		sum_gain_loss += assetsSelector.get_realized_gain_loss(asset)
 	});
 	
 	const sum_profit_loss_percentage = sum_current_invest !== 0 ? -sum_profit_lost / sum_current_invest * 100 : 0
@@ -51,7 +53,8 @@ export default function AnalysisRoute() {
 					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Current Value</th>
 					<th className="p-3 text-center text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Yield / Div</th>
 					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 text-nowrap">Ex / Pay Date</th>
-					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 text-nowrap">Total Earned</th>
+					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 text-nowrap">Dividends</th>
+					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 text-nowrap">Realized P/L + Div.     </th>
 				</tr>
 			</thead>
       <tbody>
@@ -73,6 +76,9 @@ export default function AnalysisRoute() {
 					<TableCell className="p-3 text-center">—</TableCell>
 					<TableCell className="p-3 text-right">—</TableCell>
 					<TableCell className="p-3 text-right text-emerald-400">{euroFormatter.format(sum_dividends)}</TableCell>
+					<TableCell dataTestID="GainLossSum" className={`p-3 text-right font-bold ${sum_gain_loss >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+						{sum_gain_loss >= 0 ? '+' : ''}{euroFormatter.format(sum_gain_loss)}
+					</TableCell>
 				</AssetListSumRow>
         <AssetListRows assets={sorted_Assets}/>
       </tbody>

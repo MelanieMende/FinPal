@@ -38,6 +38,17 @@ describe('AssetsRoute component', () => {
     expect(screen.getByTestId('TableCellCurrentValueSum')).toHaveTextContent(/175,00\s*€/);
   });
 
+	 it('sums only realized gain/loss including dividends for every asset', () => {
+		const assets = [
+			{ID: 1, name: 'Asset 1', symbol: 'A1', isin: 'ISIN1', current_shares: 2, price: 500, current_sum_in_out: -80, current_invest: -100, dividends_earned: 10},
+			{ID: 2, name: 'Asset 2', symbol: 'A2', isin: 'ISIN2', current_shares: 0, price: 25, current_sum_in_out: 25, current_invest: 0, dividends_earned: 5},
+		] as Asset[];
+
+		render(<AssetsRoute />, { preloadedState: { assets } });
+
+		expect(screen.getByTestId('TableCellGainLossSum')).toHaveTextContent(/\+60,00\s*€/);
+	 });
+
   it('renders correctly with empty assets', async () => {
     const assets: Asset[] = [];
 

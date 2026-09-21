@@ -30,8 +30,7 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 	const current_profit_loss_percentage_formatted = (current_profit_loss_percentage).toFixed(2)
 	const upcoming_dividends = (Math.round(assetsSelector.get_upcoming_dividends(props.asset).value * 1000) / 1000).toFixed(3)
 	const dividends_formatted = (Math.round((props.asset.dividends_earned || 0) * 100) / 100).toFixed(2)
-	const current_sum_in_out = (props.asset.current_sum_in_out || 0) + assetsSelector.get_current_value(props.asset) + (props.asset.dividends_earned || 0)
-	const current_sum_in_out_formatted = (Math.round(current_sum_in_out * 100) / 100).toFixed(2)
+	const realized_gain_loss = assetsSelector.get_realized_gain_loss(props.asset)
 	const currentPriceColor = price_comparison === '>' ? 'text-red-500' : 'text-emerald-500'
 
 	const options = { day: '2-digit', month: '2-digit', year: 'numeric' } as Intl.DateTimeFormatOptions;
@@ -45,8 +44,6 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 	const dividendYieldFormatted = assetsSelector.get_dividend_yield_formatted(props.asset)
 
 	const bgColor_PriceComparison = price_comparison == "<" ? "bg-teal-600" : (price_comparison == "=" ? "bg-slate-500" : "bg-custom-red")
-	const bgColor_ProfitLoss = assetsSelector.get_current_profit_loss_bgColor(props.asset)
-	const bgColor_InOut = assetsSelector.get_current_sum_in_out_bgColor(current_sum_in_out)
 	
 	const theme = useAppSelector(state => state.appState.theme)
 	const button_text_color = selectors.get_button_text_color(theme ?? '')
@@ -133,9 +130,11 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 			{/* Value */}
 			<TableCell className="p-3 text-right">
 				<div data-testid={"current-value-" + props.asset.ID} className={`font-bold ${assetsSelector.get_current_value_textColor(props.asset) === 'inherit' ? 'text-white' : assetsSelector.get_current_value_textColor(props.asset)}`}>{euroFormatter.format(assetsSelector.get_current_value(props.asset) || 0)}</div>
-				<div data-testid={"profit-loss-" + props.asset.ID} className={`mt-1 inline-flex rounded border px-2 py-0.5 text-s font-bold ${current_profit_loss >= 0 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-red-500/15 text-red-400 border-red-500/30'}`}>
-					{current_profit_loss >= 0 ? '+' : ''}{euroFormatter.format(current_profit_loss || 0)} / {current_profit_loss_percentage >= 0 ? '+' : ''}{(current_profit_loss_percentage || 0).toFixed(2)}%
-				</div>
+				{(props.asset.current_shares || 0) !== 0 && (
+					<div data-testid={"profit-loss-" + props.asset.ID} className={`mt-1 inline-flex rounded border px-2 py-0.5 text-s font-bold ${current_profit_loss >= 0 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-red-500/15 text-red-400 border-red-500/30'}`}>
+						{current_profit_loss >= 0 ? '+' : ''}{euroFormatter.format(current_profit_loss || 0)} / {current_profit_loss_percentage >= 0 ? '+' : ''}{(current_profit_loss_percentage || 0).toFixed(2)}%
+					</div>
+				)}
 			</TableCell>
 
 			{/* Yield / Div */}
@@ -157,10 +156,17 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 				<div className="font-bold text-emerald-400">{euroFormatter.format(props.asset.dividends_earned)}</div>
 				<div className="text-[10px] text-emerald-400/50 uppercase">Total Divs</div>
 			</TableCell>
+
+			{/* Realized Gain / Loss including dividends */}
+			<TableCell className="p-3 text-right">
+				<div data-testid={"gain-loss-" + props.asset.ID} className={`font-bold ${realized_gain_loss >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+					{realized_gain_loss >= 0 ? '+' : ''}{euroFormatter.format(realized_gain_loss)}
+				</div>
+			</TableCell>
     </tr>
 		{showTransactions && (
 			<tr data-testid={"asset-transactions-" + props.asset.ID} className="bg-slate-950/50 border-b border-blue-500/20">
-				<td colSpan={11} className="px-10 py-4">
+				<td colSpan={12} className="px-10 py-4">
 					{assetTransactions.length === 0 ? (
 						<div className="text-sm text-gray-500 italic">No transactions for this asset.</div>
 					) : (

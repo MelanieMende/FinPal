@@ -105,6 +105,7 @@ export default function RootRoute() {
 		}
 		console.log('New ID (transactions): ' + newID)
 		dispatch(transactionCreationReducer.setNewID(newID))
+		await sendToDB('DROP VIEW IF EXISTS transactions_v')
 		result = await sendToDB(transactions_v_sql)
 	}
 

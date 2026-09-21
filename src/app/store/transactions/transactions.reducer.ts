@@ -115,9 +115,9 @@ export const saveTransaction = createAsyncThunk(
 export function sortBy(a:Transaction, b:Transaction, property:string, direction:'asc'|'desc') {
 	if(property == 'date') {
 		if(direction == 'asc')
-			return a.date.localeCompare(b.date)
+			return a.date.localeCompare(b.date) || a.ID - b.ID
 		else
-			return b.date.localeCompare(a.date)
+			return b.date.localeCompare(a.date) || b.ID - a.ID
 	}
 	else if(property == 'asset') {
 		if(direction == 'asc')

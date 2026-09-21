@@ -36,6 +36,14 @@ describe('Transactions Reducer', () => {
     expect(result[1].invest_cumulated).toBe(0);
   });
 
+	 it('orders transactions on the same date by ID', () => {
+		const earlier = { ID: 1, date: '2025-11-03' } as Transaction;
+		const later = { ID: 2, date: '2025-11-03' } as Transaction;
+
+		expect(sortBy(earlier, later, 'date', 'asc')).toBeLessThan(0);
+		expect(sortBy(earlier, later, 'date', 'desc')).toBeGreaterThan(0);
+	 });
+
   it('should return the initial state', () => {
     const result = transactionsReducer(undefined, { type: '' });
     expect(result).toEqual(initialState);

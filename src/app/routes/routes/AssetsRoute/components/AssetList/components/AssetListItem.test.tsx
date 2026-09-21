@@ -78,7 +78,7 @@ describe('AssetsListItem component', () => {
 	it('toggles the transactions belonging to the asset when its row is clicked', () => {
 		const asset = {ID: 1, type: 'Stock', name: 'test1', symbol: 'TST', isin: 'test_isin_1', current_shares: 1, price: 50, current_invest: -50, avg_price_paid: 50} as Asset;
 		const transactions = [
-			{ID: 10, date: '2026-09-15', type: 'Buy', asset_ID: 1, amount: 2, price_per_share: 50, fee: 1, solidarity_surcharge: 0, in_out: -101},
+			{ID: 10, date: '2026-09-15', type: 'Buy', asset_ID: 1, amount: 2, shares_cumulated: 5.632, price_per_share: 50, fee: 1, solidarity_surcharge: 0, in_out: -101},
 			{ID: 11, date: '2026-09-14', type: 'Buy', asset_ID: 2, amount: 3, price_per_share: 20, fee: 0, solidarity_surcharge: 0, in_out: -60},
 		] as Transaction[];
 
@@ -88,6 +88,8 @@ describe('AssetsListItem component', () => {
 		expect(screen.queryByTestId('asset-transactions-1')).not.toBeInTheDocument();
 		fireEvent.click(row);
 		expect(screen.getByTestId('asset-transactions-1')).toHaveTextContent('15.9.2026');
+		expect(screen.getByTestId('asset-transactions-1')).toHaveTextContent('Cumulated Shares');
+		expect(screen.getByTestId('asset-transactions-1')).toHaveTextContent('5,632');
 		expect(screen.getByTestId('asset-transactions-1')).toHaveTextContent(/-101,00\s*€/);
 		expect(screen.getByTestId('asset-transactions-1')).not.toHaveTextContent(/-60,00\s*€/);
 		expect(row).toHaveAttribute('aria-expanded', 'true');

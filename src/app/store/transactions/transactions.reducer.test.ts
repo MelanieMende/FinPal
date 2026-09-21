@@ -5,9 +5,36 @@ import transactionsReducer, {
   loadTransactions,
   saveTransaction,
   sortBy,
+  calculateInvestCumulated,
 } from './transactions.reducer';
 
 describe('Transactions Reducer', () => {
+
+  it('keeps only the proportional cost basis after a partial sell', () => {
+    const transactions = [
+      { ID: 1, asset_ID: 1, rank: 1, type: 'Buy', shares_cumulated: 1.483, in_out: -101 },
+      { ID: 2, asset_ID: 1, rank: 2, type: 'Buy', shares_cumulated: 2.362, in_out: -51 },
+      { ID: 3, asset_ID: 1, rank: 3, type: 'Buy', shares_cumulated: 3.181, in_out: -51 },
+      { ID: 4, asset_ID: 1, rank: 4, type: 'Buy', shares_cumulated: 3.999, in_out: -50.99 },
+      { ID: 5, asset_ID: 1, rank: 5, type: 'Buy', shares_cumulated: 4.780, in_out: -51 },
+      { ID: 6, asset_ID: 1, rank: 6, type: 'Buy', shares_cumulated: 5.565, in_out: -51 },
+      { ID: 7, asset_ID: 1, rank: 7, type: 'Buy', shares_cumulated: 6.337, in_out: -51 },
+      { ID: 8, asset_ID: 1, rank: 8, type: 'Sell', shares_cumulated: 5.632, in_out: 49 },
+    ] as Transaction[];
+
+    const result = calculateInvestCumulated(transactions);
+
+    expect(result.find(transaction => transaction.ID === 8)?.invest_cumulated).toBeCloseTo(-361.71, 2);
+  });
+
+  it('sets current investment to zero after selling all remaining shares', () => {
+    const result = calculateInvestCumulated([
+      { ID: 1, asset_ID: 1, rank: 1, type: 'Buy', shares_cumulated: 2, in_out: -101 },
+      { ID: 2, asset_ID: 1, rank: 2, type: 'Sell', shares_cumulated: 0, in_out: 99 },
+    ] as Transaction[]);
+
+    expect(result[1].invest_cumulated).toBe(0);
+  });
 
   it('should return the initial state', () => {
     const result = transactionsReducer(undefined, { type: '' });

@@ -170,6 +170,7 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 									<th className="pb-2 text-left">Date</th>
 									<th className="pb-2 text-left">Type</th>
 									<th className="pb-2 text-right">Shares</th>
+									<th className="pb-2 text-right">Cumulated Shares</th>
 									<th className="pb-2 text-right">Price</th>
 									<th className="pb-2 text-right">Fee</th>
 									<th className="pb-2 text-right">Tax</th>
@@ -182,6 +183,7 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 										<td className="py-2 text-left font-mono">{formatDate(transaction.date)}</td>
 										<td className={transaction.type === 'Buy' ? 'py-2 text-left text-emerald-400' : 'py-2 text-left text-red-400'}>{transaction.type}</td>
 										<td className="py-2 text-right font-mono">{shareFormatter.format(transaction.amount || 0)}</td>
+										<td className="py-2 text-right font-mono text-blue-300">{shareFormatter.format(transaction.shares_cumulated || 0)}</td>
 										<td className="py-2 text-right font-mono">{euroFormatter.format(transaction.price_per_share || 0)}</td>
 										<td className="py-2 text-right font-mono">{euroFormatter.format(transaction.fee || 0)}</td>
 										<td className="py-2 text-right font-mono">{euroFormatter.format(transaction.solidarity_surcharge || 0)}</td>

@@ -55,6 +55,15 @@ describe('AssetsListItem component', () => {
 		expect(screen.getByTestId('gain-loss-1')).toHaveTextContent(/\+22,00\s*€/);
 	});
 
+	it('renders zero realized gain/loss in gray', () => {
+		const asset = {ID: 1, type: 'Stock', name: 'test1', symbol: 'TST', isin: 'test_isin_1', current_shares: 2, price: 100, current_sum_in_out: -80, current_invest: -80, dividends_earned: 0, avg_price_paid: 40} as Asset;
+		render(<table><tbody><AssetListItem i={1} asset={asset} /></tbody></table>);
+
+		const realized = screen.getByTestId('gain-loss-1');
+		expect(realized).toHaveClass('text-slate-500');
+		expect(realized.textContent).not.toMatch(/^\+/);
+	});
+
 	it.each([
 		{ price: 90, average: 100, color: 'text-emerald-500' },
 		{ price: 110, average: 100, color: 'text-red-500' },

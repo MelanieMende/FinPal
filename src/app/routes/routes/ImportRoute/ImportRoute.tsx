@@ -155,16 +155,24 @@ export default function ImportRoute() {
                 pin: trStatus?.hasSavedCredentials && !trPhone && !trPin ? undefined : trPin,
                 remember: rememberTr,
             });
-            if (!result.records.length) {
+			if (result.quotes.length > 0) {
+				await dispatch(assetsReducer.loadPricesAndDividends(undefined));
+			}
+            if (!result.records.length && !result.quotes.length) {
                 throw new Error(`Keine importierbaren Transaktionen empfangen (${result.skipped} Buchungen übersprungen). Die bisherige Liste bleibt erhalten.`);
             }
             // Persist before updating Redux so a renderer reload between both
             // operations cannot lose an otherwise successful broker response.
-            localStorage.setItem(pendingImportStorageKey, JSON.stringify(result.records));
-            dispatch(setPendingRecords(result.records));
+			if (result.records.length > 0) {
+				localStorage.setItem(pendingImportStorageKey, JSON.stringify(result.records));
+				dispatch(setPendingRecords(result.records));
+			}
             setTrPin('');
             setTrStatus({ runnerAvailable: true, hasSavedCredentials: rememberTr || !!trStatus?.hasSavedCredentials });
-            setTrMessage(`${result.records.length} Transaktion(en) geladen${result.skipped ? `, ${result.skipped} nicht unterstützte Buchung(en) übersprungen` : ''}.`);
+			const quoteMessage = result.quoteError
+				? ` ${result.quoteError}${result.quotes.length ? ' Der letzte gespeicherte Trade-Republic-Kurs bleibt aktiv.' : ' Yahoo Finance bleibt als Kursquelle aktiv.'}`
+				: ` ${result.quotes.length} Trade-Republic-Kurs(e) aktualisiert.`;
+            setTrMessage(`${result.records.length} Transaktion(en) geladen${result.skipped ? `, ${result.skipped} nicht unterstützte Buchung(en) übersprungen` : ''}.${quoteMessage}`);
         } catch (syncError) {
             setTrMessage(syncError instanceof Error ? syncError.message : 'Synchronisierung fehlgeschlagen.');
         } finally {

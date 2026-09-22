@@ -158,8 +158,8 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 
 			{/* Realized Gain / Loss including dividends */}
 			<TableCell className="p-3 text-right">
-				<div data-testid={"gain-loss-" + props.asset.ID} className={`font-bold ${realized_gain_loss >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-					{realized_gain_loss >= 0 ? '+' : ''}{euroFormatter.format(realized_gain_loss)}
+				<div data-testid={"gain-loss-" + props.asset.ID} className={`font-bold ${realized_gain_loss > 0 ? 'text-emerald-400' : realized_gain_loss < 0 ? 'text-red-400' : 'text-slate-500'}`}>
+					{realized_gain_loss > 0 ? '+' : ''}{euroFormatter.format(realized_gain_loss)}
 				</div>
 			</TableCell>
     </tr>

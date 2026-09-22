@@ -1,4 +1,4 @@
-import { parsePytrJsonLines } from './tradeRepublicSync';
+import { parsePytrJsonLines, parsePytrPortfolioCsv } from './tradeRepublicSync';
 
 jest.mock('electron', () => ({ safeStorage: {} }));
 
@@ -49,5 +49,25 @@ describe('parsePytrJsonLines', () => {
 
     expect(result.records[0]).toEqual(expect.objectContaining({ type: 'Sell' }));
     expect(result.records[0].pricePerShare).toBeCloseTo(3.66, 2);
+  });
+});
+
+describe('parsePytrPortfolioCsv', () => {
+  it('maps the Trade Republic portfolio export to current quotes', () => {
+    const input = [
+      'Name;ISIN;quantity;price;avgCost;netValue',
+      'Bitcoin;BTC;0.008129;74650.0185;68482.88;606.83',
+      'Apple;US0378331005;2;210.25;150.5;420.5',
+    ].join('\n');
+
+    expect(parsePytrPortfolioCsv(input)).toEqual([
+      { name: 'Bitcoin', isin: 'BTC', quantity: 0.008129, price: 74650.0185, averageBuyIn: 68482.88, netValue: 606.83 },
+      { name: 'Apple', isin: 'US0378331005', quantity: 2, price: 210.25, averageBuyIn: 150.5, netValue: 420.5 },
+    ]);
+  });
+
+  it('ignores malformed portfolio output and positions without a price', () => {
+    expect(parsePytrPortfolioCsv('unexpected;columns\nvalue;row')).toEqual([]);
+    expect(parsePytrPortfolioCsv('Name;ISIN;quantity;price;avgCost;netValue\nBitcoin;BTC;0.1;0;50;0')).toEqual([]);
   });
 });

@@ -22,6 +22,20 @@ export interface TradeRepublicRecord {
   totalAmount: number;
 }
 
+export interface TradeRepublicQuote {
+  name: string;
+  isin: string;
+  quantity: number;
+  price: number;
+  averageBuyIn: number;
+  netValue: number;
+}
+
+export interface TradeRepublicQuoteCache {
+  quotes: TradeRepublicQuote[];
+  fetchedAt?: string;
+}
+
 type PytrRow = Record<string, unknown>;
 const stringValue = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
 const numberValue = (value: unknown): number => {
@@ -68,12 +82,35 @@ export function parsePytrJsonLines(contents: string): { records: TradeRepublicRe
   return { records, skipped };
 }
 
+export function parsePytrPortfolioCsv(contents: string): TradeRepublicQuote[] {
+  const lines = contents.split(/\r?\n/).filter(Boolean);
+  if (lines.length < 2) return [];
+  const headers = lines[0].split(';');
+  const column = (name: string) => headers.indexOf(name);
+  const required = ['Name', 'ISIN', 'quantity', 'price', 'avgCost', 'netValue'];
+  if (required.some(name => column(name) < 0)) return [];
+
+  return lines.slice(1).map(line => {
+    const values = line.split(';');
+    return {
+      name: stringValue(values[column('Name')]),
+      isin: stringValue(values[column('ISIN')]).toUpperCase(),
+      quantity: numberValue(values[column('quantity')]),
+      price: numberValue(values[column('price')]),
+      averageBuyIn: numberValue(values[column('avgCost')]),
+      netValue: numberValue(values[column('netValue')]),
+    };
+  }).filter(quote => quote.name.length > 0 && quote.price > 0);
+}
+
 export class TradeRepublicSync {
   private readonly credentialsFile: string;
   private readonly runnerDir: string;
+  private readonly quoteCacheFile: string;
   constructor(userDataPath: string) {
     this.credentialsFile = path.join(userDataPath, 'trade-republic-credentials.bin');
     this.runnerDir = path.join(userDataPath, 'tools', `uv-${UV_VERSION}`);
+    this.quoteCacheFile = path.join(userDataPath, 'trade-republic-quotes.json');
   }
   hasSavedCredentials(): boolean { return fs.existsSync(this.credentialsFile) && safeStorage.isEncryptionAvailable(); }
   forgetCredentials(): void { if (fs.existsSync(this.credentialsFile)) fs.unlinkSync(this.credentialsFile); }
@@ -88,29 +125,66 @@ export class TradeRepublicSync {
   isRunnerAvailable(): Promise<boolean> {
     return Promise.resolve(process.platform === 'win32' && process.arch === 'x64');
   }
-  async sync(credentials: TradeRepublicCredentials | null, remember: boolean): Promise<{ records: TradeRepublicRecord[]; skipped: number }> {
+  getCachedQuotes(): TradeRepublicQuoteCache {
+    if (!fs.existsSync(this.quoteCacheFile)) return { quotes: [] };
+    try {
+      const cache = JSON.parse(fs.readFileSync(this.quoteCacheFile, 'utf8')) as TradeRepublicQuoteCache;
+      return Array.isArray(cache.quotes) ? cache : { quotes: [] };
+    } catch {
+      return { quotes: [] };
+    }
+  }
+  async sync(credentials: TradeRepublicCredentials | null, remember: boolean): Promise<{ records: TradeRepublicRecord[]; skipped: number; quotes: TradeRepublicQuote[]; quotesFetchedAt?: string; quoteError?: string }> {
     const login = credentials?.phone && credentials?.pin ? credentials : this.readCredentials();
     if (!login) throw new Error('Bitte Telefonnummer und PIN eingeben.');
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-tr-'));
     const outputFile = path.join(tempDir, 'transactions.jsonl');
+    const portfolioFile = path.join(tempDir, 'portfolio.csv');
     try {
-      await this.runPytr(login, outputFile);
+      const isolatedHome = this.prepareIsolatedProfile(login, tempDir);
+      const runner = await this.ensureRunner();
+      await this.runPytrCommand(runner, [
+        'pytr', 'export_transactions', '--lang', 'en', '--format', 'json', '--no-date-with-time', '--sort',
+        '--store_credentials', '--v2', '--outputdir', path.dirname(outputFile), outputFile,
+      ], isolatedHome, outputFile);
       const result = parsePytrJsonLines(fs.readFileSync(outputFile, 'utf8'));
+
+      let quoteError: string | undefined;
+      let freshQuotes: TradeRepublicQuote[] = [];
+      try {
+        await this.runPytrCommand(runner, [
+          'pytr', 'portfolio', '--lang', 'en', '--no-decimal-localization', '--store_credentials', '--v2',
+          '--output', portfolioFile,
+        ], isolatedHome, portfolioFile);
+        freshQuotes = parsePytrPortfolioCsv(fs.readFileSync(portfolioFile, 'utf8'));
+        if (freshQuotes.length > 0) {
+          const cache = { quotes: freshQuotes, fetchedAt: new Date().toISOString() };
+          fs.writeFileSync(this.quoteCacheFile, JSON.stringify(cache));
+        } else {
+          quoteError = 'Trade Republic hat keine auswertbaren Portfolio-Kurse geliefert.';
+        }
+      } catch (error) {
+        quoteError = error instanceof Error ? error.message : 'Trade-Republic-Kurse konnten nicht geladen werden.';
+      }
+
       if (remember && credentials) this.saveCredentials(credentials);
-      return result;
+      const quoteCache = this.getCachedQuotes();
+      return { ...result, quotes: quoteCache.quotes, quotesFetchedAt: quoteCache.fetchedAt, quoteError };
     } finally { fs.rmSync(tempDir, { recursive: true, force: true }); }
   }
-  private runPytr(credentials: TradeRepublicCredentials, outputFile: string): Promise<void> {
-    return this.ensureRunner().then(runner => new Promise((resolve, reject) => {
-      // Python's getpass reads directly from the Windows console instead of a
-      // redirected stdin pipe. Give pytr an isolated, short-lived profile so it
-      // can read the credentials non-interactively without exposing them in the
-      // process arguments. The parent temp directory is deleted after syncing.
-      const isolatedHome = path.join(path.dirname(outputFile), 'profile');
-      const pytrDir = path.join(isolatedHome, '.pytr');
-      fs.mkdirSync(pytrDir, { recursive: true });
-      fs.writeFileSync(path.join(pytrDir, 'credentials'), `${credentials.phone.trim()}\n${credentials.pin.trim()}\n`, { mode: 0o600 });
-      const args = ['pytr', 'export_transactions', '--lang', 'en', '--format', 'json', '--no-date-with-time', '--sort', '--v2', '--outputdir', path.dirname(outputFile), outputFile];
+  private prepareIsolatedProfile(credentials: TradeRepublicCredentials, tempDir: string): string {
+    // Python's getpass reads directly from the Windows console instead of a
+    // redirected stdin pipe. Give pytr an isolated, short-lived profile so it
+    // can read the credentials non-interactively without exposing them in the
+    // process arguments. The parent temp directory is deleted after syncing.
+    const isolatedHome = path.join(tempDir, 'profile');
+    const pytrDir = path.join(isolatedHome, '.pytr');
+    fs.mkdirSync(pytrDir, { recursive: true });
+    fs.writeFileSync(path.join(pytrDir, 'credentials'), `${credentials.phone.trim()}\n${credentials.pin.trim()}\n`, { mode: 0o600 });
+    return isolatedHome;
+  }
+  private runPytrCommand(runner: string, args: string[], isolatedHome: string, expectedFile: string): Promise<void> {
+    return new Promise((resolve, reject) => {
       const child = spawn(runner, args, {
         windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
@@ -126,10 +200,10 @@ export class TradeRepublicSync {
       });
       child.once('exit', code => {
         clearTimeout(timeout);
-        if (code === 0 && fs.existsSync(outputFile)) resolve();
+        if (code === 0 && fs.existsSync(expectedFile)) resolve();
         else reject(new Error(output.trim().split(/\r?\n/).slice(-4).join('\n') || `pytr wurde mit Code ${code} beendet.`));
       });
-    }));
+    });
   }
 
   private async ensureRunner(): Promise<string> {

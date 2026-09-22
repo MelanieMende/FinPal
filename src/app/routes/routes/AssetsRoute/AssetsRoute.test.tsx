@@ -21,11 +21,11 @@ describe('AssetsRoute component', () => {
 			render(<AssetsRoute />, { preloadedState: { assets } });
 		});
 
-		const expected = [
+		const expected: [string, string, number, string | null][] = [
 			['Stock', 'Stocks', 175, 'chart'], ['ETF', 'ETFs', 80, 'pie-chart'], ['Bond', 'Bonds', 60, 'bank-account'],
 			['Crypto', 'Crypto', 100, null], ['Commodity', 'Commodities', 30, 'cube'],
 			['RealEstate', 'Real Estate', 1000, 'home'], ['CashEquivalent', 'Cash Equivalents', 5, 'dollar'],
-		] as const;
+		];
 		for (const [type, label, value, icon] of expected) {
 			const cardElement = screen.getByTestId(`asset-type-value-${type}`);
 			const card = within(cardElement);
@@ -116,6 +116,8 @@ describe('AssetsRoute component', () => {
     await waitFor(() => {
       expect(getAllById('AssetsRoute').length).toEqual(1);
       expect(screen.queryByText('400.00 €')).toBeNull();
+	  expect(screen.getByTestId('TableCellGainLossSum')).toHaveClass('text-slate-500');
+	  expect(screen.getByTestId('TableCellGainLossSum').textContent).not.toMatch(/^\+/);
     });
   });
 

@@ -81,5 +81,6 @@ contextBridge.exposeInMainWorld('API', {
   getPathForFile: (file: File) => webUtils.getPathForFile(file),
   getTradeRepublicStatus: () => ipcRenderer.invoke('trade-republic:status'),
   syncTradeRepublic: (args: { phone?: string; pin?: string; remember?: boolean }) => ipcRenderer.invoke('trade-republic:sync', args),
+  getTradeRepublicQuotes: () => ipcRenderer.invoke('trade-republic:quotes'),
   forgetTradeRepublicCredentials: () => ipcRenderer.invoke('trade-republic:forget'),
 })

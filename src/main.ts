@@ -197,6 +197,8 @@ ipcMain.handle('trade-republic:sync', async (_event, args: { phone?: string; pin
   return tradeRepublicSync.sync(credentials, !!args.remember);
 });
 
+ipcMain.handle('trade-republic:quotes', async () => tradeRepublicSync.getCachedQuotes());
+
 ipcMain.handle('trade-republic:forget', async () => {
   tradeRepublicSync.forgetCredentials();
   return true;

@@ -1,5 +1,6 @@
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit'
 import { Convert } from "easy-currencies";
+import type { TradeRepublicQuote } from '../../utils/tradeRepublicSync';
 
 export const initialState = [] as Asset[]
 
@@ -61,6 +62,12 @@ export const loadPricesAndDividends = createAsyncThunk(
 		if (props?.assetIDs && props.assetIDs.length > 0) {
 			assetsToRefresh = assetsToRefresh.filter(a => props.assetIDs.includes(a.ID))
 		}
+		let tradeRepublicQuotes: TradeRepublicQuote[] = []
+		try {
+			tradeRepublicQuotes = (await window.API.getTradeRepublicQuotes?.())?.quotes ?? []
+		} catch (error) {
+			console.error('Failed to load cached Trade Republic quotes:', error)
+		}
 
 		for(const asset of assetsToRefresh) {
 			
@@ -68,8 +75,11 @@ export const loadPricesAndDividends = createAsyncThunk(
 
 			let resultYahooFinance:any = null;
 			try {
-				resultYahooFinance = await callYahooFinanceAPI(asset)
-				console.log(asset.name, '- YahooFinance:', resultYahooFinance)
+				const tradeRepublicQuote = findTradeRepublicQuote(asset, tradeRepublicQuotes)
+				resultYahooFinance = tradeRepublicQuote
+					? { price: { regularMarketPrice: tradeRepublicQuote.price, currency: 'EUR' }, source: 'trade-republic' }
+					: await callYahooFinanceAPI(asset)
+				console.log(asset.name, '- Price:', resultYahooFinance)
 
 				if (resultYahooFinance && resultYahooFinance.price) {
 					let price = resultYahooFinance.price.regularMarketPrice
@@ -82,6 +92,9 @@ export const loadPricesAndDividends = createAsyncThunk(
 					}
 					
 					thunkAPI.dispatch(setPrice({ asset, price }))
+					if (tradeRepublicQuote?.averageBuyIn > 0) {
+						thunkAPI.dispatch(setAveragePricePaid({ asset, averageBuyIn: tradeRepublicQuote.averageBuyIn }))
+					}
 					thunkAPI.dispatch(setDividendYield({ asset, dividendYield: resultYahooFinance.summaryDetail?.dividendYield })) // dividend per share
 				}
 			} catch (err) {
@@ -142,8 +155,26 @@ export const setIsWatched = createAsyncThunk(
 )
 
 async function callYahooFinanceAPI(asset:Asset) {
-	var result = await window.API.sendToYahooFinanceAPI({symbol:asset.symbol, isin:asset.isin, type:asset.type})
+	var result = await window.API.sendToYahooFinanceAPI({symbol:getYahooFinanceSymbol(asset), isin:asset.isin, type:asset.type})
 	return result
+}
+
+export function getYahooFinanceSymbol(asset: Pick<Asset, 'symbol' | 'type'>) {
+	const symbol = asset.symbol.trim()
+	if (asset.type === 'Crypto' && !symbol.includes('-')) {
+		return `${symbol.toUpperCase()}-EUR`
+	}
+	return symbol
+}
+
+export function findTradeRepublicQuote(asset: Pick<Asset, 'isin' | 'name'>, quotes: TradeRepublicQuote[]) {
+	const isin = asset.isin?.trim().toUpperCase()
+	if (isin) {
+		const byIsin = quotes.find(quote => quote.isin === isin)
+		if (byIsin) return byIsin
+	}
+	const name = asset.name?.trim().toLocaleLowerCase()
+	return name ? quotes.find(quote => quote.name.trim().toLocaleLowerCase() === name) : undefined
 }
 
 async function callDivvyDiaryAPI(isin:string) {
@@ -294,6 +325,11 @@ const assetsSlice = createSlice({
 				}
 			})
 			return mapped
+		},
+		setAveragePricePaid(state, action) {
+			return state.map((item:Asset) => item.ID === action.payload.asset.ID
+				? Object.assign({}, item, { avg_price_paid: action.payload.averageBuyIn })
+				: item)
 		}
 	}
 })
@@ -312,7 +348,8 @@ export const {
 	setExDividendDate,
 	setNextEstimatedDividendPerShare,
 	setPayDividendDate,
-	setPrice
+	setPrice,
+	setAveragePricePaid
 } = actions
 
 export default reducer

@@ -77,8 +77,8 @@ export default function AnalysisRoute(props: { assets?: Asset[] }) {
 					<TableCell className="p-3 text-center">—</TableCell>
 					<TableCell className="p-3 text-right">—</TableCell>
 					<TableCell className={`p-3 text-right ${sum_dividends === 0 ? 'text-slate-500' : 'text-emerald-400'}`}>{euroFormatter.format(sum_dividends)}</TableCell>
-					<TableCell dataTestID="GainLossSum" className={`p-3 text-right font-bold ${sum_gain_loss >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-						{sum_gain_loss >= 0 ? '+' : ''}{euroFormatter.format(sum_gain_loss)}
+					<TableCell dataTestID="GainLossSum" className={`p-3 text-right font-bold ${sum_gain_loss > 0 ? 'text-emerald-400' : sum_gain_loss < 0 ? 'text-red-400' : 'text-slate-500'}`}>
+						{sum_gain_loss > 0 ? '+' : ''}{euroFormatter.format(sum_gain_loss)}
 					</TableCell>
 				</AssetListSumRow>
         <AssetListRows assets={sorted_Assets}/>

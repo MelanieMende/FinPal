@@ -1,6 +1,5 @@
-import { screen, waitFor, fireEvent } from '@testing-library/react'
+import { act, screen, waitFor, fireEvent } from '@testing-library/react'
 import { render } from '../../../testing/test-utils'
-import { act } from 'react-dom/test-utils';
 import AssetFilter from './AssetFilter';
 import { Provider } from 'react-redux';
 import configureStore from 'redux-mock-store';
@@ -59,7 +58,7 @@ describe('AssetFilter component', () => {
       preloadedState: { assets },
     });
 
-    act(() => {
+    await act(async () => {
       fireEvent.click(screen.getByTestId('asset-filter-button'));
     });
 
@@ -98,9 +97,13 @@ describe('AssetFilter component', () => {
 				<AssetFilter filter={[]} onChange={onChange} />
 			</Provider>
 		));
-		fireEvent.click(screen.getByTestId('asset-filter-button'));
+		await act(async () => {
+			fireEvent.click(screen.getByTestId('asset-filter-button'));
+		});
 
-		fireEvent.click(screen.getByTestId('asset-filter-checkbox-1'));
+		await act(async () => {
+			fireEvent.click(screen.getByTestId('asset-filter-checkbox-1'));
+		});
 
 		expect(store.getActions()).toEqual([{ type: 'filter/toggle', payload: 1 }]);
 	});
@@ -113,7 +116,9 @@ describe('AssetFilter component', () => {
 			</Provider>
 		));
 
-		fireEvent.click(screen.getByTestId('asset-filter-button'));
+		await act(async () => {
+			fireEvent.click(screen.getByTestId('asset-filter-button'));
+		});
 
 		expect(screen.getByTestId('asset-filter-item-1')).toBeInTheDocument();
 	});

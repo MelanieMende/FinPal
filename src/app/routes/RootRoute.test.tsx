@@ -13,7 +13,10 @@ var API = {
 	save_Transactions_AssetFilter: jest.fn(),
 	selectFolder: jest.fn(),
 	dbFileExists: jest.fn(() => { return true }),
-	sendToDB: jest.fn((param) => { if(param == 'SELECT MAX(ID) as ID FROM assets') return [{ID: 1}] }),
+	sendToDB: jest.fn((param) => {
+		if(param == 'SELECT MAX(ID) as ID FROM assets') return [{ID: 1}]
+		return []
+	}),
 	sendToFinanceAPI: jest.fn(),
 	quit: jest.fn()
 }
@@ -152,11 +155,12 @@ describe('RootRoute component', () => {
 		});
 
 		it('logs error if sendToDB(sql) fails', async() => {
-			const spyOn = jest.spyOn(console, 'error')
+			const spyOn = jest.spyOn(console, 'error').mockImplementation(() => {})
 			await sendToDB('sql')
 			await waitFor(() => {
         expect(spyOn).toHaveBeenCalledWith('SQLITE_ERROR: TEST');
       })
+			spyOn.mockRestore()
 		});
 	
 	})

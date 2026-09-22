@@ -60,7 +60,7 @@ contextBridge.exposeInMainWorld('API', {
       });
     });
   },
-  sendToYahooFinanceAPI(args: { symbol:string}) {
+  sendToYahooFinanceAPI(args: { symbol:string, isin?:string, type?:Asset['type']}) {
     return new Promise((resolve) => {
       ipcRenderer.send('yahoo-finance-api-message', args);
       ipcRenderer.once('yahoo-finance-api-reply', (_, arg) => {

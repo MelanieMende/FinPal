@@ -153,8 +153,7 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 
 			{/* Total Earned */}
 			<TableCell className="p-3 text-right">
-				<div className="font-bold text-emerald-400">{euroFormatter.format(props.asset.dividends_earned)}</div>
-				<div className="text-[10px] text-emerald-400/50 uppercase">Total Divs</div>
+				<div className={`font-bold ${(props.asset.dividends_earned || 0) === 0 ? 'text-slate-500' : 'text-emerald-400'}`}>{euroFormatter.format(props.asset.dividends_earned || 0)}</div>
 			</TableCell>
 
 			{/* Realized Gain / Loss including dividends */}

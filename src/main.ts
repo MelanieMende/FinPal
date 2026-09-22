@@ -254,11 +254,37 @@ ipcMain.on('async-db-message', (event, arg) => {
 
 import YahooFinance from 'yahoo-finance2';
 
-ipcMain.on('yahoo-finance-api-message', (event, args) => {
+ipcMain.on('yahoo-finance-api-message', async (event, args: { symbol: string; isin?: string; type?: string }) => {
   const yf = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
-  yf.quoteSummary(args.symbol).then((result) => {
-    event.reply('yahoo-finance-api-reply', result);
-  }).catch((reason) => console.log('ERROR: yahoo-finance-api-message: ', reason));
+
+  if (args.type === 'Bond' && args.isin) {
+		try {
+			const response = await fetch(`https://api.boerse-frankfurt.de/v1/data/price_information/single?isin=${encodeURIComponent(args.isin)}`);
+			if (!response.ok) throw new Error(`Börse Frankfurt response status: ${response.status}`);
+			const quote = await response.json() as { lastPrice?: number; currency?: { originalValue?: string }; tradedInPercent?: boolean };
+			if (typeof quote.lastPrice === 'number') {
+				event.reply('yahoo-finance-api-reply', {
+					price: {
+						regularMarketPrice: quote.lastPrice,
+						currency: quote.currency?.originalValue || 'EUR',
+					},
+					source: 'boerse-frankfurt',
+					tradedInPercent: quote.tradedInPercent === true,
+				});
+				return;
+			}
+		} catch (reason) {
+			console.log('ERROR: boerse-frankfurt bond price: ', reason);
+		}
+	}
+
+	try {
+		const result = await yf.quoteSummary(args.symbol);
+		event.reply('yahoo-finance-api-reply', result);
+	} catch (reason) {
+		console.log('ERROR: yahoo-finance-api-message: ', reason);
+		event.reply('yahoo-finance-api-reply', null);
+	}
 });
 
 ipcMain.on('divvy-diary-api-message', async (event, args) => {

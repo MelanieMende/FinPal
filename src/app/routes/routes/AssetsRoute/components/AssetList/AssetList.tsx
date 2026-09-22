@@ -8,9 +8,10 @@ import RefreshButton from './../../components/RefreshButton';
 import NewAssetButton from './components/NewAssetButton';
 import AssetListSumRow from './components/AssetListSumRow';
 
-export default function AnalysisRoute() {
+export default function AnalysisRoute(props: { assets?: Asset[] }) {
 
-	const assets = useAppSelector(state => state.assets)
+	const storedAssets = useAppSelector(state => state.assets)
+	const assets = props.assets ?? storedAssets
 
 	let sum_profit_lost = 0
 	let sum_dividends = 0
@@ -75,7 +76,7 @@ export default function AnalysisRoute() {
 					</TableCell>
 					<TableCell className="p-3 text-center">—</TableCell>
 					<TableCell className="p-3 text-right">—</TableCell>
-					<TableCell className="p-3 text-right text-emerald-400">{euroFormatter.format(sum_dividends)}</TableCell>
+					<TableCell className={`p-3 text-right ${sum_dividends === 0 ? 'text-slate-500' : 'text-emerald-400'}`}>{euroFormatter.format(sum_dividends)}</TableCell>
 					<TableCell dataTestID="GainLossSum" className={`p-3 text-right font-bold ${sum_gain_loss >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
 						{sum_gain_loss >= 0 ? '+' : ''}{euroFormatter.format(sum_gain_loss)}
 					</TableCell>

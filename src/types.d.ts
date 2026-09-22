@@ -11,7 +11,7 @@ declare global {
       saveSelectedTab?(selectedTab:string):any,
       saveTransactionsAssetFilter?(transactions_AssetFilter:any):any,
       sendToDB(sql:string):any,
-      sendToYahooFinanceAPI?(args:{symbol:string}):any,
+      sendToYahooFinanceAPI?(args:{symbol:string, isin?:string, type?:Asset['type']}):any,
       sendToDivvyDiaryAPI?(args:{isin:string}):any,
       openFiles?():Promise<string[]>,
       parsePDF?(filePath:string):Promise<string>,

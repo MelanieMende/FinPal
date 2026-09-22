@@ -24,6 +24,7 @@ export const loadAssets = createAsyncThunk<void, { assetIDs?: number[] } | void>
 			asset.currencySymbol = '€'
 		}
 		thunkAPI.dispatch(setAssets(assets))
+		if (assets.length === 0) return
 		thunkAPI.dispatch(loadPricesAndDividends({ assetIDs: props ? props.assetIDs : undefined }))
   }
 )
@@ -67,7 +68,7 @@ export const loadPricesAndDividends = createAsyncThunk(
 
 			let resultYahooFinance:any = null;
 			try {
-				resultYahooFinance = await callYahooFinanceAPI(asset.symbol)
+				resultYahooFinance = await callYahooFinanceAPI(asset)
 				console.log(asset.name, '- YahooFinance:', resultYahooFinance)
 
 				if (resultYahooFinance && resultYahooFinance.price) {
@@ -140,8 +141,8 @@ export const setIsWatched = createAsyncThunk(
   }
 )
 
-async function callYahooFinanceAPI(symbol:string) {
-	var result = await window.API.sendToYahooFinanceAPI({symbol:symbol})
+async function callYahooFinanceAPI(asset:Asset) {
+	var result = await window.API.sendToYahooFinanceAPI({symbol:asset.symbol, isin:asset.isin, type:asset.type})
 	return result
 }
 

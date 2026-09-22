@@ -13,7 +13,7 @@ const COLORS = ['#3b82f6', '#8b5cf6', '#10b981', '#f59e0b', '#ef4444', '#ec4899'
 export default function AssetAllocationChart({ data }: AssetAllocationChartProps) {
 	return (
 		<div className="w-full h-full">
-			<ResponsiveContainer width="100%" height="100%">
+			<ResponsiveContainer width="100%" height="100%" initialDimension={{ width: 1, height: 1 }}>
 				<PieChart>
 					<Pie
 						data={data}

@@ -33,7 +33,7 @@ describe('AssetCreation reducer', () => {
 		});
 
 		it('matches crypto assets without an ISIN by name', () => {
-			expect(assetsReducer.findTradeRepublicQuote({ name: 'Bitcoin', isin: undefined }, quotes)?.price).toBe(74650.0185);
+      expect(assetsReducer.findTradeRepublicQuote({ name: 'Bitcoin' } as Asset, quotes)?.price).toBe(74650.0185);
 		});
 	});
 

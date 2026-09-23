@@ -1,4 +1,4 @@
-import { parsePytrJsonLines, parsePytrPortfolioCsv } from './tradeRepublicSync';
+import { normalizeLegacyTradeRepublicQuote, parsePytrJsonLines, parsePytrPortfolioCsv } from './tradeRepublicSync';
 
 jest.mock('electron', () => ({ safeStorage: {} }));
 
@@ -64,6 +64,33 @@ describe('parsePytrPortfolioCsv', () => {
       { name: 'Bitcoin', isin: 'BTC', quantity: 0.008129, price: 74650.0185, averageBuyIn: 68482.88, netValue: 606.83 },
       { name: 'Apple', isin: 'US0378331005', quantity: 2, price: 210.25, averageBuyIn: 150.5, netValue: 420.5 },
     ]);
+  });
+
+  it('keeps dot-separated values with three decimal places as decimals', () => {
+    const input = [
+      'Name;ISIN;quantity;price;avgCost;netValue',
+      'Lufthansa;DE0008232125;4.844961;7.752;10.5202;37.56',
+      'US Treasury;US912810SQ22;180;0.602;0.5595;108.36',
+      'Arbor Metals;CA03880B1040;21.645021;0.048;2.3562;1.04',
+    ].join('\n');
+
+    expect(parsePytrPortfolioCsv(input)).toEqual([
+      { name: 'Lufthansa', isin: 'DE0008232125', quantity: 4.844961, price: 7.752, averageBuyIn: 10.5202, netValue: 37.56 },
+      { name: 'US Treasury', isin: 'US912810SQ22', quantity: 180, price: 0.602, averageBuyIn: 0.5595, netValue: 108.36 },
+      { name: 'Arbor Metals', isin: 'CA03880B1040', quantity: 21.645021, price: 0.048, averageBuyIn: 2.3562, netValue: 1.04 },
+    ]);
+  });
+
+  it('repairs prices and average buy-ins from caches written by the old parser', () => {
+    expect(normalizeLegacyTradeRepublicQuote({
+      name: 'Lufthansa', isin: 'DE0008232125', quantity: 4.844961,
+      price: 7752, averageBuyIn: 10.5202, netValue: 37.56,
+    })).toEqual(expect.objectContaining({ price: 7.752, averageBuyIn: 10.5202 }));
+
+    expect(normalizeLegacyTradeRepublicQuote({
+      name: 'Münchener Rück', isin: 'DE0008430026', quantity: 0.173671,
+      price: 505.6, averageBuyIn: 581558, netValue: 87.81,
+    })).toEqual(expect.objectContaining({ price: 505.6, averageBuyIn: 581.558 }));
   });
 
   it('ignores malformed portfolio output and positions without a price', () => {

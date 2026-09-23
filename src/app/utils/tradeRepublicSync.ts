@@ -41,9 +41,31 @@ const stringValue = (value: unknown): string => typeof value === 'string' ? valu
 const numberValue = (value: unknown): number => {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
   if (typeof value !== 'string') return 0;
-  const parsed = Number(value.trim().replace(/\s/g, '').replace(/\.(?=\d{3}(?:\D|$))/g, '').replace(',', '.'));
+  const compact = value.trim().replace(/\s/g, '');
+  const lastComma = compact.lastIndexOf(',');
+  const lastDot = compact.lastIndexOf('.');
+  const normalized = lastComma >= 0 && lastDot >= 0
+    ? lastComma > lastDot
+      ? compact.replace(/\./g, '').replace(',', '.')
+      : compact.replace(/,/g, '')
+    : compact.replace(',', '.');
+  const parsed = Number(normalized);
   return Number.isFinite(parsed) ? parsed : 0;
 };
+
+export function normalizeLegacyTradeRepublicQuote(quote: TradeRepublicQuote): TradeRepublicQuote {
+  if (!(quote.quantity > 0) || !(quote.netValue > 0) || !(quote.price > 0)) return quote;
+
+  const impliedPrice = quote.netValue / quote.quantity;
+  const priceRatio = quote.price / impliedPrice;
+  const priceWasScaled = priceRatio > 900 && priceRatio < 1100;
+  const price = priceWasScaled ? quote.price / 1000 : quote.price;
+  const averageBuyIn = quote.averageBuyIn > price * 100 ? quote.averageBuyIn / 1000 : quote.averageBuyIn;
+
+  return price === quote.price && averageBuyIn === quote.averageBuyIn
+    ? quote
+    : { ...quote, price, averageBuyIn };
+}
 
 export function parsePytrJsonLines(contents: string): { records: TradeRepublicRecord[]; skipped: number } {
   const records: TradeRepublicRecord[] = [];
@@ -129,7 +151,12 @@ export class TradeRepublicSync {
     if (!fs.existsSync(this.quoteCacheFile)) return { quotes: [] };
     try {
       const cache = JSON.parse(fs.readFileSync(this.quoteCacheFile, 'utf8')) as TradeRepublicQuoteCache;
-      return Array.isArray(cache.quotes) ? cache : { quotes: [] };
+      if (!Array.isArray(cache.quotes)) return { quotes: [] };
+      const quotes = cache.quotes.map(normalizeLegacyTradeRepublicQuote);
+      if (quotes.some((quote, index) => quote !== cache.quotes[index])) {
+        fs.writeFileSync(this.quoteCacheFile, JSON.stringify({ ...cache, quotes }));
+      }
+      return { ...cache, quotes };
     } catch {
       return { quotes: [] };
     }

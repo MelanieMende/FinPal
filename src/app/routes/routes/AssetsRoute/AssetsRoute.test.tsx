@@ -51,6 +51,7 @@ describe('AssetsRoute component', () => {
 			fireEvent.click(cryptoCard);
 		});
 		expect(cryptoCard).toHaveAttribute('aria-pressed', 'true');
+		expect(cryptoCard).toHaveClass('!bg-indigo-500/30', '!border-indigo-400/70');
 		expect(screen.queryByTestId('asset-row-1')).not.toBeInTheDocument();
 		expect(screen.getByTestId('asset-row-2')).toBeInTheDocument();
 		expect(screen.getByText('1 Active')).toBeInTheDocument();
@@ -59,6 +60,7 @@ describe('AssetsRoute component', () => {
 			fireEvent.click(cryptoCard);
 		});
 		expect(cryptoCard).toHaveAttribute('aria-pressed', 'false');
+		expect(cryptoCard).not.toHaveClass('!bg-indigo-500/30', '!border-indigo-400/70');
 		expect(screen.getByTestId('asset-row-1')).toBeInTheDocument();
 		expect(screen.getByTestId('asset-row-2')).toBeInTheDocument();
 	});

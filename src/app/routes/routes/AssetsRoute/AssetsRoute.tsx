@@ -41,14 +41,17 @@ export default function AnalysisRoute() {
 			<div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
 				
 				<div className="flex flex-wrap gap-4">
-					{valuesByType.map(({ type, label, icon, symbol, value }) => (
-					<Card
+					{valuesByType.map(({ type, label, icon, symbol, value }) => {
+						const isSelected = selectedType === type;
+
+						return (
+						<Card
 						key={type}
 						data-testid={`asset-type-value-${type}`}
 						interactive
 						role="button"
 						tabIndex={0}
-						aria-pressed={selectedType === type}
+						aria-pressed={isSelected}
 						onClick={() => setSelectedType(current => current === type ? null : type)}
 						onKeyDown={(event) => {
 							if (event.key === 'Enter' || event.key === ' ') {
@@ -56,21 +59,26 @@ export default function AnalysisRoute() {
 								setSelectedType(current => current === type ? null : type);
 							}
 						}}
-						className={`glass-card py-2 px-4 flex items-center gap-3 cursor-pointer transition-all ${selectedType === type ? 'ring-2 ring-indigo-500 bg-indigo-500/10' : ''}`}
+						className={`glass-card py-2 px-4 flex items-center gap-3 cursor-pointer transition-colors duration-200 ${
+							isSelected
+								? '!border-indigo-400/70 !bg-indigo-500/30'
+								: 'border-transparent hover:border-indigo-500/30'
+						}`}
 					>
-						<div className="p-2 bg-indigo-500/10 rounded-lg">
+						<div className={`p-2 rounded-lg transition-colors ${isSelected ? 'bg-indigo-500 text-white' : 'bg-indigo-500/10'}`}>
 							{icon ? (
-								<Icon icon={icon} className="text-indigo-500" size={16} />
+								<Icon icon={icon} className={isSelected ? 'text-white' : 'text-indigo-500'} size={16} />
 							) : (
-								<span data-testid={`asset-type-symbol-${type}`} className="text-indigo-500 text-lg font-bold leading-none">{symbol}</span>
+								<span data-testid={`asset-type-symbol-${type}`} className={`${isSelected ? 'text-white' : 'text-indigo-500'} text-lg font-bold leading-none`}>{symbol}</span>
 							)}
 						</div>
 						<div>
-							<div className="text-[10px] uppercase font-bold text-gray-400 tracking-wider">{label}</div>
+							<div className={`text-[10px] uppercase font-bold tracking-wider ${isSelected ? 'text-indigo-200' : 'text-gray-400'}`}>{label}</div>
 							<div className={`text-lg font-bold ${value === 0 ? 'text-slate-500' : 'text-white'}`}>{euroFormatter.format(value)}</div>
 						</div>
-					</Card>
-					))}
+						</Card>
+						);
+					})}
 				</div>
 			</div>
 

@@ -57,6 +57,7 @@ describe('ImportRoute asset mapping', () => {
             getTradeRepublicStatus: jest.fn().mockResolvedValue({ runnerAvailable: true, hasSavedCredentials: true }),
             syncTradeRepublic: jest.fn().mockResolvedValue({
                 records: [pendingRecord],
+                cashRecords: [],
                 skipped: 0,
                 quotes: [{
                     name: 'Unbekanntes Asset', isin: pendingRecord.isin, quantity: 1,
@@ -92,5 +93,31 @@ describe('ImportRoute asset mapping', () => {
         };
         render(<ImportRoute />);
         await waitFor(() => expect(screen.getByTestId('trade-republic-last-sync')).toHaveTextContent('01.10.26'));
+    });
+
+    it('imports broker cash automatically while leaving a matching manual deposit untouched', async () => {
+        const cash = [{ date: '2025-04-23', type: 'Deposit', amount: 100 }];
+        const sendToDB = jest.fn(async (sql: string) => {
+            if (sql.startsWith('SELECT date, type, amount FROM cash')) return cash;
+            if (sql.startsWith('SELECT * FROM cash')) return cash;
+            return [];
+        });
+        window.API = {
+            sendToDB,
+            getTradeRepublicStatus: jest.fn().mockResolvedValue({ runnerAvailable: true, hasSavedCredentials: true }),
+            syncTradeRepublic: jest.fn().mockResolvedValue({
+                records: [], cashRecords: [
+                    { date: '2025-04-23', type: 'Deposit', amount: 100 },
+                    { date: '2025-10-30', type: 'Tax Refund', amount: 13.68 },
+                ], skipped: 0, quotes: [], lastSyncAt: '2026-10-01T10:30:00.000Z',
+            }),
+        };
+        render(<ImportRoute />);
+
+        fireEvent.click(screen.getByRole('button', { name: /Jetzt synchronisieren/i }));
+
+        await waitFor(() => expect(screen.getByText(/1 Cash-Umsätze automatisch importiert, 1 bereits vorhanden/)).toBeInTheDocument());
+        expect(sendToDB).toHaveBeenCalledWith(expect.stringContaining("'Trade Republic: Steuererstattung'"));
+        expect(sendToDB).not.toHaveBeenCalledWith(expect.stringContaining("'2025-04-23', 'Deposit', 100.00"));
     });
 });

@@ -12,20 +12,40 @@ describe('parsePytrJsonLines', () => {
     const result = parsePytrJsonLines(input);
 
     expect(result.skipped).toBe(0);
+    expect(result.cashRecords).toEqual([]);
     expect(result.records).toEqual([
       expect.objectContaining({ type: 'Buy', totalAmount: 101, shares: 2, pricePerShare: 50, fee: 1 }),
       expect.objectContaining({ type: 'Dividend', totalAmount: 4.5, tax: 0.5, pricePerShare: 0 }),
     ]);
   });
 
-  it('skips cash movements, malformed data and transactions without an ISIN', () => {
+  it('keeps supported cash movements and skips malformed transactions', () => {
     const input = [
       JSON.stringify({ Date: '2026-08-20', Type: 'Deposit', Value: 100 }),
       '{broken',
       JSON.stringify({ Date: '2026-08-20', Type: 'Buy', Value: -10, Shares: 1 }),
     ].join('\n');
 
-    expect(parsePytrJsonLines(input)).toEqual({ records: [], skipped: 3 });
+    expect(parsePytrJsonLines(input)).toEqual({ records: [], cashRecords: [{ date: '2026-08-20', type: 'Deposit', amount: 100 }], skipped: 2 });
+  });
+
+  it('recognizes credits, interest and tax refunds without an ISIN', () => {
+    const input = [
+      { Date: '2026-08-17', Type: 'Deposit', Value: 0.87 },
+      { Date: '2026-10-01', Type: 'Interest', Value: 0.03 },
+      { Date: '2025-10-30', Type: 'Tax Refund', Value: 13.68 },
+      { Date: '2026-03-09', Type: 'Taxes', Value: 0 },
+    ].map(row => JSON.stringify(row)).join('\n');
+
+    expect(parsePytrJsonLines(input)).toEqual({
+      records: [],
+      cashRecords: [
+        { date: '2026-08-17', type: 'Deposit', amount: 0.87 },
+        { date: '2026-10-01', type: 'Interest', amount: 0.03 },
+        { date: '2025-10-30', type: 'Tax Refund', amount: 13.68 },
+      ],
+      skipped: 1,
+    });
   });
 
   it('reconstructs the gross Tesla sell price from net value, fees and taxes', () => {

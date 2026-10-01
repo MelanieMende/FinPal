@@ -22,6 +22,12 @@ export interface TradeRepublicRecord {
   totalAmount: number;
 }
 
+export interface TradeRepublicCashRecord {
+  date: string;
+  type: 'Deposit' | 'Interest' | 'Tax Refund';
+  amount: number;
+}
+
 export interface TradeRepublicQuote {
   name: string;
   isin: string;
@@ -67,22 +73,32 @@ export function normalizeLegacyTradeRepublicQuote(quote: TradeRepublicQuote): Tr
     : { ...quote, price, averageBuyIn };
 }
 
-export function parsePytrJsonLines(contents: string): { records: TradeRepublicRecord[]; skipped: number } {
+export function parsePytrJsonLines(contents: string): { records: TradeRepublicRecord[]; cashRecords: TradeRepublicCashRecord[]; skipped: number } {
   const records: TradeRepublicRecord[] = [];
+  const cashRecords: TradeRepublicCashRecord[] = [];
   let skipped = 0;
   for (const line of contents.split(/\r?\n/).filter(Boolean)) {
     let row: PytrRow;
     try { row = JSON.parse(line) as PytrRow; } catch { skipped += 1; continue; }
     const rawType = stringValue(row.Type ?? row.type).toLowerCase();
+    const date = stringValue(row.Date ?? row.date).slice(0, 10);
+    const signedValue = numberValue(row.Value ?? row.value);
+    const cashType: TradeRepublicCashRecord['type'] | null = rawType === 'deposit' ? 'Deposit'
+      : rawType === 'interest' ? 'Interest'
+      : rawType === 'tax refund' ? 'Tax Refund' : null;
+    if (cashType) {
+      if (/^\d{4}-\d{2}-\d{2}$/.test(date) && signedValue > 0) {
+        cashRecords.push({ date, type: cashType, amount: signedValue });
+      } else skipped += 1;
+      continue;
+    }
     let type: TradeRepublicRecord['type'] | null = rawType.includes('buy') ? 'Buy'
       : rawType.includes('sell') ? 'Sell'
       : (rawType.includes('dividend') || rawType.includes('distribution')) ? 'Dividend' : null;
-    const date = stringValue(row.Date ?? row.date).slice(0, 10);
     const isin = stringValue(row.ISIN ?? row.isin).toUpperCase();
     const shares = Math.abs(numberValue(row.Shares ?? row.shares));
     const fee = Math.abs(numberValue(row.Fees ?? row.fees));
     const tax = Math.abs(numberValue(row.Taxes ?? row.taxes));
-    const signedValue = numberValue(row.Value ?? row.value);
     const totalAmount = Math.abs(signedValue);
 	if ((type === 'Buy' || type === 'Sell') && signedValue !== 0) {
 		type = signedValue < 0 ? 'Buy' : 'Sell';
@@ -101,7 +117,7 @@ export function parsePytrJsonLines(contents: string): { records: TradeRepublicRe
       pricePerShare,
     });
   }
-  return { records, skipped };
+  return { records, cashRecords, skipped };
 }
 
 export function parsePytrPortfolioCsv(contents: string): TradeRepublicQuote[] {
@@ -174,7 +190,7 @@ export class TradeRepublicSync {
       return { quotes: [] };
     }
   }
-  async sync(credentials: TradeRepublicCredentials | null, remember: boolean): Promise<{ records: TradeRepublicRecord[]; skipped: number; quotes: TradeRepublicQuote[]; quotesFetchedAt?: string; quoteError?: string; lastSyncAt: string }> {
+  async sync(credentials: TradeRepublicCredentials | null, remember: boolean): Promise<{ records: TradeRepublicRecord[]; cashRecords: TradeRepublicCashRecord[]; skipped: number; quotes: TradeRepublicQuote[]; quotesFetchedAt?: string; quoteError?: string; lastSyncAt: string }> {
     const login = credentials?.phone && credentials?.pin ? credentials : this.readCredentials();
     if (!login) throw new Error('Bitte Telefonnummer und PIN eingeben.');
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-tr-'));

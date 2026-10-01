@@ -5,6 +5,7 @@ import { loadFiles, removeRecord, setPendingRecords } from './../../../store/imp
 import * as assetsReducer from './../../../store/assets/assets.reducer';
 import * as transactionsReducer from './../../../store/transactions/transactions.reducer';
 import * as dividendsReducer from './../../../store/dividends/dividends.reducer';
+import * as cashReducer from './../../../store/cash/cash.reducer';
 import * as assetCreationReducer from './../../../store/assetCreation/assetCreation.reducer';
 import * as appStateReducer from './../../../store/appState/appState.reducer';
 import CreateAndEditAssetOverlay from '../AssetsRoute/components/CreateAndEditAssetOverlay';
@@ -13,6 +14,7 @@ import { normalizePendingRecord } from '../../../utils/normalizePendingRecord';
 import { selectAssetsSortedByName } from '../../../store/assets/assets.selectors';
 import { getImportTransactionValues } from '../../../utils/getImportTransactionValues';
 import { formatSyncTime } from '../../../utils/syncTimestamps';
+import { importTradeRepublicCash } from '../../../utils/importTradeRepublicCash';
 
 export default function ImportRoute() {
     const pendingImportStorageKey = 'finpal.pendingTradeRepublicImport.v1';
@@ -162,7 +164,8 @@ export default function ImportRoute() {
                 // APIs must not keep the sync button in its loading state.
                 void dispatch(assetsReducer.loadPricesAndDividends(undefined));
             }
-            if (!result.records.length && !result.quotes.length) {
+            const cashRecords = result.cashRecords ?? [];
+            if (!result.records.length && !result.quotes.length && !cashRecords.length) {
                 throw new Error(`Keine importierbaren Transaktionen empfangen (${result.skipped} Buchungen übersprungen). Die bisherige Liste bleibt erhalten.`);
             }
             // Persist before updating Redux so a renderer reload between both
@@ -171,12 +174,14 @@ export default function ImportRoute() {
 				localStorage.setItem(pendingImportStorageKey, JSON.stringify(result.records));
 				dispatch(setPendingRecords(result.records));
 			}
+            const cashImport = await importTradeRepublicCash(cashRecords, sql => Promise.resolve(window.API.sendToDB(sql)));
+            if (cashImport.imported > 0) await dispatch(cashReducer.loadCash());
             setTrPin('');
             setTrStatus({ runnerAvailable: true, hasSavedCredentials: rememberTr || !!trStatus?.hasSavedCredentials, lastSyncAt: result.lastSyncAt });
 			const quoteMessage = result.quoteError
 				? ` ${result.quoteError}${result.quotes.length ? ' Der letzte gespeicherte Trade-Republic-Kurs bleibt aktiv.' : ' Yahoo Finance bleibt als Kursquelle aktiv.'}`
 				: ` ${result.quotes.length} Trade-Republic-Kurs(e) aktualisiert.`;
-            setTrMessage(`${result.records.length} Transaktion(en) geladen${result.skipped ? `, ${result.skipped} nicht unterstützte Buchung(en) übersprungen` : ''}.${quoteMessage}`);
+            setTrMessage(`${result.records.length} Transaktion(en) geladen${result.skipped ? `, ${result.skipped} nicht unterstützte Buchung(en) übersprungen` : ''}. ${cashImport.imported} Cash-Umsätze automatisch importiert${cashImport.existing ? `, ${cashImport.existing} bereits vorhanden` : ''}.${quoteMessage}`);
         } catch (syncError) {
             setTrMessage(syncError instanceof Error ? syncError.message : 'Synchronisierung fehlgeschlagen.');
         } finally {
@@ -324,7 +329,7 @@ export default function ImportRoute() {
                     <div className="min-w-64 flex-1">
                         <H3 className="m-0 mb-1 text-lg">Trade Republic automatisch synchronisieren</H3>
                         <p className="text-xs text-gray-400" data-testid="trade-republic-last-sync">Letzter erfolgreicher Sync: {formatSyncTime(trStatus?.lastSyncAt) ?? 'noch nicht'}</p>
-                        <p className="text-gray-400 mb-4">FinPal lädt die strukturierten Umsatzdaten direkt über den lokalen pytr-Client. PDFs sind nicht erforderlich.</p>
+                        <p className="text-gray-400 mb-4">FinPal lädt die strukturierten Umsatzdaten direkt über den lokalen pytr-Client. Gutschriften, Zinsen und Steuererstattungen werden automatisch im Cash Management ergänzt. PDFs sind nicht erforderlich.</p>
                         {trStatus?.runnerAvailable === false && <Callout intent={Intent.WARNING}>Diese Funktion wird derzeit nur unter Windows x64 unterstützt.</Callout>}
                         {trStatus?.runnerAvailable && <p className="text-xs text-gray-500">Die benötigte Laufzeitkomponente wird beim ersten Start automatisch und geprüft eingerichtet.</p>}
                         {trMessage && <Callout className="mt-3" intent={trMessage.includes('fehl') || trMessage.includes('Bitte Telefonnummer') ? Intent.DANGER : Intent.PRIMARY}>{trMessage}</Callout>}

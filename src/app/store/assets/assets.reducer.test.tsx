@@ -1,6 +1,7 @@
 import { act, screen, waitFor } from '@testing-library/react'
 import reducer, * as assetsReducer from './assets.reducer'
 import { setupStore } from '..';
+import { MARKET_PRICE_UPDATED_AT_KEY } from '../../utils/syncTimestamps';
 
 jest.mock('easy-currencies', () => ({
 	Convert: () => ({ from: () => ({ fetch: async () => ({ rates: { EUR: 1 } }) }) }),
@@ -61,6 +62,49 @@ describe('AssetCreation reducer', () => {
 		expect(sendToYahooFinanceAPI).not.toHaveBeenCalled();
 		expect(dispatch).toHaveBeenCalledWith(assetsReducer.setPrice({ asset, price: 74650.0185 }));
 		expect(dispatch).toHaveBeenCalledWith(assetsReducer.setAveragePricePaid({ asset, averageBuyIn: 68482.88 }));
+	});
+
+	it('refreshes the market price between syncs while preserving the Trade Republic average buy-in', async () => {
+		localStorage.removeItem(MARKET_PRICE_UPDATED_AT_KEY);
+		const dispatch = jest.fn();
+		const asset = { ID: 31, type: 'Crypto', name: 'Bitcoin', symbol: 'BTC', is_watched: true } as Asset;
+		window.API = {
+			sendToDB: jest.fn(),
+			sendToYahooFinanceAPI: jest.fn().mockResolvedValue({
+				price: { regularMarketPrice: 75000, currency: 'EUR' },
+			}),
+			sendToDivvyDiaryAPI: jest.fn(),
+			getTradeRepublicQuotes: jest.fn().mockResolvedValue({
+				quotes: [{ name: 'Bitcoin', isin: 'BTC', quantity: 0.008129, price: 74000, averageBuyIn: 68482.88, netValue: 601.54 }],
+			}),
+		};
+
+		await assetsReducer.loadPricesAndDividends({
+			preferTradeRepublicPrice: false,
+			includeDividends: false,
+		})(dispatch, () => ({ assets: [asset] }), undefined);
+
+		expect(window.API.sendToYahooFinanceAPI).toHaveBeenCalledWith({ symbol: 'BTC-EUR', isin: undefined, type: 'Crypto' });
+		expect(dispatch).toHaveBeenCalledWith(assetsReducer.setPrice({ asset, price: 75000 }));
+		expect(dispatch).toHaveBeenCalledWith(assetsReducer.setAveragePricePaid({ asset, averageBuyIn: 68482.88 }));
+		expect(window.API.sendToDivvyDiaryAPI).not.toHaveBeenCalled();
+		expect(localStorage.getItem(MARKET_PRICE_UPDATED_AT_KEY)).not.toBeNull();
+	});
+
+	it('does not mark an unusable market quote as updated', async () => {
+		localStorage.removeItem(MARKET_PRICE_UPDATED_AT_KEY);
+		const dispatch = jest.fn();
+		const asset = { ID: 32, type: 'Stock', name: 'Unavailable', symbol: 'BAD', is_watched: true } as Asset;
+		window.API = {
+			sendToDB: jest.fn(),
+			sendToYahooFinanceAPI: jest.fn().mockResolvedValue({ price: { regularMarketPrice: 0, currency: 'EUR' } }),
+			getTradeRepublicQuotes: jest.fn().mockResolvedValue({ quotes: [] }),
+		};
+
+		await assetsReducer.loadPricesAndDividends({ includeDividends: false })(dispatch, () => ({ assets: [asset] }), undefined);
+
+		expect(localStorage.getItem(MARKET_PRICE_UPDATED_AT_KEY)).toBeNull();
+		expect(dispatch).not.toHaveBeenCalledWith(assetsReducer.setPrice({ asset, price: 0 }));
 	});
 
     it('should dispatch loadAssets thunk', async () => {

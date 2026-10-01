@@ -62,6 +62,7 @@ describe('ImportRoute asset mapping', () => {
                     name: 'Unbekanntes Asset', isin: pendingRecord.isin, quantity: 1,
                     price: 10, averageBuyIn: 10, netValue: 10,
                 }],
+                lastSyncAt: '2026-10-01T10:30:00.000Z',
             }),
         };
 
@@ -79,5 +80,17 @@ describe('ImportRoute asset mapping', () => {
 
         await waitFor(() => expect(syncButton).not.toBeDisabled());
         expect(screen.getByText(/1 Transaktion\(en\) geladen/)).toBeInTheDocument();
+        expect(screen.getByTestId('trade-republic-last-sync')).toHaveTextContent('01.10.26');
+    });
+
+    it('shows the saved Trade Republic sync time after reopening Import', async () => {
+        window.API = {
+            sendToDB: jest.fn(),
+            getTradeRepublicStatus: jest.fn().mockResolvedValue({
+                runnerAvailable: true, hasSavedCredentials: true, lastSyncAt: '2026-10-01T10:30:00.000Z',
+            }),
+        };
+        render(<ImportRoute />);
+        await waitFor(() => expect(screen.getByTestId('trade-republic-last-sync')).toHaveTextContent('01.10.26'));
     });
 });

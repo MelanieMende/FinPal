@@ -1,8 +1,17 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { render } from '../../../../testing/test-utils'
 import AssetsRoute from './AssetsRoute';
+import { MARKET_PRICE_UPDATED_AT_KEY, MARKET_PRICE_UPDATED_EVENT } from '../../../utils/syncTimestamps';
 
 describe('AssetsRoute component', () => {
+	it('shows a saved market price time and updates it when a new quote arrives', () => {
+		localStorage.setItem(MARKET_PRICE_UPDATED_AT_KEY, '2026-10-01T10:30:00.000Z');
+		render(<AssetsRoute />, { preloadedState: { assets: [] } });
+		expect(screen.getByTestId('market-price-updated-at')).toHaveTextContent('01.10.26');
+		act(() => window.dispatchEvent(new CustomEvent(MARKET_PRICE_UPDATED_EVENT, { detail: '2026-10-02T10:30:00.000Z' })));
+		expect(screen.getByTestId('market-price-updated-at')).toHaveTextContent('02.10.26');
+		localStorage.removeItem(MARKET_PRICE_UPDATED_AT_KEY);
+	});
 
 	it('groups current values by asset type with English labels', async () => {
 		const assets = [

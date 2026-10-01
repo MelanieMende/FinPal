@@ -129,10 +129,23 @@ export class TradeRepublicSync {
   private readonly credentialsFile: string;
   private readonly runnerDir: string;
   private readonly quoteCacheFile: string;
+  private readonly syncStatusFile: string;
   constructor(userDataPath: string) {
     this.credentialsFile = path.join(userDataPath, 'trade-republic-credentials.bin');
     this.runnerDir = path.join(userDataPath, 'tools', `uv-${UV_VERSION}`);
     this.quoteCacheFile = path.join(userDataPath, 'trade-republic-quotes.json');
+    this.syncStatusFile = path.join(userDataPath, 'trade-republic-sync-status.json');
+  }
+  getLastSyncAt(): string | undefined {
+    try {
+      const value = JSON.parse(fs.readFileSync(this.syncStatusFile, 'utf8')) as { lastSyncAt?: unknown };
+      return typeof value.lastSyncAt === 'string' && Number.isFinite(Date.parse(value.lastSyncAt))
+        ? value.lastSyncAt : undefined;
+    } catch {
+      // Before sync status was stored separately, a successful portfolio
+      // export already recorded its time in the quote cache.
+      return this.getCachedQuotes().fetchedAt;
+    }
   }
   hasSavedCredentials(): boolean { return fs.existsSync(this.credentialsFile) && safeStorage.isEncryptionAvailable(); }
   forgetCredentials(): void { if (fs.existsSync(this.credentialsFile)) fs.unlinkSync(this.credentialsFile); }
@@ -161,7 +174,7 @@ export class TradeRepublicSync {
       return { quotes: [] };
     }
   }
-  async sync(credentials: TradeRepublicCredentials | null, remember: boolean): Promise<{ records: TradeRepublicRecord[]; skipped: number; quotes: TradeRepublicQuote[]; quotesFetchedAt?: string; quoteError?: string }> {
+  async sync(credentials: TradeRepublicCredentials | null, remember: boolean): Promise<{ records: TradeRepublicRecord[]; skipped: number; quotes: TradeRepublicQuote[]; quotesFetchedAt?: string; quoteError?: string; lastSyncAt: string }> {
     const login = credentials?.phone && credentials?.pin ? credentials : this.readCredentials();
     if (!login) throw new Error('Bitte Telefonnummer und PIN eingeben.');
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-tr-'));
@@ -196,7 +209,9 @@ export class TradeRepublicSync {
 
       if (remember && credentials) this.saveCredentials(credentials);
       const quoteCache = this.getCachedQuotes();
-      return { ...result, quotes: quoteCache.quotes, quotesFetchedAt: quoteCache.fetchedAt, quoteError };
+      const lastSyncAt = new Date().toISOString();
+      fs.writeFileSync(this.syncStatusFile, JSON.stringify({ lastSyncAt }));
+      return { ...result, quotes: quoteCache.quotes, quotesFetchedAt: quoteCache.fetchedAt, quoteError, lastSyncAt };
     } finally { fs.rmSync(tempDir, { recursive: true, force: true }); }
   }
   private prepareIsolatedProfile(credentials: TradeRepublicCredentials, tempDir: string): string {

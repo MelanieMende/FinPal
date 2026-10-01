@@ -1,8 +1,15 @@
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit'
 import { Convert } from "easy-currencies";
 import type { TradeRepublicQuote } from '../../utils/tradeRepublicSync';
+import { recordMarketPriceUpdate } from '../../utils/syncTimestamps';
 
 export const initialState = [] as Asset[]
+
+export interface LoadPricesOptions {
+	assetIDs?: number[];
+	preferTradeRepublicPrice?: boolean;
+	includeDividends?: boolean;
+}
 
 export const loadAssets = createAsyncThunk<void, { assetIDs?: number[] } | void>(
   'assets/loadAssets',
@@ -26,7 +33,10 @@ export const loadAssets = createAsyncThunk<void, { assetIDs?: number[] } | void>
 		}
 		thunkAPI.dispatch(setAssets(assets))
 		if (assets.length === 0) return
-		thunkAPI.dispatch(loadPricesAndDividends({ assetIDs: props ? props.assetIDs : undefined }))
+		thunkAPI.dispatch(loadPricesAndDividends({
+			assetIDs: props ? props.assetIDs : undefined,
+			preferTradeRepublicPrice: false,
+		}))
   }
 )
 
@@ -42,13 +52,13 @@ export const loadAsset = createAsyncThunk(
 			console.log('loaded asset: ', asset)
 			thunkAPI.dispatch(setAsset(asset))
 		}
-		thunkAPI.dispatch(loadPricesAndDividends({ assetIDs: [props.assetID] }))
+		thunkAPI.dispatch(loadPricesAndDividends({ assetIDs: [props.assetID], preferTradeRepublicPrice: false }))
   }
 )
 
 export const loadPricesAndDividends = createAsyncThunk(
   'assets/loadPrices',
-  async (props: { assetIDs?: number[] } | undefined, thunkAPI) => {
+  async (props: LoadPricesOptions | undefined, thunkAPI) => {
 
 		let state = thunkAPI.getState() as State
 
@@ -63,6 +73,7 @@ export const loadPricesAndDividends = createAsyncThunk(
 			assetsToRefresh = assetsToRefresh.filter(a => props.assetIDs.includes(a.ID))
 		}
 		let tradeRepublicQuotes: TradeRepublicQuote[] = []
+		let marketPriceRecorded = false
 		try {
 			tradeRepublicQuotes = (await window.API.getTradeRepublicQuotes?.())?.quotes ?? []
 		} catch (error) {
@@ -76,7 +87,7 @@ export const loadPricesAndDividends = createAsyncThunk(
 			let resultYahooFinance:any = null;
 			try {
 				const tradeRepublicQuote = findTradeRepublicQuote(asset, tradeRepublicQuotes)
-				resultYahooFinance = tradeRepublicQuote
+				resultYahooFinance = props?.preferTradeRepublicPrice !== false && tradeRepublicQuote
 					? { price: { regularMarketPrice: tradeRepublicQuote.price, currency: 'EUR' }, source: 'trade-republic' }
 					: await callYahooFinanceAPI(asset)
 				console.log(asset.name, '- Price:', resultYahooFinance)
@@ -91,15 +102,23 @@ export const loadPricesAndDividends = createAsyncThunk(
 						price *= DKK_conversion_rate
 					}
 					
-					thunkAPI.dispatch(setPrice({ asset, price }))
-					if (tradeRepublicQuote?.averageBuyIn > 0) {
-						thunkAPI.dispatch(setAveragePricePaid({ asset, averageBuyIn: tradeRepublicQuote.averageBuyIn }))
+					if (Number.isFinite(price) && price > 0) {
+						thunkAPI.dispatch(setPrice({ asset, price }))
+						if (resultYahooFinance.source !== 'trade-republic' && !marketPriceRecorded) {
+							recordMarketPriceUpdate()
+							marketPriceRecorded = true
+						}
+						if (tradeRepublicQuote?.averageBuyIn > 0) {
+							thunkAPI.dispatch(setAveragePricePaid({ asset, averageBuyIn: tradeRepublicQuote.averageBuyIn }))
+						}
+						thunkAPI.dispatch(setDividendYield({ asset, dividendYield: resultYahooFinance.summaryDetail?.dividendYield })) // dividend per share
 					}
-					thunkAPI.dispatch(setDividendYield({ asset, dividendYield: resultYahooFinance.summaryDetail?.dividendYield })) // dividend per share
 				}
 			} catch (err) {
 				console.error(`Failed to fetch Yahoo Finance data for ${asset.symbol}:`, err)
 			}
+
+			if (props?.includeDividends === false) continue
 
 			try {
 				const json = await callDivvyDiaryAPI(asset.isin)

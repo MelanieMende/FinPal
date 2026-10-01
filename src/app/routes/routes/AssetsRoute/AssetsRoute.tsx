@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAppSelector } from './../../../hooks'
 import { Card, H5, Icon } from '@blueprintjs/core';
 import type { IconName } from '@blueprintjs/icons';
@@ -6,6 +6,7 @@ import type { IconName } from '@blueprintjs/icons';
 import CreateAndEditAssetOverlay from './components/CreateAndEditAssetOverlay';
 import AssetList from './components/AssetList/AssetList';
 import * as assetsSelector from './../../../store/assets/assets.selectors';
+import { formatSyncTime, MARKET_PRICE_UPDATED_AT_KEY, MARKET_PRICE_UPDATED_EVENT } from '../../../utils/syncTimestamps';
 
 const assetTypes: { type: Asset['type']; label: string; icon?: IconName; symbol?: string }[] = [
 	{ type: 'Stock', label: 'Stocks', icon: 'chart' },
@@ -21,6 +22,12 @@ const euroFormatter = new Intl.NumberFormat('de-DE', { style: 'currency', curren
 export default function AnalysisRoute() {
 	const assets = useAppSelector(state => state.assets);
 	const [selectedType, setSelectedType] = useState<Asset['type'] | null>(null);
+	const [marketPriceUpdatedAt, setMarketPriceUpdatedAt] = useState<string | null>(() => localStorage.getItem(MARKET_PRICE_UPDATED_AT_KEY));
+	useEffect(() => {
+		const update = (event: Event) => setMarketPriceUpdatedAt((event as CustomEvent<string>).detail);
+		window.addEventListener(MARKET_PRICE_UPDATED_EVENT, update);
+		return () => window.removeEventListener(MARKET_PRICE_UPDATED_EVENT, update);
+	}, []);
 	const filteredAssets = selectedType
 		? assets.filter(asset => (asset.type || 'Stock') === selectedType)
 		: assets;
@@ -87,6 +94,7 @@ export default function AnalysisRoute() {
 				<div className="p-4 border-b border-white/5 bg-white/5 flex justify-between items-center">
 					<div className="flex items-center gap-4">
 						<H5 className="m-0 text-sm font-bold uppercase tracking-wider text-gray-300">Positions List</H5>
+						<span className="text-xs text-gray-400" data-testid="market-price-updated-at">Marktpreise zuletzt aktualisiert: {formatSyncTime(marketPriceUpdatedAt) ?? 'noch nicht'}</span>
 						<span className="bg-blue-500/10 text-blue-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-blue-500/20">
 							{filteredAssets.length} Active
 						</span>

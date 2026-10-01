@@ -12,6 +12,7 @@ import { isImportedRecord } from '../../../utils/isImportedRecord';
 import { normalizePendingRecord } from '../../../utils/normalizePendingRecord';
 import { selectAssetsSortedByName } from '../../../store/assets/assets.selectors';
 import { getImportTransactionValues } from '../../../utils/getImportTransactionValues';
+import { formatSyncTime } from '../../../utils/syncTimestamps';
 
 export default function ImportRoute() {
     const pendingImportStorageKey = 'finpal.pendingTradeRepublicImport.v1';
@@ -27,7 +28,7 @@ export default function ImportRoute() {
     const [isDragging, setIsDragging] = useState(false);
     const [showSuccessAlert, setShowSuccessAlert] = useState(false);
     const [showErrorAlert, setShowErrorAlert] = useState(false);
-    const [trStatus, setTrStatus] = useState<{ runnerAvailable: boolean; hasSavedCredentials: boolean } | null>(null);
+    const [trStatus, setTrStatus] = useState<{ runnerAvailable: boolean; hasSavedCredentials: boolean; lastSyncAt?: string } | null>(null);
     const [trPhone, setTrPhone] = useState('');
     const [trPin, setTrPin] = useState('');
     const [rememberTr, setRememberTr] = useState(true);
@@ -171,7 +172,7 @@ export default function ImportRoute() {
 				dispatch(setPendingRecords(result.records));
 			}
             setTrPin('');
-            setTrStatus({ runnerAvailable: true, hasSavedCredentials: rememberTr || !!trStatus?.hasSavedCredentials });
+            setTrStatus({ runnerAvailable: true, hasSavedCredentials: rememberTr || !!trStatus?.hasSavedCredentials, lastSyncAt: result.lastSyncAt });
 			const quoteMessage = result.quoteError
 				? ` ${result.quoteError}${result.quotes.length ? ' Der letzte gespeicherte Trade-Republic-Kurs bleibt aktiv.' : ' Yahoo Finance bleibt als Kursquelle aktiv.'}`
 				: ` ${result.quotes.length} Trade-Republic-Kurs(e) aktualisiert.`;
@@ -185,7 +186,7 @@ export default function ImportRoute() {
 
     const forgetTradeRepublicCredentials = async () => {
         await window.API.forgetTradeRepublicCredentials?.();
-        setTrStatus(current => ({ runnerAvailable: current?.runnerAvailable ?? true, hasSavedCredentials: false }));
+        setTrStatus(current => ({ runnerAvailable: current?.runnerAvailable ?? true, hasSavedCredentials: false, lastSyncAt: current?.lastSyncAt }));
         setTrMessage('Gespeicherte Zugangsdaten wurden gelöscht.');
     };
 
@@ -322,6 +323,7 @@ export default function ImportRoute() {
                 <div className="flex flex-wrap justify-between gap-4">
                     <div className="min-w-64 flex-1">
                         <H3 className="m-0 mb-1 text-lg">Trade Republic automatisch synchronisieren</H3>
+                        <p className="text-xs text-gray-400" data-testid="trade-republic-last-sync">Letzter erfolgreicher Sync: {formatSyncTime(trStatus?.lastSyncAt) ?? 'noch nicht'}</p>
                         <p className="text-gray-400 mb-4">FinPal lädt die strukturierten Umsatzdaten direkt über den lokalen pytr-Client. PDFs sind nicht erforderlich.</p>
                         {trStatus?.runnerAvailable === false && <Callout intent={Intent.WARNING}>Diese Funktion wird derzeit nur unter Windows x64 unterstützt.</Callout>}
                         {trStatus?.runnerAvailable && <p className="text-xs text-gray-500">Die benötigte Laufzeitkomponente wird beim ersten Start automatisch und geprüft eingerichtet.</p>}

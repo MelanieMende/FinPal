@@ -26,6 +26,7 @@ import appState_sql from '../../sql/appState_sql';
 import cash_sql from '../../sql/cash_sql';
 import { useEffect } from 'react';
 import CashRoute from './routes/CashRoute/CashRoute';
+import MarketPriceRefresh from '../components/MarketPriceRefresh/MarketPriceRefresh';
 
 export default function RootRoute() {
 
@@ -78,6 +79,7 @@ export default function RootRoute() {
 	
 	return (
 		<div id="RootRoute" className="h-screen">
+			<MarketPriceRefresh />
  			<TopNavBar />
 			<div id="Title" className={`flex items-center p-2 bg-linear-to-l from-indigo-500 from-10% via-sky-500 via-30% to-emerald-500 to-90%`}></div>
 			<Content />

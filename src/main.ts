@@ -190,6 +190,7 @@ ipcMain.handle('get-config', async (event) => {
 ipcMain.handle('trade-republic:status', async () => ({
   runnerAvailable: await tradeRepublicSync.isRunnerAvailable(),
   hasSavedCredentials: tradeRepublicSync.hasSavedCredentials(),
+  lastSyncAt: tradeRepublicSync.getLastSyncAt(),
 }));
 
 ipcMain.handle('trade-republic:sync', async (_event, args: { phone?: string; pin?: string; remember?: boolean }) => {

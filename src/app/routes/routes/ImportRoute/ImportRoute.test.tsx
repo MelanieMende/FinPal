@@ -1,6 +1,7 @@
 import React from 'react';
 import { fireEvent, render, screen, waitFor } from '../../../../testing/test-utils';
 import ImportRoute from './ImportRoute';
+import * as assetsReducer from '../../../store/assets/assets.reducer';
 
 describe('ImportRoute asset mapping', () => {
     const pendingRecord = {
@@ -17,6 +18,10 @@ describe('ImportRoute asset mapping', () => {
 
     beforeEach(() => {
         localStorage.clear();
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
     });
 
     it('sorts assets alphabetically and allows clearing a selection', async () => {
@@ -42,5 +47,37 @@ describe('ImportRoute asset mapping', () => {
         fireEvent.change(select, { target: { value: '' } });
         expect((select as HTMLSelectElement).value).toBe('');
         expect(screen.getByText('Create')).toBeInTheDocument();
+    });
+
+    it('finishes Trade Republic sync without waiting for the background asset refresh', async () => {
+        const backgroundRefresh = new Promise(() => undefined);
+        jest.spyOn(assetsReducer, 'loadPricesAndDividends').mockReturnValue((() => backgroundRefresh) as any);
+        window.API = {
+            sendToDB: jest.fn(),
+            getTradeRepublicStatus: jest.fn().mockResolvedValue({ runnerAvailable: true, hasSavedCredentials: true }),
+            syncTradeRepublic: jest.fn().mockResolvedValue({
+                records: [pendingRecord],
+                skipped: 0,
+                quotes: [{
+                    name: 'Unbekanntes Asset', isin: pendingRecord.isin, quantity: 1,
+                    price: 10, averageBuyIn: 10, netValue: 10,
+                }],
+            }),
+        };
+
+        render(<ImportRoute />, {
+            preloadedState: {
+                assets: [],
+                import: { pendingRecords: [], isLoading: false, error: null },
+                transactions: [],
+                dividends: [],
+            },
+        });
+
+        const syncButton = screen.getByRole('button', { name: /Jetzt synchronisieren/i });
+        fireEvent.click(syncButton);
+
+        await waitFor(() => expect(syncButton).not.toBeDisabled());
+        expect(screen.getByText(/1 Transaktion\(en\) geladen/)).toBeInTheDocument();
     });
 });

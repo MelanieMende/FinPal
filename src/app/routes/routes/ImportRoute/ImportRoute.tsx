@@ -155,9 +155,12 @@ export default function ImportRoute() {
                 pin: trStatus?.hasSavedCredentials && !trPhone && !trPin ? undefined : trPin,
                 remember: rememberTr,
             });
-			if (result.quotes.length > 0) {
-				await dispatch(assetsReducer.loadPricesAndDividends(undefined));
-			}
+            if (result.quotes.length > 0) {
+                // Refresh the remaining asset data in the background. Trade Republic
+                // has already completed at this point, and unrelated currency/dividend
+                // APIs must not keep the sync button in its loading state.
+                void dispatch(assetsReducer.loadPricesAndDividends(undefined));
+            }
             if (!result.records.length && !result.quotes.length) {
                 throw new Error(`Keine importierbaren Transaktionen empfangen (${result.skipped} Buchungen übersprungen). Die bisherige Liste bleibt erhalten.`);
             }

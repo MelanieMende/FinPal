@@ -257,7 +257,7 @@ ipcMain.on('async-db-message', (event, arg) => {
 
 import YahooFinance from 'yahoo-finance2';
 
-ipcMain.on('yahoo-finance-api-message', async (event, args: { symbol: string; isin?: string; type?: string }) => {
+ipcMain.handle('yahoo-finance-api-message', async (_event, args: { symbol: string; isin?: string; type?: string }) => {
   const yf = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 
   if (args.type === 'Bond' && args.isin) {
@@ -266,15 +266,14 @@ ipcMain.on('yahoo-finance-api-message', async (event, args: { symbol: string; is
 			if (!response.ok) throw new Error(`Börse Frankfurt response status: ${response.status}`);
 			const quote = await response.json() as { lastPrice?: number; currency?: { originalValue?: string }; tradedInPercent?: boolean };
 			if (typeof quote.lastPrice === 'number') {
-				event.reply('yahoo-finance-api-reply', {
+				return {
 					price: {
 						regularMarketPrice: quote.lastPrice,
 						currency: quote.currency?.originalValue || 'EUR',
 					},
 					source: 'boerse-frankfurt',
 					tradedInPercent: quote.tradedInPercent === true,
-				});
-				return;
+				};
 			}
 		} catch (reason) {
 			console.log('ERROR: boerse-frankfurt bond price: ', reason);
@@ -283,14 +282,14 @@ ipcMain.on('yahoo-finance-api-message', async (event, args: { symbol: string; is
 
 	try {
 		const result = await yf.quoteSummary(args.symbol);
-		event.reply('yahoo-finance-api-reply', result);
+		return result;
 	} catch (reason) {
 		console.log('ERROR: yahoo-finance-api-message: ', reason);
-		event.reply('yahoo-finance-api-reply', null);
+		return null;
 	}
 });
 
-ipcMain.on('divvy-diary-api-message', async (event, args) => {
+ipcMain.handle('divvy-diary-api-message', async (_event, args) => {
   console.log('Received request for Divvy Diary API with ISIN:', args.isin);
   const response = await fetch('https://api.divvydiary.com/symbols/' + args.isin)
   if(!response.ok) {
@@ -298,5 +297,5 @@ ipcMain.on('divvy-diary-api-message', async (event, args) => {
   }
   const data = await response.json();
   //console.log(data);
-  event.reply('divvy-diary-api-reply', data);
+  return data;
 });

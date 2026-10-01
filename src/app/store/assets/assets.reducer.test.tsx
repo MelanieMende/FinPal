@@ -91,6 +91,30 @@ describe('AssetCreation reducer', () => {
 		expect(localStorage.getItem(MARKET_PRICE_UPDATED_AT_KEY)).not.toBeNull();
 	});
 
+	it('keeps a fresh matching Trade Republic quote when a market reply is implausibly high', async () => {
+		const dispatch = jest.fn();
+		const asset = { ID: 34, type: 'Stock', name: 'SpaceX', symbol: 'SPCX', isin: 'US84615Q1031', is_watched: true } as Asset;
+		window.API = {
+			sendToDB: jest.fn(),
+			sendToYahooFinanceAPI: jest.fn().mockResolvedValue({ price: { regularMarketPrice: 276.8, currency: 'EUR' } }),
+			sendToDivvyDiaryAPI: jest.fn(),
+			getTradeRepublicQuotes: jest.fn().mockResolvedValue({
+				fetchedAt: new Date().toISOString(),
+				quotes: [{ name: 'SpaceX', isin: 'US84615Q1031', quantity: 0.537301, price: 134.12, averageBuyIn: 130.08, netValue: 72.06 }],
+			}),
+		};
+		const warning = jest.spyOn(console, 'warn').mockImplementation(() => {});
+		try {
+			await assetsReducer.loadPricesAndDividends({ preferTradeRepublicPrice: false, includeDividends: false })(
+				dispatch, () => ({ assets: [asset] }), undefined,
+			);
+			expect(dispatch).toHaveBeenCalledWith(assetsReducer.setPrice({ asset, price: 134.12 }));
+			expect(warning).toHaveBeenCalled();
+		} finally {
+			warning.mockRestore();
+		}
+	});
+
 	it('does not mark an unusable market quote as updated', async () => {
 		localStorage.removeItem(MARKET_PRICE_UPDATED_AT_KEY);
 		const dispatch = jest.fn();

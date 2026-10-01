@@ -73,9 +73,12 @@ export const loadPricesAndDividends = createAsyncThunk(
 			assetsToRefresh = assetsToRefresh.filter(a => props.assetIDs.includes(a.ID))
 		}
 		let tradeRepublicQuotes: TradeRepublicQuote[] = []
+		let tradeRepublicQuotesFetchedAt: string | undefined
 		let marketPriceRecorded = false
 		try {
-			tradeRepublicQuotes = (await window.API.getTradeRepublicQuotes?.())?.quotes ?? []
+			const quoteCache = await window.API.getTradeRepublicQuotes?.()
+			tradeRepublicQuotes = quoteCache?.quotes ?? []
+			tradeRepublicQuotesFetchedAt = quoteCache?.fetchedAt
 		} catch (error) {
 			console.error('Failed to load cached Trade Republic quotes:', error)
 		}
@@ -103,8 +106,16 @@ export const loadPricesAndDividends = createAsyncThunk(
 					}
 					
 					if (Number.isFinite(price) && price > 0) {
+						const cacheAge = Date.now() - Date.parse(tradeRepublicQuotesFetchedAt ?? '')
+						const recentTradeRepublicQuote = tradeRepublicQuote?.price > 0 && cacheAge >= 0 && cacheAge < 24 * 60 * 60 * 1000
+						const differsStrongly = recentTradeRepublicQuote && (price > tradeRepublicQuote.price * 1.5 || price < tradeRepublicQuote.price / 1.5)
+						const usedTradeRepublicQuote = resultYahooFinance.source === 'trade-republic' || differsStrongly
+						if (differsStrongly) {
+							console.warn(`Ignoring implausible market price for ${asset.symbol}; using recent Trade Republic quote.`)
+							price = tradeRepublicQuote.price
+						}
 						thunkAPI.dispatch(setPrice({ asset, price }))
-						if (resultYahooFinance.source !== 'trade-republic' && !marketPriceRecorded) {
+						if (!usedTradeRepublicQuote && !marketPriceRecorded) {
 							recordMarketPriceUpdate()
 							marketPriceRecorded = true
 						}

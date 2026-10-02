@@ -1,9 +1,12 @@
-import { app, BrowserWindow, dialog, ipcMain } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import path from 'node:path';
 import fs from 'fs';
 import started from 'electron-squirrel-startup';
 import installExtension, { REDUX_DEVTOOLS, REACT_DEVELOPER_TOOLS } from 'electron-devtools-installer';
 import { TradeRepublicSync } from './app/utils/tradeRepublicSync';
+import { ChatGptAuth } from './app/utils/chatGptAuth';
+import { PortfolioAnalysisService } from './app/utils/portfolioAnalysisService';
+import type { PortfolioAnalysisRequest } from './app/utils/portfolioAnalysis';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -26,6 +29,8 @@ else {
 const dataPath = app.getPath('userData');
 const filePath = path.join(dataPath, 'config.json');
 const tradeRepublicSync = new TradeRepublicSync(dataPath);
+const chatGptAuth = new ChatGptAuth(dataPath);
+const portfolioAnalysis = new PortfolioAnalysisService(dataPath, fetch, chatGptAuth);
 
 let appState: {
   dataPath: string;
@@ -203,6 +208,22 @@ ipcMain.handle('trade-republic:quotes', async () => tradeRepublicSync.getCachedQ
 ipcMain.handle('trade-republic:forget', async () => {
   tradeRepublicSync.forgetCredentials();
   return true;
+});
+
+ipcMain.handle('portfolio-ai:status', () => ({ ...portfolioAnalysis.status(), chatGpt: chatGptAuth.status() }));
+ipcMain.handle('portfolio-ai:save-key', (_event, key: string) => { portfolioAnalysis.saveKey(key); return true; });
+ipcMain.handle('portfolio-ai:forget-key', () => { portfolioAnalysis.forgetKey(); return true; });
+ipcMain.handle('portfolio-ai:chatgpt-sign-in', (_event, clientId?: string) => chatGptAuth.signIn(clientId));
+ipcMain.handle('portfolio-ai:chatgpt-cancel', () => { chatGptAuth.cancelSignIn(); return true; });
+ipcMain.handle('portfolio-ai:chatgpt-sign-out', () => chatGptAuth.signOut());
+ipcMain.handle('portfolio-ai:chatgpt-models', () => chatGptAuth.models());
+ipcMain.handle('portfolio-ai:analyze', (event, request: PortfolioAnalysisRequest) => portfolioAnalysis.analyze(request, progress => {
+  if (!event.sender.isDestroyed()) event.sender.send('portfolio-ai:progress', progress);
+}));
+ipcMain.handle('portfolio-ai:open-source', (_event, value: string) => {
+  const url = new URL(value);
+  if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error('Ungültiger Quellenlink.');
+  return shell.openExternal(url.href);
 });
 
 ipcMain.on('save-theme', (event, arg) => {

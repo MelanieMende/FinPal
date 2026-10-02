@@ -12,6 +12,8 @@ import cash from './cash/cash.reducer'
 import cashTransactionCreation from './cashTransactionCreation/cashTransactionCreation.reducer'
 import importReducer from './import/import.reducer';
 
+import portfolioAnalysis from './portfolioAnalysis/portfolioAnalysis.reducer';
+
 const rootReducer = combineReducers({
 	appState,
 	assets,
@@ -22,7 +24,8 @@ const rootReducer = combineReducers({
 	dividendCreation,
 	cash,
 	cashTransactionCreation,
-	import: importReducer
+	import: importReducer,
+	portfolioAnalysis
 });
 
 export type RootState = ReturnType<typeof rootReducer>;

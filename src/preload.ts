@@ -73,4 +73,18 @@ contextBridge.exposeInMainWorld('API', {
   syncTradeRepublic: (args: { phone?: string; pin?: string; remember?: boolean }) => ipcRenderer.invoke('trade-republic:sync', args),
   getTradeRepublicQuotes: () => ipcRenderer.invoke('trade-republic:quotes'),
   forgetTradeRepublicCredentials: () => ipcRenderer.invoke('trade-republic:forget'),
+  getPortfolioAIStatus: () => ipcRenderer.invoke('portfolio-ai:status'),
+  savePortfolioAIKey: (key: string) => ipcRenderer.invoke('portfolio-ai:save-key', key),
+  forgetPortfolioAIKey: () => ipcRenderer.invoke('portfolio-ai:forget-key'),
+  signInPortfolioChatGpt: (clientId?: string) => ipcRenderer.invoke('portfolio-ai:chatgpt-sign-in', clientId),
+  cancelPortfolioChatGptSignIn: () => ipcRenderer.invoke('portfolio-ai:chatgpt-cancel'),
+  signOutPortfolioChatGpt: () => ipcRenderer.invoke('portfolio-ai:chatgpt-sign-out'),
+  getPortfolioChatGptModels: () => ipcRenderer.invoke('portfolio-ai:chatgpt-models'),
+  analyzePortfolio: (request: import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest) => ipcRenderer.invoke('portfolio-ai:analyze', request),
+  onPortfolioAnalysisProgress: (callback: (progress: import('./app/utils/portfolioAnalysis').PortfolioAnalysisProgress) => void) => {
+    const listener = (_event: Electron.IpcRendererEvent, progress: import('./app/utils/portfolioAnalysis').PortfolioAnalysisProgress) => callback(progress);
+    ipcRenderer.on('portfolio-ai:progress', listener);
+    return () => { ipcRenderer.removeListener('portfolio-ai:progress', listener); };
+  },
+  openPortfolioAnalysisSource: (url: string) => ipcRenderer.invoke('portfolio-ai:open-source', url),
 })

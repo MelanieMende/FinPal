@@ -1,6 +1,6 @@
 import '@testing-library/jest-dom'
 
-window.API = {
+if (typeof window !== 'undefined') window.API = {
   getConfig: jest.fn(),
   saveTheme: jest.fn(),
   saveDatabase: jest.fn(),

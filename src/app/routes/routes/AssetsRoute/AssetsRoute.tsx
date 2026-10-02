@@ -4,6 +4,7 @@ import { Card, H5, Icon } from '@blueprintjs/core';
 import type { IconName } from '@blueprintjs/icons';
 
 import CreateAndEditAssetOverlay from './components/CreateAndEditAssetOverlay';
+import PortfolioAnalysis from './components/PortfolioAnalysis';
 import AssetList from './components/AssetList/AssetList';
 import * as assetsSelector from './../../../store/assets/assets.selectors';
 import { formatSyncTime, MARKET_PRICE_UPDATED_AT_KEY, MARKET_PRICE_UPDATED_EVENT } from '../../../utils/syncTimestamps';
@@ -101,6 +102,7 @@ export default function AnalysisRoute() {
 			</div>
 
 			{/* Asset Management Area */}
+			<PortfolioAnalysis priceUpdatedAt={marketPriceUpdatedAt} />
 			<Card className="glass-card p-0 overflow-hidden min-h-[500px]">
 				<div className="p-4 border-b border-white/5 bg-white/5 flex justify-between items-center">
 					<div className="flex items-center gap-4">

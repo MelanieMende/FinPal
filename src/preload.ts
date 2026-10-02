@@ -80,7 +80,9 @@ contextBridge.exposeInMainWorld('API', {
   cancelPortfolioChatGptSignIn: () => ipcRenderer.invoke('portfolio-ai:chatgpt-cancel'),
   signOutPortfolioChatGpt: () => ipcRenderer.invoke('portfolio-ai:chatgpt-sign-out'),
   getPortfolioChatGptModels: () => ipcRenderer.invoke('portfolio-ai:chatgpt-models'),
-  analyzePortfolio: (request: import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest) => ipcRenderer.invoke('portfolio-ai:analyze', request),
+  getLastPortfolioAnalysis: () => ipcRenderer.invoke('portfolio-ai:last-result'),
+  forgetLastPortfolioAnalysis: () => ipcRenderer.invoke('portfolio-ai:forget-result'),
+  analyzePortfolio: (request: import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest, snapshot?: string) => ipcRenderer.invoke('portfolio-ai:analyze', request, snapshot),
   onPortfolioAnalysisProgress: (callback: (progress: import('./app/utils/portfolioAnalysis').PortfolioAnalysisProgress) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: import('./app/utils/portfolioAnalysis').PortfolioAnalysisProgress) => callback(progress);
     ipcRenderer.on('portfolio-ai:progress', listener);

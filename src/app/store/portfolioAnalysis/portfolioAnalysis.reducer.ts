@@ -1,21 +1,27 @@
 import { createAsyncThunk, createSlice, type PayloadAction } from '@reduxjs/toolkit';
-import type { PortfolioAnalysisRequest, PortfolioAnalysisResult, PortfolioAnalysisProgress } from '../../utils/portfolioAnalysis';
+import type { PortfolioAnalysisRequest, PortfolioAnalysisResult, PortfolioAnalysisProgress, SavedPortfolioAnalysis } from '../../utils/portfolioAnalysis';
 
 interface AnalysisState {
   open: boolean;
   progress: PortfolioAnalysisProgress | null;
   startedAt: number;
   result: PortfolioAnalysisResult | null;
+  lastResult: PortfolioAnalysisResult | null;
   resultSnapshot: string;
   error: string | null;
   requestId: string | null;
   provider: 'chatgpt' | 'api';
   model: string;
+  restoreBlocked: boolean;
 }
 const initialState: AnalysisState = {
-  open: false, progress: null, startedAt: 0, result: null, resultSnapshot: '', error: null,
-  requestId: null, provider: 'chatgpt', model: '',
+  open: false, progress: null, startedAt: 0, result: null, lastResult: null, resultSnapshot: '', error: null,
+  requestId: null, provider: 'chatgpt', model: '', restoreBlocked: false,
 };
+
+export const restorePortfolioAnalysis = createAsyncThunk<SavedPortfolioAnalysis | null>(
+  'portfolioAnalysis/restore', async () => window.API.getLastPortfolioAnalysis?.() ?? null,
+);
 
 export const analyzePortfolio = createAsyncThunk<
   { report: PortfolioAnalysisResult; snapshot: string },
@@ -28,7 +34,7 @@ export const analyzePortfolio = createAsyncThunk<
     unsubscribe = window.API.onPortfolioAnalysisProgress?.(progress => {
       dispatch(analysisProgressReceived({ progress, requestId }));
     });
-    const report = await window.API.analyzePortfolio(request);
+    const report = await window.API.analyzePortfolio(request, snapshot);
     return { report, snapshot };
   } catch (error) {
     return rejectWithValue(error instanceof Error ? error.message : 'Die KI-Anfrage ist fehlgeschlagen.');
@@ -39,13 +45,21 @@ const slice = createSlice({
   name: 'portfolioAnalysis', initialState,
   reducers: {
     setAnalysisOpen(state, action: PayloadAction<boolean>) { state.open = action.payload; },
-    clearAnalysisResult(state) { state.result = null; state.resultSnapshot = ''; state.error = null; },
+    clearAnalysisResult(state) { state.restoreBlocked = true; state.result = null; state.lastResult = null; state.resultSnapshot = ''; state.error = null; },
     analysisProgressReceived(state, action: PayloadAction<{ progress: PortfolioAnalysisProgress; requestId: string }>) {
       if (state.requestId === action.payload.requestId) state.progress = action.payload.progress;
     },
   },
   extraReducers: builder => builder
+    .addCase(restorePortfolioAnalysis.fulfilled, (state, action) => {
+      if (state.restoreBlocked || !action.payload) return;
+      state.result = action.payload.report; state.lastResult = action.payload.report;
+      state.resultSnapshot = action.payload.snapshot;
+      state.provider = action.payload.provider; state.model = action.payload.report.model;
+      state.open = true;
+    })
     .addCase(analyzePortfolio.pending, (state, action) => {
+      state.restoreBlocked = true;
       state.startedAt = Date.now();
       state.progress = { stage: 'preparing', lastActivityAt: state.startedAt };
       state.requestId = action.meta.requestId;
@@ -54,7 +68,9 @@ const slice = createSlice({
       state.result = null; state.resultSnapshot = ''; state.error = null;
     })
     .addCase(analyzePortfolio.fulfilled, (state, action) => {
+      state.restoreBlocked = true;
       state.progress = null; state.requestId = null;
+      state.lastResult = action.payload.report;
       state.result = action.payload.report; state.resultSnapshot = action.payload.snapshot;
     })
     .addCase(analyzePortfolio.rejected, (state, action) => {

@@ -1,4 +1,5 @@
 import { Fragment, useState } from 'react';
+import AssetAnalysisIndicator from './AssetAnalysisIndicator';
 import { useAppSelector, useAppDispatch } from '../../../../../../hooks'
 import * as selectors from '../../../../../../selectors';
 import TableCell from '../../../../../../components/Table/TableCell/TableCell'
@@ -103,7 +104,12 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 				}} />
 			</TableCell>
 
-			{/* Shares */}
+			{/* Last successful AI analysis */}
+      <TableCell className="p-3 text-center" dataTestID={'AIRecommendation_' + props.asset.ID}>
+        <AssetAnalysisIndicator assetId={props.asset.ID} />
+      </TableCell>
+
+      {/* Shares */}
 			<TableCell className="p-3 text-right">
 				<div data-testid={"current-shares-" + props.asset.ID} className={`font-semibold ${assetsSelector.get_current_shares_textColor(props.asset) === 'inherit' ? 'text-white' : assetsSelector.get_current_shares_textColor(props.asset)}`}>{shareFormatter.format(props.asset.current_shares || 0)}</div>
 			</TableCell>
@@ -165,7 +171,7 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
     </tr>
 		{showTransactions && (
 			<tr data-testid={"asset-transactions-" + props.asset.ID} className="bg-slate-950/50 border-b border-blue-500/20">
-				<td colSpan={12} className="px-10 py-4">
+				<td colSpan={13} className="px-10 py-4">
 					{assetTransactions.length === 0 ? (
 						<div className="text-sm text-gray-500 italic">No transactions for this asset.</div>
 					) : (

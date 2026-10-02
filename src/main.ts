@@ -217,9 +217,11 @@ ipcMain.handle('portfolio-ai:chatgpt-sign-in', (_event, clientId?: string) => ch
 ipcMain.handle('portfolio-ai:chatgpt-cancel', () => { chatGptAuth.cancelSignIn(); return true; });
 ipcMain.handle('portfolio-ai:chatgpt-sign-out', () => chatGptAuth.signOut());
 ipcMain.handle('portfolio-ai:chatgpt-models', () => chatGptAuth.models());
-ipcMain.handle('portfolio-ai:analyze', (event, request: PortfolioAnalysisRequest) => portfolioAnalysis.analyze(request, progress => {
+ipcMain.handle('portfolio-ai:last-result', () => portfolioAnalysis.getLastResult());
+ipcMain.handle('portfolio-ai:forget-result', () => { portfolioAnalysis.forgetLastResult(); return true; });
+ipcMain.handle('portfolio-ai:analyze', (event, request: PortfolioAnalysisRequest, snapshot?: string) => portfolioAnalysis.analyze(request, progress => {
   if (!event.sender.isDestroyed()) event.sender.send('portfolio-ai:progress', progress);
-}));
+}, snapshot));
 ipcMain.handle('portfolio-ai:open-source', (_event, value: string) => {
   const url = new URL(value);
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error('Ungültiger Quellenlink.');

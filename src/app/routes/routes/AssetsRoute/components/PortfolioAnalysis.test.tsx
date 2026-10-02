@@ -1,5 +1,9 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { render } from '../../../../../testing/test-utils';
+import { setupStore } from '../../../../store';
+import { analyzePortfolio } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
+import AssetList from './AssetList/AssetList';
+import { buildAnalysisPositions } from '../../../../utils/portfolioAnalysis';
 import PortfolioAnalysis, { ANALYSIS_PROFILE_KEY, ANALYSIS_MODEL_KEY } from './PortfolioAnalysis';
 
 const assets = [
@@ -43,7 +47,7 @@ it('does not transmit data until started and analyzes all held positions using t
   expect(window.API.analyzePortfolio).toHaveBeenCalledWith(expect.objectContaining({
     provider: 'chatgpt', model: 'account-model', profile: { goal: 'growth', risk: 'medium', horizonYears: 10, buyBudget: 100.5 },
     positions: [expect.objectContaining({ id: 1 }), expect.objectContaining({ id: 2 })],
-  }));
+  }), expect.any(String));
   expect(screen.getByText('Diversifikation prüfen')).toBeInTheDocument();
   expect(screen.getAllByRole('link', { name: '[0] Report' })[0]).toHaveAttribute('href', 'https://example.com/report');
   expect(localStorage.getItem(ANALYSIS_PROFILE_KEY)).toContain('growth');
@@ -155,7 +159,7 @@ it.each(['tab change', 'app restart'] as const)('remembers an explicitly selecte
   await waitFor(() => expect(screen.getByLabelText('ChatGPT-Modell')).toHaveValue('chosen-model'));
   fillProfile();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
-  expect(window.API.analyzePortfolio).toHaveBeenCalledWith(expect.objectContaining({ model: 'chosen-model' }));
+  expect(window.API.analyzePortfolio).toHaveBeenCalledWith(expect.objectContaining({ model: 'chosen-model' }), expect.any(String));
   second.unmount();
 });
 
@@ -172,4 +176,71 @@ it('keeps the saved preference when it is temporarily unavailable and restores i
   ]);
   await act(async () => { render(<PortfolioAnalysis priceUpdatedAt={null} />, { store: first.store }); });
   expect(screen.getByLabelText('ChatGPT-Modell')).toHaveValue('chosen-model');
+});
+
+
+it('restores the report and asset indicators on app startup without starting a new analysis', async () => {
+  const savedReport = await window.API.analyzePortfolio({} as import('../../../../utils/portfolioAnalysis').PortfolioAnalysisRequest);
+  jest.mocked(window.API.analyzePortfolio).mockClear();
+  const profile = { goal: 'growth', risk: 'medium', horizonYears: '10', buyBudget: '100,50' };
+  localStorage.setItem(ANALYSIS_PROFILE_KEY, JSON.stringify(profile));
+  const snapshot = JSON.stringify({ positions: buildAnalysisPositions(assets), profile, priceUpdatedAt: null });
+  window.API.getLastPortfolioAnalysis = jest.fn().mockResolvedValue({ report: savedReport, snapshot, provider: 'chatgpt' });
+  await act(async () => { render(<><PortfolioAnalysis priceUpdatedAt={null} /><AssetList /></>, { preloadedState: { assets } }); });
+  expect(screen.getByText(savedReport.summary)).toBeInTheDocument();
+  expect(screen.getByRole('img', { name: 'KI-Empfehlung: Halten' })).toBeInTheDocument();
+  expect(screen.queryByLabelText('Laufende Analyse')).not.toBeInTheDocument();
+  expect(screen.queryByText(/haben sich seit dieser Analyse/)).not.toBeInTheDocument();
+  expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
+  expect(screen.getByLabelText('ChatGPT-Modell')).toHaveValue('account-model');
+});
+
+
+it('does not replace a newly started analysis with a delayed startup restore', async () => {
+  const savedReport = await window.API.analyzePortfolio({} as import('../../../../utils/portfolioAnalysis').PortfolioAnalysisRequest);
+  let restore: (value: import('../../../../utils/portfolioAnalysis').SavedPortfolioAnalysis) => void;
+  window.API.getLastPortfolioAnalysis = jest.fn(() => new Promise(resolve => { restore = resolve; }));
+  const store = setupStore({ assets });
+  const request: import('../../../../utils/portfolioAnalysis').PortfolioAnalysisRequest = { provider: 'chatgpt', model: 'account-model', positions: buildAnalysisPositions(assets), profile: { goal: 'growth', risk: 'medium', horizonYears: 10, buyBudget: 0 }, priceUpdatedAt: null };
+  store.dispatch(analyzePortfolio.pending('new-request', { request, snapshot: 'new-snapshot' }));
+  await act(async () => restore({ report: savedReport, snapshot: 'old-snapshot', provider: 'chatgpt' }));
+  expect(store.getState().portfolioAnalysis.requestId).toBe('new-request');
+  expect(store.getState().portfolioAnalysis.result).toBeNull();
+  expect(store.getState().portfolioAnalysis.progress?.stage).toBe('preparing');
+});
+
+
+it.each(['tab change', 'app restart'] as const)('saves the investment horizon immediately and restores it after a %s without starting an analysis', async mode => {
+  const first = render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
+  await open();
+  fireEvent.change(screen.getByLabelText('Anlagedauer (Jahre)'), { target: { value: '7.5' } });
+  expect(JSON.parse(localStorage.getItem(ANALYSIS_PROFILE_KEY)!)).toEqual({ goal: '', risk: '', horizonYears: '7.5', buyBudget: '0' });
+  expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
+  first.unmount();
+  await act(async () => { render(<PortfolioAnalysis priceUpdatedAt={null} />, mode === 'tab change' ? { store: first.store } : { preloadedState: { assets } }); });
+  if (mode === 'app restart') await open();
+  expect(screen.getByLabelText('Anlagedauer (Jahre)')).toHaveValue(7.5);
+  expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
+});
+
+it('persists a cleared investment horizon instead of restoring the previous value', async () => {
+  localStorage.setItem(ANALYSIS_PROFILE_KEY, JSON.stringify({ goal: 'growth', risk: 'medium', horizonYears: '10', buyBudget: '500' }));
+  const first = render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
+  await open();
+  fireEvent.change(screen.getByLabelText('Anlagedauer (Jahre)'), { target: { value: '' } });
+  first.unmount();
+  await act(async () => { render(<PortfolioAnalysis priceUpdatedAt={null} />, { store: first.store }); });
+  expect(screen.getByLabelText('Anlagedauer (Jahre)')).toHaveValue(null);
+  expect(screen.getByLabelText('Anlageziel')).toHaveValue('growth');
+  expect(screen.getByLabelText('Risikobereitschaft')).toHaveValue('medium');
+  expect(screen.getByLabelText('Zusätzliches Kaufbudget (EUR)')).toHaveValue('500');
+});
+
+
+it('opens ChatGPT usage management through the external browser bridge', async () => {
+  window.API.openPortfolioAnalysisSource = jest.fn().mockResolvedValue(undefined);
+  render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
+  await open();
+  fireEvent.click(screen.getByRole('link', { name: 'ChatGPT-Nutzung verwalten' }));
+  expect(window.API.openPortfolioAnalysisSource).toHaveBeenCalledWith('https://chatgpt.com/settings/usage');
 });

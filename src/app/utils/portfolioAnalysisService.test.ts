@@ -86,7 +86,7 @@ it('uses the selected ChatGPT model and the supported streaming parameters witho
 
 it('rejects interrupted streams and reports ChatGPT quota failures received after streaming starts', async () => {
   await expect(readAnalysisStream(new Response('data: {"type":"response.output_text.delta","delta":"partial"}\n\n'))).rejects.toThrow(/vollständige Antwort/);
-  await expect(readAnalysisStream(new Response('data: {"type":"response.failed","response":{"error":{"code":"subscription_sharing_usage_limit_exceeded"}}}\n\n'))).rejects.toThrow(/ChatGPT-Kontingent/);
+  await expect(readAnalysisStream(new Response('data: {"type":"response.failed","response":{"error":{"code":"subscription_sharing_usage_limit_exceeded"}}}\n\n'))).rejects.toThrow(/ChatGPT-Nutzungslimit/);
 });
 
 it('rejects secure-storage unavailability instead of writing the key in plain text', () => {
@@ -193,7 +193,7 @@ it('rejects duplicate assets, missing recommendations and advice without prices 
   const sources = [{ title: 'Source', url: 'https://example.com/report' }];
   const twoPositions = { ...request, positions: [...request.positions, { ...request.positions[0], id: 7 }] };
   expect(() => validateAnalysisResult({ ...report, recommendations: [report.recommendations[0], report.recommendations[0]] }, twoPositions, sources)).toThrow(/mehrfach/);
-  expect(() => validateAnalysisResult({ ...report, recommendations: [] }, request, sources)).toThrow(/genau eine/);
+  expect(() => validateAnalysisResult({ ...report, recommendations: [] as typeof report.recommendations }, request, sources)).toThrow(/genau eine/);
   expect(() => validateAnalysisResult(report, { ...request, positions: [{ ...request.positions[0], price: null }] }, sources)).toThrow(/nur die Aktion Prüfen/);
 });
 
@@ -235,4 +235,132 @@ it('never retries a refusal as a correction', async () => {
   const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
   await expect(service.analyze(request)).rejects.toThrow(/nicht beantworten/);
   expect(mockedFetch).toHaveBeenCalledTimes(2);
+});
+
+
+it('loads the last successful analysis from disk in a new service instance without another AI call', async () => {
+  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research))).mockResolvedValueOnce(structuredResponse(report));
+  const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
+  expect(service.getLastResult()).toBeNull();
+  const result = await service.analyze(request, undefined, 'original-snapshot');
+  const reopened = new PortfolioAnalysisService(dir, jest.fn());
+  expect(reopened.getLastResult()).toEqual({ report: result, snapshot: 'original-snapshot', provider: 'api' });
+  const file = fs.readFileSync(path.join(dir, 'portfolio-ai-last-analysis.json'), 'utf8');
+  expect(file).not.toContain('sk-testOnlyNotARealKey');
+  expect(fs.existsSync(path.join(dir, 'portfolio-ai-last-analysis.json.tmp'))).toBe(false);
+  reopened.forgetLastResult();
+  expect(reopened.getLastResult()).toBeNull();
+});
+
+it('preserves the saved report when the next analysis fails', async () => {
+  const invalid = { ...report, recommendations: [] as typeof report.recommendations };
+  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research))).mockResolvedValueOnce(structuredResponse(report))
+    .mockResolvedValueOnce(new Response(JSON.stringify(research))).mockResolvedValueOnce(structuredResponse(invalid)).mockResolvedValueOnce(structuredResponse(invalid));
+  const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
+  await service.analyze(request, undefined, 'first-snapshot');
+  const saved = service.getLastResult();
+  await expect(service.analyze(request, undefined, 'failed-snapshot')).rejects.toThrow(/genau eine/);
+  expect(new PortfolioAnalysisService(dir, jest.fn()).getLastResult()).toEqual(saved);
+});
+
+it('ignores corrupt or invalid cached analyses without failing startup', () => {
+  const file = path.join(dir, 'portfolio-ai-last-analysis.json');
+  const service = new PortfolioAnalysisService(dir, jest.fn());
+  fs.writeFileSync(file, '{broken');
+  expect(service.getLastResult()).toBeNull();
+  const saved = { version: 1, request, snapshot: 'snapshot', report: { ...report, sources: [{ title: 'Source', url: 'javascript:alert(1)' }], generatedAt: new Date().toISOString(), model: 'model', priceUpdatedAt: null as string | null } };
+  fs.writeFileSync(file, JSON.stringify(saved));
+  expect(service.getLastResult()).toBeNull();
+  saved.report.sources[0].url = 'https://example.com/report';
+  saved.report.recommendations = [{ ...report.recommendations[0], sourceIndexes: [999] }];
+  fs.writeFileSync(file, JSON.stringify(saved));
+  expect(service.getLastResult()).toBeNull();
+});
+
+
+function failedStream(event: unknown): Response { return new Response('data: ' + JSON.stringify(event) + '\n\n'); }
+
+it.each([
+  { event: { type: 'response.incomplete', response: { incomplete_details: { reason: 'max_output_tokens' } } }, reason: /Antwortlimit/ },
+  { event: { type: 'response.incomplete', response: { incomplete_details: { reason: 'content_filter' } } }, reason: /Inhaltsfilter/ },
+  { event: { type: 'response.failed', response: { error: { code: 'server_error', message: 'private details' } } }, reason: /Serverfehler/ },
+  { event: { type: 'error', error: { code: 'rate_limit_exceeded', message: 'private details' } }, reason: /Anfragelimit/ },
+  { event: { type: 'error', code: 'context_length_exceeded', message: 'private details' }, reason: /Kontextlimit/ },
+  { event: { type: 'response.failed', response: { error: { code: 'unrecognized', message: 'private details' } } }, reason: /keinen bekannten Fehlergrund/ },
+])('explains stream failures without exposing raw server messages: $reason', async ({ event, reason }) => {
+  const error = await readAnalysisStream(failedStream(event)).catch(error => error);
+  expect(error.message).toMatch(reason);
+  expect(error.message).not.toContain('private details');
+  expect(error.message).not.toContain('unrecognized');
+});
+
+it('retries a transient analysis stream failure once without repeating successful research', async () => {
+  const mockedFetch = jest.fn().mockResolvedValueOnce(sse(research))
+    .mockResolvedValueOnce(failedStream({ type: 'response.failed', response: { error: { code: 'server_error' } } }))
+    .mockResolvedValueOnce(sse(structured));
+  const auth = { models: jest.fn().mockResolvedValue([{ slug: 'account-model' }]), accessToken: jest.fn().mockResolvedValue('test-oauth-token') } as unknown as ChatGptAuth;
+  const progress = jest.fn();
+  const result = await new PortfolioAnalysisService(dir, mockedFetch, auth).analyze({ ...request, provider: 'chatgpt', model: 'account-model' }, progress);
+  expect(result.summary).toBe(report.summary);
+  expect(mockedFetch).toHaveBeenCalledTimes(3);
+  expect(JSON.parse(mockedFetch.mock.calls[2][1].body)).toEqual(JSON.parse(mockedFetch.mock.calls[1][1].body));
+  expect(progress.mock.calls.map(([update]) => update.stage)).toContain('retrying');
+});
+
+it('requests a compact complete report once when the API reaches the output limit', async () => {
+  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research)))
+    .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output: structured.output })))
+    .mockResolvedValueOnce(structuredResponse(report));
+  const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
+  await expect(service.analyze(request)).resolves.toMatchObject({ summary: report.summary });
+  expect(mockedFetch).toHaveBeenCalledTimes(3);
+  const original = JSON.parse(mockedFetch.mock.calls[1][1].body);
+  const retry = JSON.parse(mockedFetch.mock.calls[2][1].body);
+  expect(retry.instructions).toContain('Antworte kompakt und vollständig');
+  expect(retry.input).toEqual(original.input);
+  expect(retry.text).toEqual(original.text);
+});
+
+it('stops after one transient retry and identifies the step that failed', async () => {
+  const mockedFetch = jest.fn().mockImplementation(() => Promise.resolve(failedStream({ type: 'response.failed', response: { error: { code: 'server_error' } } })));
+  const auth = { models: jest.fn().mockResolvedValue([{ slug: 'account-model' }]), accessToken: jest.fn().mockResolvedValue('test-oauth-token') } as unknown as ChatGptAuth;
+  const service = new PortfolioAnalysisService(dir, mockedFetch, auth);
+  await expect(service.analyze({ ...request, provider: 'chatgpt', model: 'account-model' })).rejects.toThrow(/Webrecherche:.*Serverfehler/);
+  expect(mockedFetch).toHaveBeenCalledTimes(2);
+  expect(service.getLastResult()).toBeNull();
+});
+
+it.each(['subscription_sharing_usage_limit_exceeded', 'content_filter'])('does not retry a terminal stream failure: %s', async code => {
+  const mockedFetch = jest.fn().mockResolvedValueOnce(failedStream({ type: 'response.failed', response: { error: { code } } }));
+  const auth = { models: jest.fn().mockResolvedValue([{ slug: 'account-model' }]), accessToken: jest.fn().mockResolvedValue('test-oauth-token') } as unknown as ChatGptAuth;
+  await expect(new PortfolioAnalysisService(dir, mockedFetch, auth).analyze({ ...request, provider: 'chatgpt', model: 'account-model' })).rejects.toThrow();
+  expect(mockedFetch).toHaveBeenCalledTimes(1);
+});
+
+it('rejects malformed stream events without exposing their contents', async () => {
+  await expect(readAnalysisStream(new Response('data: private portfolio data not JSON\n\n'))).rejects.toThrow(/ungültiges Stream-Ereignis/);
+});
+
+
+it.each(['stream', 'http'])('distinguishes unavailable usage from exhausted usage and retries once: %s', async transport => {
+  const failure = { error: { code: 'subscription_sharing_usage_unavailable', message: 'private details' } };
+  const mockedFetch = jest.fn().mockImplementation(() => Promise.resolve(transport === 'http'
+    ? new Response(JSON.stringify(failure), { status: 503 })
+    : failedStream({ type: 'response.failed', response: failure })));
+  const auth = { models: jest.fn().mockResolvedValue([{ slug: 'account-model' }]), accessToken: jest.fn().mockResolvedValue('test-oauth-token') } as unknown as ChatGptAuth;
+  const error = await new PortfolioAnalysisService(dir, mockedFetch, auth).analyze({ ...request, provider: 'chatgpt', model: 'account-model' }).catch(error => error);
+  expect(error.message).toMatch(/Webrecherche:.*nicht prüfen/);
+  expect(error.message).toContain('Das bedeutet nicht');
+  expect(error.message).not.toContain('private details');
+  expect(mockedFetch).toHaveBeenCalledTimes(2);
+});
+
+it('reports an HTTP app usage limit without assuming the whole plan is exhausted or retrying', async () => {
+  const mockedFetch = jest.fn().mockResolvedValue(new Response(JSON.stringify({ error: { code: 'subscription_sharing_usage_limit_exceeded', message: 'private details' } }), { status: 429 }));
+  const auth = { models: jest.fn().mockResolvedValue([{ slug: 'account-model' }]), accessToken: jest.fn().mockResolvedValue('test-oauth-token') } as unknown as ChatGptAuth;
+  const error = await new PortfolioAnalysisService(dir, mockedFetch, auth).analyze({ ...request, provider: 'chatgpt', model: 'account-model' }).catch(error => error);
+  expect(error.message).toContain('ChatGPT-Nutzungslimit für FinPal');
+  expect(error.message).toContain('trotzdem noch');
+  expect(error.message).not.toContain('private details');
+  expect(mockedFetch).toHaveBeenCalledTimes(1);
 });

@@ -27,7 +27,9 @@ declare global {
       cancelPortfolioChatGptSignIn?():Promise<boolean>,
       signOutPortfolioChatGpt?():Promise<{revoked:boolean}>,
       getPortfolioChatGptModels?():Promise<import('./app/utils/chatGptAuth').ChatGptModel[]>,
-      analyzePortfolio?(request:import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest):Promise<import('./app/utils/portfolioAnalysis').PortfolioAnalysisResult>,
+      getLastPortfolioAnalysis?():Promise<import('./app/utils/portfolioAnalysis').SavedPortfolioAnalysis|null>,
+      forgetLastPortfolioAnalysis?():Promise<boolean>,
+      analyzePortfolio?(request:import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest,snapshot?:string):Promise<import('./app/utils/portfolioAnalysis').PortfolioAnalysisResult>,
       onPortfolioAnalysisProgress?(callback:(progress:import('./app/utils/portfolioAnalysis').PortfolioAnalysisProgress)=>void):()=>void,
       openPortfolioAnalysisSource?(url:string):Promise<void>,
       quit?():any

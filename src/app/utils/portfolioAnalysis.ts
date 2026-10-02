@@ -94,6 +94,12 @@ export function validateAnalysisRequest(request: PortfolioAnalysisRequest): void
 }
 
 export interface PortfolioAnalysisProgress {
-  stage: 'preparing' | 'research' | 'analysis' | 'validating' | 'correcting';
+  stage: 'preparing' | 'research' | 'analysis' | 'validating' | 'correcting' | 'retrying';
   lastActivityAt: number;
+}
+
+export interface SavedPortfolioAnalysis {
+  report: PortfolioAnalysisResult;
+  snapshot: string;
+  provider: PortfolioAnalysisRequest['provider'];
 }

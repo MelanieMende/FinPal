@@ -15,6 +15,7 @@ const stageLabels: Record<PortfolioAnalysisProgress['stage'], string> = {
   preparing: 'KI-Verbindung wird vorbereitet',
   research: 'Aktuelle Quellen werden recherchiert',
   analysis: 'Portfolio und Empfehlungen werden analysiert',
+  retrying: 'Unterbrochene KI-Anfrage wird einmal erneut versucht',
   correcting: 'Empfehlungen werden korrigiert und erneut geprüft',
   validating: 'Antwort und Quellen werden geprüft',
 };
@@ -74,7 +75,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt }: { priceUpdatedAt: 
     if (status.chatGpt.connected) {
       const available = await window.API.getPortfolioChatGptModels();
       if (!alive.current) return;
-      const preferred = readModel();
+      const preferred = readModel() || analysisState.model;
       setModels(available);
       setModel(current => available.some(m => m.slug === preferred) ? preferred
         : available.some(m => m.slug === current) ? current : available[0]?.slug || '');
@@ -85,7 +86,9 @@ export default function PortfolioAnalysis({ priceUpdatedAt }: { priceUpdatedAt: 
     if (open) void refreshStatus().catch(e => {
       if (alive.current) setError(e instanceof Error ? e.message : 'Die KI-Verbindung konnte nicht geladen werden.');
     });
-  }, []);
+  }, [open]);
+
+  useEffect(() => { setProvider(analysisState.provider); }, [analysisState.provider]);
 
   async function run(action: () => Promise<void>) {
     if (busy) return;
@@ -97,7 +100,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt }: { priceUpdatedAt: 
 
   function toggleOpen() {
     setOpen(!open);
-    if (!open) void run(refreshStatus);
+
   }
   function signIn(clientId?: string) {
     void run(async () => {
@@ -111,7 +114,12 @@ export default function PortfolioAnalysis({ priceUpdatedAt }: { priceUpdatedAt: 
     try { localStorage.setItem(ANALYSIS_MODEL_KEY, value); }
     catch { setError('Die Modellauswahl konnte nicht dauerhaft gespeichert werden.'); }
   }
-  function updateProfile(key: keyof ProfileForm, value: string) { setProfile(current => ({ ...current, [key]: value })); }
+  function updateProfile(key: keyof ProfileForm, value: string) {
+    const next = { ...profile, [key]: value };
+    setProfile(next);
+    try { localStorage.setItem(ANALYSIS_PROFILE_KEY, JSON.stringify(next)); }
+    catch { setError('Die Analyse-Einstellungen konnten nicht dauerhaft gespeichert werden.'); }
+  }
   function openSource(event: React.MouseEvent<HTMLAnchorElement>, url: string) {
     event.preventDefault();
     if (window.API.openPortfolioAnalysisSource) {
@@ -163,12 +171,14 @@ export default function PortfolioAnalysis({ priceUpdatedAt }: { priceUpdatedAt: 
         </label>
         {provider === 'chatgpt' ? <div className="rounded-lg border border-white/10 p-3 space-y-3">
           <p className="text-xs text-gray-400 m-0">Die Analyse nutzt dein bestehendes ChatGPT-Kontingent. Anmeldung und Freigabe erfolgen im Browser. Webrecherche hängt von Modell und Kontofreigabe ab.</p>
+          <p className="text-xs text-gray-400 m-0">Für FinPal kann ein eigenes Nutzungslimit gelten. <a href="https://chatgpt.com/settings/usage" onClick={e => openSource(e, 'https://chatgpt.com/settings/usage')} target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline">ChatGPT-Nutzung verwalten</a></p>
           {chatGpt.connected && <p className="text-sm text-emerald-300">Verbunden: {chatGpt.accounts.find(a => a.clientId === chatGpt.activeClientId)?.label}</p>}
           <div className="flex flex-wrap gap-2">
             <Button disabled={busy || !secureStorage} onClick={() => signIn()}>{chatGpt.connected ? 'Anderes ChatGPT-Konto hinzufügen' : 'Continue with ChatGPT'}</Button>
             {chatGpt.accounts.map(account => <Button key={account.clientId} disabled={busy || !secureStorage} onClick={() => signIn(account.clientId)}>Anmelden: {account.label}</Button>)}
             {chatGpt.connected && <Button disabled={busy} onClick={() => void run(async () => {
               const logout = await window.API.signOutPortfolioChatGpt(); await refreshStatus();
+              await window.API.forgetLastPortfolioAnalysis?.();
               dispatch(clearAnalysisResult());
               if (!logout.revoked) setNotice('Lokal abgemeldet. Der Widerruf bei OpenAI konnte nicht bestätigt werden; du kannst FinPal in den ChatGPT-Einstellungen trennen.');
             })}>ChatGPT abmelden</Button>}

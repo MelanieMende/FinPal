@@ -18,10 +18,21 @@ const assetTypes: { type: Asset['type']; label: string; icon?: IconName; symbol?
 	{ type: 'CashEquivalent', label: 'Cash Equivalents', icon: 'dollar' },
 ];
 const euroFormatter = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
+export const ASSET_TYPE_FILTER_KEY = 'finpal.assets.selectedType.v1';
 
 export default function AnalysisRoute() {
 	const assets = useAppSelector(state => state.assets);
-	const [selectedType, setSelectedType] = useState<Asset['type'] | null>(null);
+	const [selectedType, setSelectedType] = useState<Asset['type'] | null>(() => {
+		const savedType = localStorage.getItem(ASSET_TYPE_FILTER_KEY);
+		return assetTypes.find(({ type }) => type === savedType)?.type ?? null;
+	});
+	useEffect(() => {
+		if (selectedType) {
+			localStorage.setItem(ASSET_TYPE_FILTER_KEY, selectedType);
+		} else {
+			localStorage.removeItem(ASSET_TYPE_FILTER_KEY);
+		}
+	}, [selectedType]);
 	const [marketPriceUpdatedAt, setMarketPriceUpdatedAt] = useState<string | null>(() => localStorage.getItem(MARKET_PRICE_UPDATED_AT_KEY));
 	useEffect(() => {
 		const update = (event: Event) => setMarketPriceUpdatedAt((event as CustomEvent<string>).detail);

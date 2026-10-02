@@ -1,9 +1,12 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { render } from '../../../../testing/test-utils'
-import AssetsRoute from './AssetsRoute';
+import AssetsRoute, { ASSET_TYPE_FILTER_KEY } from './AssetsRoute';
 import { MARKET_PRICE_UPDATED_AT_KEY, MARKET_PRICE_UPDATED_EVENT } from '../../../utils/syncTimestamps';
 
 describe('AssetsRoute component', () => {
+	beforeEach(() => localStorage.removeItem(ASSET_TYPE_FILTER_KEY));
+	afterEach(() => localStorage.removeItem(ASSET_TYPE_FILTER_KEY));
+
 	it('shows a saved market price time and updates it when a new quote arrives', () => {
 		localStorage.setItem(MARKET_PRICE_UPDATED_AT_KEY, '2026-10-01T10:30:00.000Z');
 		render(<AssetsRoute />, { preloadedState: { assets: [] } });
@@ -60,6 +63,7 @@ describe('AssetsRoute component', () => {
 			fireEvent.click(cryptoCard);
 		});
 		expect(cryptoCard).toHaveAttribute('aria-pressed', 'true');
+		expect(localStorage.getItem(ASSET_TYPE_FILTER_KEY)).toBe('Crypto');
 		expect(cryptoCard).toHaveClass('!bg-indigo-500/30', '!border-indigo-400/70');
 		expect(screen.queryByTestId('asset-row-1')).not.toBeInTheDocument();
 		expect(screen.getByTestId('asset-row-2')).toBeInTheDocument();
@@ -69,9 +73,46 @@ describe('AssetsRoute component', () => {
 			fireEvent.click(cryptoCard);
 		});
 		expect(cryptoCard).toHaveAttribute('aria-pressed', 'false');
+		expect(localStorage.getItem(ASSET_TYPE_FILTER_KEY)).toBeNull();
 		expect(cryptoCard).not.toHaveClass('!bg-indigo-500/30', '!border-indigo-400/70');
 		expect(screen.getByTestId('asset-row-1')).toBeInTheDocument();
 		expect(screen.getByTestId('asset-row-2')).toBeInTheDocument();
+	});
+
+
+	it('restores the saved filter, rows and totals when the view is reopened', async () => {
+		const assets = [
+			{ ID: 1, type: 'Stock', name: 'Stock Asset', symbol: 'STK', isin: 'STOCK', current_shares: 2, price: 50 },
+			{ ID: 2, type: 'Crypto', name: 'Crypto Asset', symbol: 'CRY', isin: 'CRYPTO', current_shares: 1, price: 75 },
+		] as Asset[];
+		const first = render(<AssetsRoute />, { preloadedState: { assets } });
+		await act(async () => {
+			fireEvent.keyDown(screen.getByTestId('asset-type-value-Crypto'), { key: 'Enter' });
+		});
+		first.unmount();
+		await act(async () => {
+			render(<AssetsRoute />, { preloadedState: { assets } });
+		});
+		expect(screen.getByTestId('asset-type-value-Crypto')).toHaveAttribute('aria-pressed', 'true');
+		expect(screen.queryByTestId('asset-row-1')).not.toBeInTheDocument();
+		expect(screen.getByTestId('asset-row-2')).toBeInTheDocument();
+		expect(screen.getByTestId('TableCellCurrentValueSum')).toHaveTextContent(/75,00/);
+		await act(async () => {
+			fireEvent.click(screen.getByTestId('asset-type-value-Stock'));
+		});
+		expect(localStorage.getItem(ASSET_TYPE_FILTER_KEY)).toBe('Stock');
+		expect(screen.getByTestId('asset-type-value-Crypto')).toHaveAttribute('aria-pressed', 'false');
+	});
+
+	it('ignores an invalid saved asset type instead of hiding all assets', async () => {
+		localStorage.setItem(ASSET_TYPE_FILTER_KEY, 'InvalidType');
+		await act(async () => {
+			render(<AssetsRoute />, { preloadedState: {
+				assets: [{ ID: 1, type: 'Stock', name: 'Stock Asset', symbol: 'STK', isin: 'STOCK' }] as Asset[],
+			} });
+		});
+		expect(screen.getByTestId('asset-row-1')).toBeInTheDocument();
+		expect(localStorage.getItem(ASSET_TYPE_FILTER_KEY)).toBeNull();
 	});
 
 	it('renders', async() => {

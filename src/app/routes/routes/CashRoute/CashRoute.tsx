@@ -22,10 +22,14 @@ export default function CashRoute() {
     .filter(entry => entry.type === 'Withdrawal')
     .reduce((sum, entry) => sum + (entry.amount || 0), 0);
 
+  const totalInterest = cash
+    .filter(entry => entry.type === 'Interest')
+    .reduce((sum, entry) => sum + (entry.amount || 0), 0);
+
   const totalTransactionFlow = transactions.reduce((sum, t) => sum + (t.in_out || 0), 0);
   const totalDividends = dividends.reduce((sum, d) => sum + (d.income || 0), 0);
 
-  const totalLiquidity = totalDeposits - totalWithdrawals - totalFee + totalTransactionFlow + totalDividends;
+  const totalLiquidity = totalDeposits + totalInterest - totalWithdrawals - totalFee + totalTransactionFlow + totalDividends;
 
   const euroFormatter = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
 
@@ -37,7 +41,7 @@ export default function CashRoute() {
           <H3 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-emerald-400 to-teal-500">
             Cash Management
           </H3>
-          <p className="text-gray-400 font-medium">Track your deposits, withdrawals, and liquidity.</p>
+          <p className="text-gray-400 font-medium">Track your deposits, withdrawals, interest, and liquidity.</p>
         </div>
 
         <div className="flex flex-wrap gap-4">
@@ -58,6 +62,16 @@ export default function CashRoute() {
             <div>
               <div className="text-[10px] uppercase font-bold text-red-400/70 tracking-widest">Total Withdrawals</div>
               <div className="text-lg font-bold text-white tracking-tight">{euroFormatter.format(totalWithdrawals || 0)}</div>
+            </div>
+          </div>
+
+          <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-500/20 flex items-center gap-3">
+            <div className="p-2 bg-amber-500/20 rounded-lg">
+              <Icon icon="percentage" className="text-amber-400" size={14} />
+            </div>
+            <div>
+              <div className="text-[10px] uppercase font-bold text-amber-400/70 tracking-widest">Total Interest</div>
+              <div className="text-lg font-bold text-white tracking-tight">{euroFormatter.format(totalInterest || 0)}</div>
             </div>
           </div>
 
@@ -100,6 +114,7 @@ export default function CashRoute() {
                 <TableCell className="p-3 text-right text-gray-400">{euroFormatter.format(totalFee || 0)}</TableCell>
                 <TableCell className="p-3 text-left pl-3">
                   <span className="text-blue-400 text-[10px] bg-blue-400/10 px-2 py-0.5 rounded-full mr-2">In/Out: {euroFormatter.format(totalDeposits - totalWithdrawals || 0)}</span>
+                  <span className="text-amber-400 text-[10px] bg-amber-400/10 px-2 py-0.5 rounded-full mr-2">Interest: {euroFormatter.format(totalInterest || 0)}</span>
                   <span className="text-emerald-400 text-[10px] bg-emerald-400/10 px-2 py-0.5 rounded-full mr-2">Asset Flow: {euroFormatter.format(totalTransactionFlow || 0)}</span>
                   <span className="text-purple-400 text-[10px] bg-purple-400/10 px-2 py-0.5 rounded-full">Dividends: {euroFormatter.format(totalDividends || 0)}</span>
                 </TableCell>

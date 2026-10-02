@@ -9,4 +9,8 @@ CREATE TABLE IF NOT EXISTS cash (
 );
 `
 
+// Only reclassify interest entries explicitly marked by the broker importer.
+export const migrateCashInterestSql = `UPDATE cash SET type = 'Interest'
+WHERE type = 'Deposit' AND comment = 'Trade Republic: Zinsen'`;
+
 export default sql

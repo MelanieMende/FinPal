@@ -23,7 +23,7 @@ export default function DashboardRoute() {
 	const manualCash = cash.reduce((acc: number, c) => {
 		const amount = c.amount || 0;
 		const fee = c.fee || 0;
-		return acc + (c.type === 'Deposit' ? amount : -amount) - fee;
+		return acc + (c.type === 'Withdrawal' ? -amount : amount) - fee;
 	}, 0);
 
 	const totalTransactionFlow = transactions.reduce((acc, t) => acc + (t.in_out || 0), 0);

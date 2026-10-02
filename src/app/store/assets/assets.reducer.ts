@@ -106,23 +106,43 @@ export const loadPricesAndDividends = createAsyncThunk(
 					}
 					
 					if (Number.isFinite(price) && price > 0) {
-						const cacheAge = Date.now() - Date.parse(tradeRepublicQuotesFetchedAt ?? '')
-						const recentTradeRepublicQuote = tradeRepublicQuote?.price > 0 && cacheAge >= 0 && cacheAge < 24 * 60 * 60 * 1000
-						const differsStrongly = recentTradeRepublicQuote && (price > tradeRepublicQuote.price * 1.5 || price < tradeRepublicQuote.price / 1.5)
-						const usedTradeRepublicQuote = resultYahooFinance.source === 'trade-republic' || differsStrongly
-						if (differsStrongly) {
-							console.warn(`Ignoring implausible market price for ${asset.symbol}; using recent Trade Republic quote.`)
-							price = tradeRepublicQuote.price
+						let bondPriceHandled = false
+						if (asset.type === 'Bond' && tradeRepublicQuote && asset.current_shares > 0) {
+							const marketPricePerNominal = resultYahooFinance.tradedInPercent ? price / 100 : price
+							const bondPrice = getBondPricePerRecordedShare(
+								asset, tradeRepublicQuote,
+								resultYahooFinance.source === 'trade-republic' ? undefined : marketPricePerNominal,
+							)
+							if (bondPrice !== undefined) {
+								thunkAPI.dispatch(setPrice({ asset, price: bondPrice }))
+								bondPriceHandled = true
+								if (resultYahooFinance.source !== 'trade-republic' &&
+									marketPricePerNominal >= tradeRepublicQuote.price * 0.9 &&
+									marketPricePerNominal <= tradeRepublicQuote.price * 1.1 && !marketPriceRecorded) {
+									recordMarketPriceUpdate()
+									marketPriceRecorded = true
+								}
+							}
 						}
-						thunkAPI.dispatch(setPrice({ asset, price }))
-						if (!usedTradeRepublicQuote && !marketPriceRecorded) {
-							recordMarketPriceUpdate()
-							marketPriceRecorded = true
+						if (!bondPriceHandled) {
+							const cacheAge = Date.now() - Date.parse(tradeRepublicQuotesFetchedAt ?? '')
+							const recentTradeRepublicQuote = tradeRepublicQuote?.price > 0 && cacheAge >= 0 && cacheAge < 24 * 60 * 60 * 1000
+							const differsStrongly = recentTradeRepublicQuote && (price > tradeRepublicQuote.price * 1.5 || price < tradeRepublicQuote.price / 1.5)
+							const usedTradeRepublicQuote = resultYahooFinance.source === 'trade-republic' || differsStrongly
+							if (differsStrongly) {
+								console.warn(`Ignoring implausible market price for ${asset.symbol}; using recent Trade Republic quote.`)
+								price = tradeRepublicQuote.price
+							}
+							thunkAPI.dispatch(setPrice({ asset, price }))
+							if (!usedTradeRepublicQuote && !marketPriceRecorded) {
+								recordMarketPriceUpdate()
+								marketPriceRecorded = true
+							}
+							if (asset.type !== 'Bond' && tradeRepublicQuote?.averageBuyIn > 0) {
+								thunkAPI.dispatch(setAveragePricePaid({ asset, averageBuyIn: tradeRepublicQuote.averageBuyIn }))
+							}
+							thunkAPI.dispatch(setDividendYield({ asset, dividendYield: resultYahooFinance.summaryDetail?.dividendYield })) // dividend per share
 						}
-						if (tradeRepublicQuote?.averageBuyIn > 0) {
-							thunkAPI.dispatch(setAveragePricePaid({ asset, averageBuyIn: tradeRepublicQuote.averageBuyIn }))
-						}
-						thunkAPI.dispatch(setDividendYield({ asset, dividendYield: resultYahooFinance.summaryDetail?.dividendYield })) // dividend per share
 					}
 				}
 			} catch (err) {
@@ -205,6 +225,16 @@ export function findTradeRepublicQuote(asset: Pick<Asset, 'isin' | 'name'>, quot
 	}
 	const name = asset.name?.trim().toLocaleLowerCase()
 	return name ? quotes.find(quote => quote.name.trim().toLocaleLowerCase() === name) : undefined
+}
+
+export function getBondPricePerRecordedShare(asset: Pick<Asset, 'current_shares'>, quote: TradeRepublicQuote, marketPricePerNominal?: number) {
+	if (!(asset.current_shares > 0 && quote.quantity > 0 && quote.price > 0 && quote.netValue > 0)) return undefined
+	// Bond imports currently record one share per purchase, while TR reports nominal units.
+	// Only use a market quote if it is demonstrably in the same unit as TR's quote.
+	const usableMarketPrice = marketPricePerNominal !== undefined && Number.isFinite(marketPricePerNominal) &&
+		marketPricePerNominal >= quote.price * 0.9 && marketPricePerNominal <= quote.price * 1.1
+	const positionValue = usableMarketPrice ? quote.quantity * marketPricePerNominal : quote.netValue
+	return positionValue / asset.current_shares
 }
 
 async function callDivvyDiaryAPI(isin:string) {

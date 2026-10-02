@@ -12,7 +12,8 @@ export default function CashCreation() {
   const feeInput = useAppSelector(state => state.cashTransactionCreation.feeInput);
   const commentInput = useAppSelector(state => state.cashTransactionCreation.commentInput);
 
-  const isDeposit = typeInput === 'Deposit';
+  const isIncome = typeInput !== 'Withdrawal';
+  const isInterest = typeInput === 'Interest';
 
   return (
     <tr data-testid="cash-creation-row" className="bg-blue-500/5 border-b border-blue-500/10">
@@ -33,18 +34,21 @@ export default function CashCreation() {
       <TableCell className="p-3">
         <div className="relative">
           <select 
+            aria-label="Cash transaction type"
+            style={{ colorScheme: 'dark' }}
             value={typeInput} 
             onChange={e => dispatch(cashTransactionCreationReducer.setTypeInput(e.target.value))} 
             onBlur={() => dispatch(cashTransactionCreationReducer.handleTypeInputGotTouched())} 
-            className={`text-[10px] font-bold uppercase rounded-full px-3 py-1 border cursor-pointer appearance-none outline-none transition-all w-full ${isDeposit ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}
+            className={`text-[10px] font-bold uppercase rounded-full px-3 py-1 border cursor-pointer appearance-none outline-none transition-all w-full ${isInterest ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' : isIncome ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}
           >
             <option value="Deposit">Deposit</option>
             <option value="Withdrawal">Withdrawal</option>
+            <option value="Interest">Interest</option>
           </select>
           <Icon 
-            icon={isDeposit ? "plus" : "minus"} 
+            icon={isInterest ? "percentage" : isIncome ? "plus" : "minus"} 
             size={8} 
-            className={`absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none ${isDeposit ? 'text-emerald-400' : 'text-red-400'}`} 
+            className={`absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none ${isInterest ? 'text-amber-400' : isIncome ? 'text-emerald-400' : 'text-red-400'}`} 
           />
         </div>
       </TableCell>

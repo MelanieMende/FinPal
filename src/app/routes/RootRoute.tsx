@@ -23,7 +23,7 @@ import dividends_sql from '../../sql/dividends_sql'
 import assets_v_sql from '../../sql/assets_v_sql'
 import transactions_v_sql from '../../sql/transactions_v_sql'
 import appState_sql from '../../sql/appState_sql';
-import cash_sql from '../../sql/cash_sql';
+import cash_sql, { migrateCashInterestSql } from '../../sql/cash_sql';
 import { useEffect } from 'react';
 import CashRoute from './routes/CashRoute/CashRoute';
 import MarketPriceRefresh from '../components/MarketPriceRefresh/MarketPriceRefresh';
@@ -150,6 +150,7 @@ export default function RootRoute() {
 
 	async function setupCash() {
 		await sendToDB(cash_sql)
+		await sendToDB(migrateCashInterestSql)
 		let sql  = 'SELECT MAX(ID) as ID FROM cash'
 		var result = await sendToDB(sql)
 		var newID = 0

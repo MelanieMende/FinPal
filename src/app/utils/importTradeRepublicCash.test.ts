@@ -6,9 +6,9 @@ describe('importTradeRepublicCash', () => {
     const cash = [{ date: '2023-01-30', type: 'Deposit', amount: 200 }];
     const sendToDB = jest.fn(async (sql: string) => {
       if (sql.startsWith('SELECT')) return cash.slice();
-      const match = sql.match(/VALUES \('([^']+)', 'Deposit', ([\d.]+), 0, '([^']+)'\)/);
+      const match = sql.match(/VALUES \('([^']+)', '(Deposit|Interest)', ([\d.]+), 0, '([^']+)'\)/);
       if (!match) throw new Error(`Unexpected SQL: ${sql}`);
-      cash.push({ date: match[1], type: 'Deposit', amount: Number(match[2]) });
+      cash.push({ date: match[1], type: match[2], amount: Number(match[3]) });
       return [];
     });
     const records: TradeRepublicCashRecord[] = [
@@ -19,6 +19,7 @@ describe('importTradeRepublicCash', () => {
     ];
 
     expect(await importTradeRepublicCash(records, sendToDB)).toEqual({ imported: 3, existing: 1 });
+    expect(cash).toContainEqual({ date: '2026-10-01', type: 'Interest', amount: 0.03 });
     expect(sendToDB).toHaveBeenCalledWith(expect.stringContaining("'Trade Republic: Steuererstattung'"));
     expect(await importTradeRepublicCash(records, sendToDB)).toEqual({ imported: 0, existing: 4 });
   });
@@ -28,5 +29,14 @@ describe('importTradeRepublicCash', () => {
     const sameDay: TradeRepublicCashRecord = { date: '2026-10-01', type: 'Interest', amount: 0.03 };
 
     expect(await importTradeRepublicCash([sameDay, sameDay], sendToDB)).toEqual({ imported: 2, existing: 0 });
+  });
+
+  it('does not confuse interest with a deposit on the same day for the same amount', async () => {
+    const sendToDB = jest.fn(async (sql: string): Promise<unknown[]> => sql.startsWith('SELECT')
+      ? [{ date: '2026-10-01', type: 'Deposit', amount: 10 }]
+      : []);
+    expect(await importTradeRepublicCash([
+      { date: '2026-10-01', type: 'Interest', amount: 10 },
+    ], sendToDB)).toEqual({ imported: 1, existing: 0 });
   });
 });

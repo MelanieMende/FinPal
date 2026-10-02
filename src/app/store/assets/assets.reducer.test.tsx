@@ -38,6 +38,23 @@ describe('AssetCreation reducer', () => {
 		});
 	});
 
+	describe('getBondPricePerRecordedShare', () => {
+		const quote = { name: 'Aug. 2040', isin: 'US912810SQ22', quantity: 180, price: 0.5785, averageBuyIn: 0.5595, netValue: 104.13 };
+
+		it('uses the TR position value rather than multiplying its nominal-unit price by recorded purchases', () => {
+			expect(assetsReducer.getBondPricePerRecordedShare({ current_shares: 2 }, quote)).toBe(52.065);
+		});
+
+		it('uses a compatible current market quote and rejects prices in a different unit', () => {
+			expect(assetsReducer.getBondPricePerRecordedShare({ current_shares: 2 }, quote, 0.587)).toBeCloseTo(52.83);
+			expect(assetsReducer.getBondPricePerRecordedShare({ current_shares: 2 }, quote, 58.7)).toBe(52.065);
+		});
+
+		it('does not invent a per-purchase price without a recorded holding', () => {
+			expect(assetsReducer.getBondPricePerRecordedShare({ current_shares: 0 }, quote)).toBeUndefined();
+		});
+	});
+
   it('should return the initial state', () => {
     expect(reducer(undefined, { type: 'unknown' })).toEqual(assetsReducer.initialState)
   })
@@ -113,6 +130,47 @@ describe('AssetCreation reducer', () => {
 		} finally {
 			warning.mockRestore();
 		}
+	});
+
+	it('normalizes a Trade Republic bond position to the recorded purchase count', async () => {
+		const dispatch = jest.fn();
+		const asset = { ID: 30, type: 'Bond', name: 'US-Staatsanleihen', symbol: 'A281P1', isin: 'US912810SQ22', current_shares: 2, avg_price_paid: 50.055, is_watched: true } as Asset;
+		window.API = {
+			sendToDB: jest.fn(),
+			sendToYahooFinanceAPI: jest.fn(),
+			sendToDivvyDiaryAPI: jest.fn(),
+			getTradeRepublicQuotes: jest.fn().mockResolvedValue({
+				quotes: [{ name: 'Aug. 2040', isin: 'US912810SQ22', quantity: 180, price: 0.5785, averageBuyIn: 0.5595, netValue: 104.13 }],
+			}),
+		};
+
+		await assetsReducer.loadPricesAndDividends({ includeDividends: false })(dispatch, () => ({ assets: [asset] }), undefined);
+
+		expect(dispatch).toHaveBeenCalledWith(assetsReducer.setPrice({ asset, price: 52.065 }));
+		expect(dispatch).not.toHaveBeenCalledWith(assetsReducer.setAveragePricePaid({ asset, averageBuyIn: 0.5595 }));
+		expect(window.API.sendToYahooFinanceAPI).not.toHaveBeenCalled();
+	});
+
+	it('updates a bond from a compatible percentage quote between TR syncs', async () => {
+		const dispatch = jest.fn();
+		const asset = { ID: 30, type: 'Bond', name: 'US-Staatsanleihen', symbol: 'A281P1', isin: 'US912810SQ22', current_shares: 2, is_watched: true } as Asset;
+		window.API = {
+			sendToDB: jest.fn(),
+			sendToYahooFinanceAPI: jest.fn().mockResolvedValue({
+				price: { regularMarketPrice: 58.7, currency: 'EUR' }, source: 'boerse-frankfurt', tradedInPercent: true,
+			}),
+			sendToDivvyDiaryAPI: jest.fn(),
+			getTradeRepublicQuotes: jest.fn().mockResolvedValue({
+				quotes: [{ name: 'Aug. 2040', isin: 'US912810SQ22', quantity: 180, price: 0.5785, averageBuyIn: 0.5595, netValue: 104.13 }],
+			}),
+		};
+
+		await assetsReducer.loadPricesAndDividends({ preferTradeRepublicPrice: false, includeDividends: false })(
+			dispatch, () => ({ assets: [asset] }), undefined,
+		);
+
+		expect(dispatch.mock.calls.find(([action]) => action.type === assetsReducer.setPrice.type)?.[0].payload.price).toBeCloseTo(52.83);
+		expect(window.API.sendToYahooFinanceAPI).toHaveBeenCalledWith({ symbol: 'A281P1', isin: 'US912810SQ22', type: 'Bond' });
 	});
 
 	it('does not mark an unusable market quote as updated', async () => {

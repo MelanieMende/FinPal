@@ -2,6 +2,8 @@ import { act, screen, waitFor } from '@testing-library/react'
 import reducer, * as assetsReducer from './assets.reducer'
 import { setupStore } from '..';
 import { MARKET_PRICE_UPDATED_AT_KEY } from '../../utils/syncTimestamps';
+import { restoreQuote } from '../../utils/quoteMetadata';
+import { buildAnalysisPositions } from '../../utils/portfolioAnalysis';
 
 jest.mock('easy-currencies', () => ({
 	Convert: () => ({ from: () => ({ fetch: async () => ({ rates: { EUR: 1 } }) }) }),
@@ -60,6 +62,72 @@ describe('AssetCreation reducer', () => {
   })
 
   describe('Assets Thunks', () => {
+
+  it.each(['USD', 'DKK', 'CHF', 'GBP'])('converts %s and retains its FX provenance across reloads', async currency => {
+    const asset = { ID: 901, name: currency, symbol: currency, is_watched: true, current_shares: 2 } as Asset;
+    const asOf = '2026-10-03T00:00:00.000Z';
+    window.API = {
+      sendToDB: jest.fn(),
+      sendToYahooFinanceAPI: jest.fn().mockResolvedValue({ price: { regularMarketPrice: 100, currency, regularMarketTime: 1791000000 } }),
+      getEuroExchangeRates: jest.fn().mockResolvedValue({ rates: { [currency]: 0.8 }, source: 'ExchangeRate-API', asOf, fetchedAt: asOf }),
+    };
+    const store = setupStore({ assets: [asset] });
+    await store.dispatch(assetsReducer.loadPricesAndDividends({ includeDividends: false }));
+    expect(store.getState().assets[0]).toMatchObject({ price: 80, quote: {
+      originalPrice: 100, originalCurrency: currency, valuationCurrency: 'EUR', fxRateToEUR: 0.8,
+      fxAsOf: asOf, fxSource: 'ExchangeRate-API', quoteAsOf: new Date(1791000000 * 1000).toISOString(),
+    } });
+    const reloaded = { ...asset };
+    restoreQuote(reloaded);
+    expect(reloaded.price).toBe(80);
+    expect(reloaded.quote).toEqual(store.getState().assets[0].quote);
+    expect(buildAnalysisPositions(store.getState().assets)[0]).toMatchObject({ price: 80, currency: 'EUR', quote: { fxRateToEUR: 0.8 } });
+  });
+
+  it.each(['unknown', 'ZZZ'])('clears an unconvertible %s quote instead of presenting it as EUR', async currency => {
+    const asset = { ID: 902, name: currency, symbol: currency, is_watched: true, current_shares: 2, price: 50 } as Asset;
+    window.API = {
+      sendToDB: jest.fn(),
+      sendToYahooFinanceAPI: jest.fn().mockResolvedValue({ price: { regularMarketPrice: 100, currency } }),
+      getEuroExchangeRates: jest.fn().mockResolvedValue({ rates: { USD: 0.8 }, source: 'ExchangeRate-API', asOf: new Date().toISOString() }),
+    };
+    const store = setupStore({ assets: [asset] });
+    await store.dispatch(assetsReducer.loadPricesAndDividends({ includeDividends: false }));
+    expect(store.getState().assets[0].price).toBeUndefined();
+    expect(buildAnalysisPositions(store.getState().assets)[0]).toMatchObject({ price: null, currency: 'unknown' });
+  });
+
+  it('does not need a working FX service for a direct EUR quote', async () => {
+    const asset = { ID: 903, name: 'EUR', symbol: 'EUR', is_watched: true } as Asset;
+    window.API = {
+      sendToDB: jest.fn(),
+      sendToYahooFinanceAPI: jest.fn().mockResolvedValue({ price: { regularMarketPrice: 100, currency: 'EUR' } }),
+      getEuroExchangeRates: jest.fn().mockRejectedValue(new Error('Offline')),
+    };
+    const store = setupStore({ assets: [asset] });
+    await store.dispatch(assetsReducer.loadPricesAndDividends({ includeDividends: false }));
+    expect(store.getState().assets[0].price).toBe(100);
+    expect(window.API.getEuroExchangeRates).not.toHaveBeenCalled();
+  });
+
+  it('shares one FX snapshot, handles minor units and continues EUR updates after FX failure', async () => {
+    const assets = ['GBp', 'CHF', 'EUR'].map((currency, i) => ({ ID: 910 + i, name: currency, symbol: currency, is_watched: true, current_shares: 1 } as Asset));
+    window.API = {
+      sendToDB: jest.fn(),
+      sendToYahooFinanceAPI: jest.fn().mockImplementation(({ symbol }) => Promise.resolve({ price: { regularMarketPrice: 100, currency: symbol } })),
+      getEuroExchangeRates: jest.fn().mockResolvedValue({ rates: { GBP: 1.2, CHF: 1.1 }, source: 'ExchangeRate-API', asOf: new Date().toISOString(), fetchedAt: new Date().toISOString() }),
+    };
+    const store = setupStore({ assets });
+    await store.dispatch(assetsReducer.loadPricesAndDividends({ includeDividends: false }));
+    expect(store.getState().assets[0].price).toBeCloseTo(1.2);
+    expect(window.API.getEuroExchangeRates).toHaveBeenCalledTimes(1);
+    (window.API.getEuroExchangeRates as jest.Mock).mockRejectedValue(new Error('Offline'));
+    await store.dispatch(assetsReducer.loadPricesAndDividends({ includeDividends: false }));
+    expect(store.getState().assets[0].price).toBeUndefined();
+    expect(store.getState().assets[1].price).toBeUndefined();
+    expect(store.getState().assets[2].price).toBe(100);
+    expect(window.API.getEuroExchangeRates).toHaveBeenCalledTimes(2);
+  });
 
 	it('prefers a cached Trade Republic quote and average buy-in over Yahoo', async () => {
 		const dispatch = jest.fn();

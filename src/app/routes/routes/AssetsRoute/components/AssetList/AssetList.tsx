@@ -12,6 +12,7 @@ export default function AnalysisRoute(props: { assets?: Asset[] }) {
 
 	const storedAssets = useAppSelector(state => state.assets)
 	const assets = props.assets ?? storedAssets
+	const incompleteValuation = assets.some(asset => asset.current_shares > 0 && asset.quote?.valuationCurrency === 'unknown')
 
 	let sum_profit_lost = 0
 	let sum_dividends = 0
@@ -72,9 +73,9 @@ export default function AnalysisRoute(props: { assets?: Asset[] }) {
 					<TableCell className="p-3 text-right text-blue-300">{euroFormatter.format(sum_current_invest)}</TableCell>
 					<TableCell dataTestID="CurrentValueSum" className="p-3 text-right">
 						<div className="font-bold text-white">{euroFormatter.format(sum_current_value)}</div>
-						<div id="TableCellSumProfitLoss" className={`mt-1 inline-flex rounded border px-2 py-0.5 text-s font-bold ${sum_profit_lost >= 0 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-red-500/15 text-red-400 border-red-500/30'}`}>
+						{incompleteValuation ? <div className="text-xs text-amber-300">Teilsumme · Gewinn/Verlust unvollständig</div> : <div id="TableCellSumProfitLoss" className={`mt-1 inline-flex rounded border px-2 py-0.5 text-s font-bold ${sum_profit_lost >= 0 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-red-500/15 text-red-400 border-red-500/30'}`}>
 							{sum_profit_lost >= 0 ? '+' : ''}{euroFormatter.format(sum_profit_lost)} / {sum_profit_loss_percentage >= 0 ? '+' : ''}{sum_profit_loss_percentage.toFixed(2)}%
-						</div>
+						</div>}
 					</TableCell>
 					<TableCell className="p-3 text-center">—</TableCell>
 					<TableCell className="p-3 text-right">—</TableCell>

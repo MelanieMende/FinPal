@@ -6,6 +6,15 @@ import { buildAnalysisPositions, type PortfolioAnalysisRequest, type PortfolioAn
 import AssetList from './AssetList';
 
 const assets = [10, 20, 30, 40, 50].map(ID => ({ ID, name: 'Asset ' + ID, type: 'Stock', current_shares: 1, price: ID, current_invest: -10, avg_price_paid: 10 })) as Asset[];
+
+it('marks a partial market value total and avoids reporting missing FX as a total loss', async () => {
+  await act(async () => {
+    render(<AssetList />, { preloadedState: { assets: [{ ID: 1, name: 'Unknown FX', current_shares: 1,
+      current_invest: -500, quote: { valuationCurrency: 'unknown' } } as Asset] } });
+  });
+  expect(screen.getByTestId('TableCellCurrentValueSum')).toHaveTextContent('Gewinn/Verlust unvollständig');
+  expect(document.getElementById('TableCellSumProfitLoss')).toBeNull();
+});
 const request: PortfolioAnalysisRequest = { provider: 'api', positions: buildAnalysisPositions(assets), profile: { goal: 'growth', risk: 'medium', horizonYears: 10, buyBudget: 0 }, priceUpdatedAt: null };
 const args = { request, snapshot: 'snapshot' };
 const report: PortfolioAnalysisResult = {

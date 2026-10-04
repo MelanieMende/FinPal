@@ -40,6 +40,8 @@ it('encrypts the API key and researches sources before generating a structured r
   expect(researchBody).toMatchObject({ store: false, tool_choice: 'required', tools: [{ type: 'web_search' }] });
   expect(researchBody.input[0].content).not.toContain('shares');
   expect(analysisBody.text.format).toMatchObject({ type: 'json_schema', strict: true });
+  expect(analysisBody.instructions).toContain('EUR-Preise sind bereits umgerechnet');
+  expect(analysisBody.instructions).toContain('Kurswährungsanteile sind keine Währungsrisiko-Allokation');
   const recSchema = analysisBody.text.format.schema.properties.recommendations;
   expect(recSchema).toMatchObject({ minItems: 1, maxItems: 1 });
   expect(recSchema.items.properties.assetId.enum).toEqual([1]);

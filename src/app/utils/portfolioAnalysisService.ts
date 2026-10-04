@@ -323,6 +323,7 @@ export class PortfolioAnalysisService {
         input: [{ role: 'user', content: JSON.stringify({ date: new Date().toISOString(), portfolio: request, research: researchText, sources: sources.map((s, index) => ({ index, ...s })) }) }],
         text: { format: { type: 'json_schema', name: 'portfolio_analysis', strict: true, schema: analysisSchema(request, sources) } },
       };
+      analysisInput.instructions += ' currency bezeichnet die Bewertungswährung, quote.originalCurrency die ursprüngliche Kurswährung. EUR-Preise sind bereits umgerechnet und dürfen nicht nochmals konvertiert werden. Die Umrechnung ist originalPrice * fxRateToEUR * (unitFactor oder 1). quote.quoteAsOf ist der Börsenkurszeitpunkt, fetchedAt der Abrufzeitpunkt, fxAsOf der Stand der Wechselkurse, fxFetchedAt deren Abruf und convertedAt die lokale Umrechnung. Direkt in EUR gelieferte Kurse benötigen keine weitere Umrechnung und keinen FX-Nachweis. Fehlende FX-Daten nur für eine notwendige, nicht belegte Umrechnung benennen. currencyExposure unknown bedeutet, dass die wirtschaftliche Währungsexposition nicht geliefert wurde. Kurswährungsanteile sind keine Währungsrisiko-Allokation. Aus Handelswährung, ISIN-Land oder Fondswährung niemals exakte Währungsrisiken ableiten. Bei Fonds und ETFs sind belegte aktuelle Look-through-Daten und Angaben zu Währungsabsicherungen erforderlich; ohne diese keine exakten Währungsrisiko-Prozente nennen.';
       let validated!: ReturnType<typeof validateAnalysisResult>;
       let correction: { reason: string; rejectedAnalysis: unknown } | undefined;
       for (let attempt = 0; attempt < 2; attempt++) {
@@ -347,6 +348,13 @@ export class PortfolioAnalysisService {
       if (!request.priceUpdatedAt) validated.warnings.push('Der Zeitpunkt der letzten Kursaktualisierung ist unbekannt.');
       else if (Date.now() - Date.parse(request.priceUpdatedAt) > 48 * 60 * 60 * 1000) validated.warnings.push('Die Portfolio-Kurse wurden seit mehr als 48 Stunden nicht aktualisiert.');
       if (request.positions.some(p => p.currency === 'unknown')) validated.warnings.push('Bei mindestens einer Position fehlt die Kurswährung; Gesamtwerte und Gewichtungen sind daher eingeschränkt.');
+      const missingQuoteTimes = request.positions.filter(p => !p.quote?.quoteAsOf);
+      if (missingQuoteTimes.length) validated.warnings.push('Bei ' + missingQuoteTimes.length + ' Position(en) fehlt der tatsächliche Börsenkurszeitpunkt; Abrufzeiten ersetzen ihn nicht.');
+      if (request.positions.some(p => p.quote?.quoteAsOf && Date.now() - Date.parse(p.quote.quoteAsOf) > 48 * 60 * 60 * 1000)) validated.warnings.push('Mindestens ein Börsenkurs ist älter als 48 Stunden.');
+      if (request.positions.some(p => p.quote?.fxAsOf && Date.now() - Date.parse(p.quote.fxAsOf) > 48 * 60 * 60 * 1000)) validated.warnings.push('Mindestens ein verwendeter Wechselkurs ist älter als 48 Stunden.');
+      if (request.positions.some(p => p.quote?.error)) validated.warnings.push('Mindestens eine Position konnte wegen fehlender Währungs- oder FX-Daten nicht in EUR bewertet werden.');
+      if (request.positions.some(p => !p.quote)) validated.warnings.push('Bei mindestens einer Position fehlen Originalkurs und Kursherkunft.');
+      validated.warnings.push('Die wirtschaftliche Währungsrisiko-Allokation ist nicht hinterlegt. Kurswährungen bilden insbesondere bei Fonds und ETFs keine belastbare Risiko-Allokation ab.');
       const report = { ...validated, sources, generatedAt: new Date().toISOString(), priceUpdatedAt: request.priceUpdatedAt, model };
       this.saveLastResult(report, request, snapshot);
       return report;

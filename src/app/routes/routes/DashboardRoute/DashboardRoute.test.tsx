@@ -4,6 +4,18 @@ import DashboardRoute from './DashboardRoute';
 
 jest.mock('../../../components/Charts/AssetAllocationChart', () => function MockAllocationChart(): null { return null; });
 
+it('excludes an unconvertible position rather than substituting its cost basis for market value', async () => {
+  render(<DashboardRoute />, { preloadedState: {
+    assets: [{ ID: 1, name: 'Unknown FX', current_shares: 2, current_invest: -500,
+      quote: { valuationCurrency: 'unknown' } } as Asset],
+    transactions: [], dividends: [], cash: [],
+  } });
+  await act(async () => {});
+  expect(screen.getByRole('status')).toHaveTextContent('EUR-Summen und Allokationen sind unvollständig');
+  const card = screen.getByText('Total Net Worth').closest('.glass-card')!;
+  expect(within(card as HTMLElement).getByText('0,00 €')).toBeInTheDocument();
+});
+
 it('includes cash interest as income in the dashboard balance and net worth', async () => {
   render(<DashboardRoute />, { preloadedState: {
     assets: [], transactions: [], dividends: [],

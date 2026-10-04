@@ -7,6 +7,7 @@ import { TradeRepublicSync } from './app/utils/tradeRepublicSync';
 import { ChatGptAuth } from './app/utils/chatGptAuth';
 import { PortfolioAnalysisService } from './app/utils/portfolioAnalysisService';
 import type { PortfolioAnalysisRequest } from './app/utils/portfolioAnalysis';
+import { fetchEuroExchangeRates } from './app/utils/euroExchangeRates';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -204,6 +205,18 @@ ipcMain.handle('trade-republic:sync', async (_event, args: { phone?: string; pin
 });
 
 ipcMain.handle('trade-republic:quotes', async () => tradeRepublicSync.getCachedQuotes());
+let euroRatesPromise: ReturnType<typeof fetchEuroExchangeRates> | undefined;
+let euroRatesRequestedAt = 0;
+ipcMain.handle('market:eur-exchange-rates', async () => {
+  if (!euroRatesPromise || Date.now() - euroRatesRequestedAt > 60 * 60 * 1000) {
+    euroRatesRequestedAt = Date.now();
+    euroRatesPromise = fetchEuroExchangeRates().catch(error => {
+      euroRatesPromise = undefined;
+      throw error;
+    });
+  }
+  return euroRatesPromise;
+});
 
 ipcMain.handle('trade-republic:forget', async () => {
   tradeRepublicSync.forgetCredentials();

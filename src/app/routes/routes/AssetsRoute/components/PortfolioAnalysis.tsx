@@ -218,6 +218,19 @@ export default function PortfolioAnalysis({ priceUpdatedAt }: { priceUpdatedAt: 
           <label className="text-xs text-gray-300">Zusätzliches Kaufbudget (EUR)<input type="text" inputMode="decimal" className={`${inputClass} mt-1`} value={profile.buyBudget} disabled={busy} onChange={e => updateProfile('buyBudget', e.target.value)} /></label>
         </div>
         <p className="text-xs text-gray-400">Beim Start werden Namen, ISINs, Bestände, Kurse, Einstandswerte, Gewinne und Dividenden sowie dein Anlageprofil an OpenAI übertragen. Kurse zuletzt aktualisiert: {formatSyncTime(priceUpdatedAt) ?? 'unbekannt'}.</p>
+        <details className="text-xs text-gray-400">
+          <summary className="cursor-pointer">Kurswährungen und EUR-Umrechnung</summary>
+          <p>Kurswährungen zeigen keine vollständige Währungsrisiko-Allokation. Für Fonds und ETFs fehlen Angaben zu den enthaltenen Anlagen und Absicherungen.</p>
+          <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr><th>Position</th><th>Originalkurs</th><th>EUR je Währungseinheit</th><th>Quelle / Kurszeit</th><th>FX-Stand / Umrechnung</th></tr></thead>
+            <tbody>{positions.map(position => <tr key={position.id} className="border-t border-white/10">
+              <td className="py-2 pr-3">{position.name}</td>
+              <td className="pr-3">{position.quote ? `${position.quote.originalPrice} ${position.quote.originalCurrency}` : 'Unbekannt'}{position.quote?.unitFactor !== undefined && position.quote.unitFactor !== 1 && <><br />Faktor je erfasster Einheit: {position.quote.unitFactor}</>}</td>
+              <td className="pr-3">{position.quote?.fxRateToEUR ?? 'Unbekannt'}</td>
+              <td className="pr-3">{position.quote?.source ?? 'Unbekannt'} · {formatSyncTime(position.quote?.quoteAsOf) ?? 'Kurszeit unbekannt'}<br />Abruf: {formatSyncTime(position.quote?.fetchedAt) ?? 'unbekannt'}</td>
+              <td>{position.quote?.fxSource ?? (position.quote?.originalCurrency === 'EUR' ? 'Direkter EUR-Kurs' : 'Unbekannt')}<br />{formatSyncTime(position.quote?.fxAsOf) ?? 'Kein FX-Zeitpunkt'} · {formatSyncTime(position.quote?.convertedAt) ?? 'Keine Umrechnung'}<br />FX-Abruf: {formatSyncTime(position.quote?.fxFetchedAt) ?? 'Nicht erforderlich / unbekannt'}</td>
+            </tr>)}</tbody></table></div>
+          <a href="https://www.exchangerate-api.com" onClick={e => openSource(e, 'https://www.exchangerate-api.com')} target="_blank" rel="noopener noreferrer" className="underline">Wechselkurse von ExchangeRate-API</a>
+        </details>
         {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
         {notice && <p role="status" className="text-sm text-amber-300">{notice}</p>}
         <Button intent={Intent.PRIMARY} loading={analyzing} disabled={busy || !positions.length} onClick={analyze}>Analyse starten</Button>

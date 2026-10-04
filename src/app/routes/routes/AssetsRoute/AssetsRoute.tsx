@@ -102,6 +102,8 @@ export default function AnalysisRoute() {
 			</div>
 
 			{/* Asset Management Area */}
+			{assets.some(asset => asset.current_shares > 0 && asset.quote?.valuationCurrency === 'unknown') &&
+				<p role="status" className="text-sm text-amber-300">Die EUR-Summen sind unvollständig: Positionen ohne gültige Währungsumrechnung sind nicht enthalten.</p>}
 			<PortfolioAnalysis priceUpdatedAt={marketPriceUpdatedAt} />
 			<Card className="glass-card p-0 overflow-hidden min-h-[500px]">
 				<div className="p-4 border-b border-white/5 bg-white/5 flex justify-between items-center">

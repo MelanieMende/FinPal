@@ -1,5 +1,5 @@
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit'
-import { Convert } from "easy-currencies";
+import { quoteTime, restoreQuote, saveQuote, type QuoteMetadata, type EuroExchangeRates } from '../../utils/quoteMetadata';
 import type { TradeRepublicQuote } from '../../utils/tradeRepublicSync';
 import { recordMarketPriceUpdate } from '../../utils/syncTimestamps';
 
@@ -30,6 +30,7 @@ export const loadAssets = createAsyncThunk<void, { assetIDs?: number[] } | void>
 
 		for(const asset of assets) {
 			asset.currencySymbol = '€'
+			restoreQuote(asset)
 		}
 		thunkAPI.dispatch(setAssets(assets))
 		if (assets.length === 0) return
@@ -49,6 +50,7 @@ export const loadAsset = createAsyncThunk(
 		console.log('result: ', assets)
 		for(const asset of assets) {
 			asset.currencySymbol = '€'
+			restoreQuote(asset)
 			console.log('loaded asset: ', asset)
 			thunkAPI.dispatch(setAsset(asset))
 		}
@@ -62,11 +64,16 @@ export const loadPricesAndDividends = createAsyncThunk(
 
 		let state = thunkAPI.getState() as State
 
-		// conversion rates
-		const USD = await Convert().from("USD").fetch();
-		const DKK = await Convert().from("DKK").fetch();
-		const USD_conversion_rate = USD.rates.EUR
-		const DKK_conversion_rate = DKK.rates.EUR
+		// One FX snapshot per refresh, fetched only when a foreign quote needs it.
+		let fxPromise: Promise<EuroExchangeRates> | undefined
+		const getFX = () => fxPromise ??= window.API.getEuroExchangeRates
+			? window.API.getEuroExchangeRates()
+			: Promise.reject(new Error('Wechselkurszugriff fehlt. Bitte FinPal neu starten.'))
+		const publishQuote = (asset: Asset, price: number | null, quote: QuoteMetadata) => {
+			saveQuote(asset, price, quote)
+			thunkAPI.dispatch(setPrice({ asset, price: price ?? undefined }))
+			thunkAPI.dispatch(setQuote({ asset, quote }))
+		}
 
 		let assetsToRefresh = state.assets.filter(a => a.is_watched)
 		if (props?.assetIDs && props.assetIDs.length > 0) {
@@ -88,6 +95,7 @@ export const loadPricesAndDividends = createAsyncThunk(
 			console.log(asset.name, '-', asset.symbol)
 
 			let resultYahooFinance:any = null;
+			let priceQuote: QuoteMetadata | undefined
 			try {
 				const tradeRepublicQuote = findTradeRepublicQuote(asset, tradeRepublicQuotes)
 				resultYahooFinance = props?.preferTradeRepublicPrice !== false && tradeRepublicQuote
@@ -97,12 +105,36 @@ export const loadPricesAndDividends = createAsyncThunk(
 
 				if (resultYahooFinance && resultYahooFinance.price) {
 					let price = resultYahooFinance.price.regularMarketPrice
-
-					if(resultYahooFinance.price.currency == 'USD') {
-						price *= USD_conversion_rate
+					const rawCurrency = resultYahooFinance.price.currency
+					const currency = typeof rawCurrency === 'string' && /^(?:[A-Z]{3}|GBp|ZAc)$/.test(rawCurrency) ? rawCurrency : 'unknown'
+					const fetchedAt = new Date().toISOString()
+					const trQuote = (): QuoteMetadata => ({
+						originalPrice: tradeRepublicQuote.price, originalCurrency: 'EUR', valuationCurrency: 'EUR',
+						source: 'trade-republic', quoteAsOf: null,
+						fetchedAt: tradeRepublicQuotesFetchedAt || fetchedAt, convertedAt: null,
+						fxRateToEUR: 1, fxSource: null, fxAsOf: null, fxFetchedAt: null,
+					})
+					priceQuote = resultYahooFinance.source === 'trade-republic' ? trQuote() : {
+						originalPrice: price, originalCurrency: currency, valuationCurrency: 'EUR',
+						source: resultYahooFinance.source || 'yahoo-finance',
+						quoteAsOf: quoteTime(resultYahooFinance.price.regularMarketTime), fetchedAt,
+						convertedAt: null, fxRateToEUR: 1, fxSource: null, fxAsOf: null, fxFetchedAt: null,
 					}
-					else if(resultYahooFinance.price.currency == 'DKK') {
-						price *= DKK_conversion_rate
+					if (Number.isFinite(price) && price > 0 && currency !== 'EUR') {
+						try {
+							const fx = await getFX()
+							const minorUnits: Record<string, string> = { GBp: 'GBP', GBX: 'GBP', ZAc: 'ZAR', ILA: 'ILS' }
+							const rate = fx.rates[minorUnits[currency] || currency] * (minorUnits[currency] ? 0.01 : 1)
+							if (!Number.isFinite(rate) || rate <= 0) throw new Error(`Kein EUR-Wechselkurs für ${currency}.`)
+							price *= rate
+							priceQuote = { ...priceQuote, convertedAt: new Date().toISOString(), fxRateToEUR: rate,
+								fxSource: fx.source, fxAsOf: fx.asOf, fxFetchedAt: fx.fetchedAt }
+						} catch (error) {
+							priceQuote = { ...priceQuote, valuationCurrency: 'unknown', fxRateToEUR: null,
+								error: error instanceof Error ? error.message : 'Wechselkurs fehlt.' }
+							publishQuote(asset, null, priceQuote)
+							price = NaN
+						}
 					}
 					
 					if (Number.isFinite(price) && price > 0) {
@@ -114,7 +146,9 @@ export const loadPricesAndDividends = createAsyncThunk(
 								resultYahooFinance.source === 'trade-republic' ? undefined : marketPricePerNominal,
 							)
 							if (bondPrice !== undefined) {
-								thunkAPI.dispatch(setPrice({ asset, price: bondPrice }))
+								const compatible = marketPricePerNominal >= tradeRepublicQuote.price * 0.9 && marketPricePerNominal <= tradeRepublicQuote.price * 1.1
+								const bondQuote = resultYahooFinance.source === 'trade-republic' || !compatible ? trQuote() : priceQuote
+								publishQuote(asset, bondPrice, { ...bondQuote, unitFactor: bondPrice / (bondQuote.originalPrice * bondQuote.fxRateToEUR) })
 								bondPriceHandled = true
 								if (resultYahooFinance.source !== 'trade-republic' &&
 									marketPricePerNominal >= tradeRepublicQuote.price * 0.9 &&
@@ -132,8 +166,9 @@ export const loadPricesAndDividends = createAsyncThunk(
 							if (differsStrongly) {
 								console.warn(`Ignoring implausible market price for ${asset.symbol}; using recent Trade Republic quote.`)
 								price = tradeRepublicQuote.price
+								priceQuote = trQuote()
 							}
-							thunkAPI.dispatch(setPrice({ asset, price }))
+							publishQuote(asset, price, priceQuote)
 							if (!usedTradeRepublicQuote && !marketPriceRecorded) {
 								recordMarketPriceUpdate()
 								marketPriceRecorded = true
@@ -167,11 +202,14 @@ export const loadPricesAndDividends = createAsyncThunk(
 
 					let next_estimated_dividend_per_share = new Date(json.dividends[0].payDate) >= new Date() ? json.dividends[0].amount : 0
 
-					if(resultYahooFinance?.price?.currency == 'USD') {
-						next_estimated_dividend_per_share *= USD_conversion_rate
-					}
-					else if(resultYahooFinance?.price?.currency == 'DKK') {
-						next_estimated_dividend_per_share *= DKK_conversion_rate
+					// Dividend currency can differ from the trading currency.
+					const dividendCurrency = json.dividends[0].currency || json.currency
+					if (next_estimated_dividend_per_share > 0 && dividendCurrency !== 'EUR') {
+						try {
+							const rate = dividendCurrency ? (await getFX()).rates[dividendCurrency] : undefined
+							if (!Number.isFinite(rate) || rate <= 0) throw new Error('Dividendenwährung oder Wechselkurs fehlt.')
+							next_estimated_dividend_per_share *= rate
+						} catch { next_estimated_dividend_per_share = undefined }
 					}
 
 					thunkAPI.dispatch(setDividends({ asset, dividends: json.dividends }))
@@ -386,6 +424,10 @@ const assetsSlice = createSlice({
 			})
 			return mapped
 		},
+		setQuote(state, action: { payload: { asset: Asset; quote: QuoteMetadata } }) {
+			return state.map(item => item.ID === action.payload.asset.ID
+				? { ...item, quote: action.payload.quote } : item)
+		},
 		setAveragePricePaid(state, action) {
 			return state.map((item:Asset) => item.ID === action.payload.asset.ID
 				? Object.assign({}, item, { avg_price_paid: action.payload.averageBuyIn })
@@ -409,6 +451,7 @@ export const {
 	setNextEstimatedDividendPerShare,
 	setPayDividendDate,
 	setPrice,
+	setQuote,
 	setAveragePricePaid
 } = actions
 

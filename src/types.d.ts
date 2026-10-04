@@ -19,6 +19,7 @@ declare global {
       getTradeRepublicStatus?():Promise<{runnerAvailable:boolean; hasSavedCredentials:boolean; lastSyncAt?:string}>,
       syncTradeRepublic?(args:{phone?:string; pin?:string; remember?:boolean}):Promise<{records:import('./app/utils/tradeRepublicSync').TradeRepublicRecord[]; cashRecords:import('./app/utils/tradeRepublicSync').TradeRepublicCashRecord[]; skipped:number; quotes:import('./app/utils/tradeRepublicSync').TradeRepublicQuote[]; quotesFetchedAt?:string; quoteError?:string; lastSyncAt?:string}>,
       getTradeRepublicQuotes?():Promise<import('./app/utils/tradeRepublicSync').TradeRepublicQuoteCache>,
+      getEuroExchangeRates?():Promise<import('./app/utils/quoteMetadata').EuroExchangeRates>,
       forgetTradeRepublicCredentials?():Promise<boolean>,
       getPortfolioAIStatus?():Promise<{hasApiKey:boolean; secureStorageAvailable:boolean; model:string; chatGpt:import('./app/utils/chatGptAuth').ChatGptStatus}>,
       savePortfolioAIKey?(key:string):Promise<boolean>,

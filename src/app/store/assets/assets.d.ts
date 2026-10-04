@@ -13,6 +13,7 @@ interface Asset {
   price?: float,
   avg_price_paid?: float,
   currencySymbol?: string,
+  quote?: import('../../utils/quoteMetadata').QuoteMetadata,
   current_profit_loss?: float,
   current_profit_loss_percentage?: float,
   current_profit_loss_percentage_formatted?: string,

@@ -12,6 +12,7 @@ export default function DashboardRoute() {
 
 	// Asset Valuation Helper: Fallback to invested capital if no live price exists
 	const getAssetValue = (asset: any) => {
+		if (asset.quote?.valuationCurrency === 'unknown') return 0;
 		const shares = asset.current_shares || 0;
 		if (shares <= 0) return 0;
 		return asset.price && asset.price > 0 ? shares * asset.price : Math.abs(asset.current_invest || 0);
@@ -73,6 +74,8 @@ export default function DashboardRoute() {
 
 	return (
 		<div id="DashboardRoute" className="w-full p-4">
+			{assets.some(asset => asset.current_shares > 0 && asset.quote?.valuationCurrency === 'unknown') &&
+				<p role="status" className="text-sm text-amber-300">Die EUR-Summen und Allokationen sind unvollständig: Positionen ohne gültige Währungsumrechnung sind nicht enthalten.</p>}
 			<div className="mb-8">
 				<H3 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 via-indigo-400 to-purple-500">
 					Portfolio Overview
@@ -182,10 +185,10 @@ export default function DashboardRoute() {
 									</div>
 									<div className="text-right">
 										<div className="font-bold text-sm">
-											{new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(((asset.current_shares || 0) * (asset.price || 0)) || 0)}
+											{asset.quote?.valuationCurrency === 'unknown' ? 'Nicht bewertet' : new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(((asset.current_shares || 0) * (asset.price || 0)) || 0)}
 										</div>
 										<div className="text-xs text-green-400">
-											{(netWorth !== 0 ? (((asset.current_shares || 0) * (asset.price || 0)) / netWorth) * 100 : 0).toFixed(1)}%
+											{asset.quote?.valuationCurrency === 'unknown' ? 'Anteil unbekannt' : `${(netWorth !== 0 ? (((asset.current_shares || 0) * (asset.price || 0)) / netWorth) * 100 : 0).toFixed(1)}%`}
 										</div>
 									</div>
 								</div>

@@ -1,9 +1,20 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor } from '@testing-library/react'
 import { render } from '../../../../../../../testing/test-utils'
 import AssetListItem from './AssetListItem';
 import AssetsRoute from './../../../AssetsRoute';
 
 describe('AssetsListItem component', () => {
+
+  it('labels an unconvertible quote and omits fictitious unrealized losses', async () => {
+    const asset = { ID: 1, name: 'Unknown FX', type: 'Stock', current_shares: 2, current_invest: -500,
+      quote: { valuationCurrency: 'unknown', error: 'Kein EUR-Wechselkurs.' } } as Asset;
+    await act(async () => {
+      render(<table><tbody><AssetListItem i={1} asset={asset} /></tbody></table>);
+    });
+    expect(screen.getByTestId('current-price-1')).toHaveTextContent('Nicht bewertet');
+    expect(screen.getByTestId('current-value-1')).toHaveTextContent('Nicht bewertet');
+    expect(screen.queryByTestId('profit-loss-1')).not.toBeInTheDocument();
+  });
 
 	it('renders', async() => {
     

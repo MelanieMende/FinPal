@@ -7,9 +7,11 @@ describe('AssetsRoute component', () => {
 	beforeEach(() => localStorage.removeItem(ASSET_TYPE_FILTER_KEY));
 	afterEach(() => localStorage.removeItem(ASSET_TYPE_FILTER_KEY));
 
-	it('shows a saved market price time and updates it when a new quote arrives', () => {
+	it('shows a saved market price time and updates it when a new quote arrives', async () => {
 		localStorage.setItem(MARKET_PRICE_UPDATED_AT_KEY, '2026-10-01T10:30:00.000Z');
-		render(<AssetsRoute />, { preloadedState: { assets: [] } });
+		await act(async () => {
+			render(<AssetsRoute />, { preloadedState: { assets: [] } });
+		});
 		expect(screen.getByTestId('market-price-updated-at')).toHaveTextContent('01.10.26');
 		act(() => window.dispatchEvent(new CustomEvent(MARKET_PRICE_UPDATED_EVENT, { detail: '2026-10-02T10:30:00.000Z' })));
 		expect(screen.getByTestId('market-price-updated-at')).toHaveTextContent('02.10.26');
@@ -138,24 +140,28 @@ describe('AssetsRoute component', () => {
     })
   });
 
-  it('sums current value from the shares and current price of every asset', () => {
+  it('sums current value from the shares and current price of every asset', async () => {
     const assets = [
       {ID: 1, name: 'Asset 1', symbol: 'A1', isin: 'ISIN1', current_shares: 2, price: 50, current_invest: -80},
       {ID: 2, name: 'Asset 2', symbol: 'A2', isin: 'ISIN2', current_shares: 3, price: 25, current_invest: -60},
     ] as Asset[];
 
-    render(<AssetsRoute />, { preloadedState: { assets } });
+    await act(async () => {
+      render(<AssetsRoute />, { preloadedState: { assets } });
+    });
 
     expect(screen.getByTestId('TableCellCurrentValueSum')).toHaveTextContent(/175,00\s*€/);
   });
 
-	 it('sums only realized gain/loss including dividends for every asset', () => {
+	 it('sums only realized gain/loss including dividends for every asset', async () => {
 		const assets = [
 			{ID: 1, name: 'Asset 1', symbol: 'A1', isin: 'ISIN1', current_shares: 2, price: 500, current_sum_in_out: -80, current_invest: -100, dividends_earned: 10},
 			{ID: 2, name: 'Asset 2', symbol: 'A2', isin: 'ISIN2', current_shares: 0, price: 25, current_sum_in_out: 25, current_invest: 0, dividends_earned: 5},
 		] as Asset[];
 
-		render(<AssetsRoute />, { preloadedState: { assets } });
+		await act(async () => {
+			render(<AssetsRoute />, { preloadedState: { assets } });
+		});
 
 		expect(screen.getByTestId('TableCellGainLossSum')).toHaveTextContent(/\+60,00\s*€/);
 	 });

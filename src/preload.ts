@@ -72,6 +72,7 @@ contextBridge.exposeInMainWorld('API', {
   getTradeRepublicStatus: () => ipcRenderer.invoke('trade-republic:status'),
   syncTradeRepublic: (args: { phone?: string; pin?: string; remember?: boolean }) => ipcRenderer.invoke('trade-republic:sync', args),
   getTradeRepublicQuotes: () => ipcRenderer.invoke('trade-republic:quotes'),
+  getEuroExchangeRates: () => ipcRenderer.invoke('market:eur-exchange-rates'),
   forgetTradeRepublicCredentials: () => ipcRenderer.invoke('trade-republic:forget'),
   getPortfolioAIStatus: () => ipcRenderer.invoke('portfolio-ai:status'),
   savePortfolioAIKey: (key: string) => ipcRenderer.invoke('portfolio-ai:save-key', key),

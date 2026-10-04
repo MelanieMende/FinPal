@@ -124,8 +124,9 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 			{/* Current Price */}
 			<TableCell className="p-3 text-right">
 				<div data-testid={"current-price-" + props.asset.ID} className={`text-sm font-medium uppercase ${currentPriceColor}`}>
-					{euroFormatter.format(props.asset.price || 0)}
+					{props.asset.quote?.valuationCurrency === 'unknown' ? 'Nicht bewertet' : euroFormatter.format(props.asset.price || 0)}
 				</div>
+				{props.asset.quote?.error && <div className="text-xs text-amber-300">{props.asset.quote.error}</div>}
 			</TableCell>
 
 			{/* Current Invest */}
@@ -135,8 +136,8 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 
 			{/* Value */}
 			<TableCell className="p-3 text-right">
-				<div data-testid={"current-value-" + props.asset.ID} className={`font-bold ${assetsSelector.get_current_value_textColor(props.asset) === 'inherit' ? 'text-white' : assetsSelector.get_current_value_textColor(props.asset)}`}>{euroFormatter.format(assetsSelector.get_current_value(props.asset) || 0)}</div>
-				{(props.asset.current_shares || 0) !== 0 && (
+				<div data-testid={"current-value-" + props.asset.ID} className={`font-bold ${assetsSelector.get_current_value_textColor(props.asset) === 'inherit' ? 'text-white' : assetsSelector.get_current_value_textColor(props.asset)}`}>{props.asset.quote?.valuationCurrency === 'unknown' ? 'Nicht bewertet' : euroFormatter.format(assetsSelector.get_current_value(props.asset) || 0)}</div>
+				{(props.asset.current_shares || 0) !== 0 && props.asset.quote?.valuationCurrency !== 'unknown' && (
 					<div data-testid={"profit-loss-" + props.asset.ID} className={`mt-1 inline-flex rounded border px-2 py-0.5 text-s font-bold ${current_profit_loss >= 0 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-red-500/15 text-red-400 border-red-500/30'}`}>
 						{current_profit_loss >= 0 ? '+' : ''}{euroFormatter.format(current_profit_loss || 0)} / {current_profit_loss_percentage >= 0 ? '+' : ''}{(current_profit_loss_percentage || 0).toFixed(2)}%
 					</div>

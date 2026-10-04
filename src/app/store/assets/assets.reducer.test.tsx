@@ -176,6 +176,31 @@ describe('AssetCreation reducer', () => {
 		expect(localStorage.getItem(MARKET_PRICE_UPDATED_AT_KEY)).not.toBeNull();
 	});
 
+	it.each([null, { price: { regularMarketPrice: 0, currency: 'EUR' } }, { price: {} }, new Error('Market unavailable')])('falls back to the matching cached EUR quote when the market quote is unavailable (%p)', async reply => {
+		localStorage.removeItem(MARKET_PRICE_UPDATED_AT_KEY);
+		const asset = { ID: 32, type: 'Stock', name: 'Apollo Private Markets-Aligned Alternatives A2 EUR Acc', symbol: 'A41HPL', isin: 'LU3170240538', current_shares: 0.099818, is_watched: true } as Asset;
+		const fetchedAt = '2026-10-02T11:08:06.098Z';
+		window.API = {
+			sendToDB: jest.fn(),
+			sendToYahooFinanceAPI: reply instanceof Error ? jest.fn().mockRejectedValue(reply) : jest.fn().mockResolvedValue(reply),
+			getTradeRepublicQuotes: jest.fn().mockResolvedValue({ fetchedAt, quotes: [
+				{ name: 'Private Equity', isin: asset.isin, price: 109.395, quantity: 0.099818, netValue: 10.92, averageBuyIn: 110.2007 },
+			] }),
+		};
+		const store = setupStore({ assets: [asset] });
+		const error = jest.spyOn(console, 'error').mockImplementation(() => {});
+		try {
+			await store.dispatch(assetsReducer.loadPricesAndDividends({ preferTradeRepublicPrice: false, includeDividends: false }));
+			expect(buildAnalysisPositions(store.getState().assets)[0]).toMatchObject({
+				price: 109.395, currency: 'EUR', quote: { source: 'trade-republic', fetchedAt, quoteAsOf: null },
+			});
+			expect(localStorage.getItem(MARKET_PRICE_UPDATED_AT_KEY)).toBeNull();
+			const restored = { ...asset };
+			restoreQuote(restored);
+			expect(restored.price).toBe(109.395);
+		} finally { error.mockRestore(); }
+	});
+
 	it('keeps a fresh matching Trade Republic quote when a market reply is implausibly high', async () => {
 		const dispatch = jest.fn();
 		const asset = { ID: 34, type: 'Stock', name: 'SpaceX', symbol: 'SPCX', isin: 'US84615Q1031', is_watched: true } as Asset;

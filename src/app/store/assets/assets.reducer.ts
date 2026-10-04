@@ -98,9 +98,18 @@ export const loadPricesAndDividends = createAsyncThunk(
 			let priceQuote: QuoteMetadata | undefined
 			try {
 				const tradeRepublicQuote = findTradeRepublicQuote(asset, tradeRepublicQuotes)
+				const cachedPrice = tradeRepublicQuote?.price
+				const usableTradeRepublicQuote = Number.isFinite(cachedPrice) && cachedPrice > 0
 				resultYahooFinance = props?.preferTradeRepublicPrice !== false && tradeRepublicQuote
 					? { price: { regularMarketPrice: tradeRepublicQuote.price, currency: 'EUR' }, source: 'trade-republic' }
-					: await callYahooFinanceAPI(asset)
+					: await callYahooFinanceAPI(asset).catch((error): null => {
+						console.error(`Failed to fetch market price for ${asset.symbol}:`, error)
+						return null
+					})
+				const marketPrice = resultYahooFinance?.price?.regularMarketPrice
+				if ((!Number.isFinite(marketPrice) || marketPrice <= 0) && usableTradeRepublicQuote) {
+					resultYahooFinance = { price: { regularMarketPrice: cachedPrice, currency: 'EUR' }, source: 'trade-republic' }
+				}
 				console.log(asset.name, '- Price:', resultYahooFinance)
 
 				if (resultYahooFinance && resultYahooFinance.price) {

@@ -2,9 +2,11 @@ import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { render } from '../../../../../testing/test-utils';
 import { setupStore } from '../../../../store';
 import { analyzePortfolio } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
-import AssetList from './AssetList/AssetList';
+import AssetList from '../../AssetsRoute/components/AssetList/AssetList';
 import { buildAnalysisPositions } from '../../../../utils/portfolioAnalysis';
 import PortfolioAnalysis, { ANALYSIS_PROFILE_KEY, ANALYSIS_MODEL_KEY } from './PortfolioAnalysis';
+import AnalysisRoute from '../AnalysisRoute';
+import { MARKET_PRICE_UPDATED_AT_KEY, MARKET_PRICE_UPDATED_EVENT } from '../../../../utils/syncTimestamps';
 
 const assets = [
   { ID: 1, name: 'Stock Asset', type: 'Stock', current_shares: 2, price: 50 },
@@ -28,6 +30,16 @@ beforeEach(() => {
 async function open() {
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Portfolio analysieren' })); });
 }
+
+it('opens the analysis form directly in its route and updates the displayed price time', async () => {
+  localStorage.setItem(MARKET_PRICE_UPDATED_AT_KEY, '2026-10-01T10:30:00.000Z');
+  await act(async () => { render(<AnalysisRoute />, { preloadedState: { assets } }); });
+  expect(screen.getByLabelText('Anlageziel')).toBeInTheDocument();
+  expect(screen.getByText(/Marktpreise zuletzt aktualisiert/)).toHaveTextContent('01.10.26');
+  act(() => window.dispatchEvent(new CustomEvent(MARKET_PRICE_UPDATED_EVENT, { detail: '2026-10-02T10:30:00.000Z' })));
+  expect(screen.getByText(/Marktpreise zuletzt aktualisiert/)).toHaveTextContent('02.10.26');
+  expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
+});
 function fillProfile() {
   fireEvent.change(screen.getByLabelText('Anlageziel'), { target: { value: 'growth' } });
   fireEvent.change(screen.getByLabelText('Risikobereitschaft'), { target: { value: 'medium' } });

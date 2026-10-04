@@ -15,6 +15,7 @@ import DividendsRoute from './routes/DividendsRoute/DividendsRoute';
 import AssetsRoute from './routes/AssetsRoute/AssetsRoute';
 import DatabaseRoute from './routes/DatabaseRoute/DatabaseRoute';
 import DashboardRoute from './routes/DashboardRoute/DashboardRoute';
+import AnalysisRoute from './routes/AnalysisRoute/AnalysisRoute';
 import ImportRoute from './routes/ImportRoute/ImportRoute';
 
 import assets_sql from '../../sql/assets_sql'
@@ -215,6 +216,8 @@ export function Content() {
 
 	if(selectedTab == 'dashboardTab')
 		mainContent = <DashboardRoute/>
+	else if(selectedTab == 'analysisTab')
+		mainContent = <AnalysisRoute/>
 	else if(selectedTab == 'transactionsTab')
 		mainContent = <TransactionsRoute/>
 	else if(selectedTab == 'dividendsTab')

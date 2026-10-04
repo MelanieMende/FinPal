@@ -3,12 +3,30 @@ import '@testing-library/jest-dom'
 import userEvent from '@testing-library/user-event'
 import { render } from '../../../../testing/test-utils'
 import TopNavBar from './TopNavBar';
-import RootRoute from '../../RootRoute';
+import RootRoute, { Content } from '../../RootRoute';
 import { setupStore } from './../../../store';
 import { Provider } from 'react-redux';
 import { prepareAutoBatched } from '@reduxjs/toolkit';
 
 describe('TopNavBar component', () => {
+
+  it('places Analyse between Dashboard and Assets and opens its dedicated route', async () => {
+    window.API.saveSelectedTab = jest.fn().mockResolvedValue(undefined);
+    window.API.getPortfolioAIStatus = jest.fn().mockResolvedValue({ hasApiKey: false, secureStorageAvailable: true, chatGpt: { connected: false, accounts: [] } });
+    const store = setupStore({ appState: { selectedTab: 'dashboardTab' } });
+    await act(async () => { render(<><TopNavBar /><Content /></>, { store }); });
+    expect(screen.getAllByRole('tab').slice(0, 3).map(tab => tab.getAttribute('data-testid')))
+      .toEqual(['dashboardTab', 'analysisTab', 'assetsTab']);
+    await act(async () => { fireEvent.click(screen.getByTestId('analysisTab')); });
+    expect(store.getState().appState.selectedTab).toBe('analysisTab');
+    expect(window.API.saveSelectedTab).toHaveBeenCalledWith('analysisTab');
+    expect(screen.getByTestId('AnalysisRoute')).toBeInTheDocument();
+    expect(screen.getByLabelText('Anlageziel')).toBeInTheDocument();
+    expect(screen.queryByTestId('AssetsRoute')).not.toBeInTheDocument();
+    await act(async () => { fireEvent.click(screen.getByTestId('assetsTab')); });
+    expect(screen.getByTestId('AssetsRoute')).toBeInTheDocument();
+    expect(screen.queryByTestId('portfolio-analysis')).not.toBeInTheDocument();
+  });
 
 	it('renders', async() => {
     const {getAllById} = render(<TopNavBar />) 

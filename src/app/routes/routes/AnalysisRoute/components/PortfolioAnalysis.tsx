@@ -34,12 +34,13 @@ function readProfile(): ProfileForm {
   } catch { return emptyProfile; }
 }
 
-export default function PortfolioAnalysis({ priceUpdatedAt }: { priceUpdatedAt: string | null }) {
+export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }: { priceUpdatedAt: string | null; standalone?: boolean }) {
   const assets = useAppSelector(state => state.assets);
   const positions = buildAnalysisPositions(assets);
   const dispatch = useAppDispatch();
   const analysisState = useAppSelector(state => state.portfolioAnalysis);
-  const { open, progress, startedAt, result, resultSnapshot } = analysisState;
+  const { progress, startedAt, result, resultSnapshot } = analysisState;
+  const open = standalone || analysisState.open;
   const setOpen = (value: boolean) => dispatch(setAnalysisOpen(value));
   const [profile, setProfile] = useState<ProfileForm>(readProfile);
   const [provider, setProvider] = useState<'chatgpt' | 'api'>(analysisState.provider);
@@ -150,9 +151,9 @@ export default function PortfolioAnalysis({ priceUpdatedAt }: { priceUpdatedAt: 
           <H5 className="m-0 text-sm font-bold text-indigo-300">KI-Portfolio-Analyse</H5>
           <p className="mt-1 mb-0 text-xs text-gray-400">Kauf-, Halte- und Verkaufsvorschläge für dein gesamtes Portfolio mit aktuellen Quellen.</p>
         </div>
-        <Button icon="search" intent={Intent.PRIMARY} onClick={toggleOpen} aria-expanded={open} aria-controls="portfolio-analysis-content">
+        {!standalone && <Button icon="search" intent={Intent.PRIMARY} onClick={toggleOpen} aria-expanded={open} aria-controls="portfolio-analysis-content">
           {open ? 'Analyse schließen' : 'Portfolio analysieren'}
-        </Button>
+        </Button>}
       </div>
       {progress && <div className="mt-4 flex items-center gap-3 rounded-lg border border-indigo-400/20 bg-indigo-500/10 p-3" aria-label="Laufende Analyse">
         <Spinner size={20} />

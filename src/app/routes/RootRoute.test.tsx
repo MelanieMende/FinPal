@@ -32,6 +32,14 @@ describe('RootRoute component', () => {
 
 	describe('Content()', () => {
 
+    it('restores the saved analysis tab when a database is configured', async () => {
+      window.API = { ...API, getConfig: jest.fn(() => ({ selectedTab: 'analysisTab', theme: 'bp5-dark', database: 'test.sqlite3' })) };
+      const store = setupStore();
+      const view = await act(async () => render(<RootRoute />, { store }));
+      expect(store.getState().appState.selectedTab).toBe('analysisTab');
+      expect(view.getByTestId('AnalysisRoute')).toBeInTheDocument();
+    });
+
 		describe('assetsTab', () => {
 
 			it('sets selectedTab to "assetsTab" if "selectedTab":"assetsTab" and a database is set in the config file', async() => {

@@ -4,10 +4,10 @@ import { Card, H5, Icon } from '@blueprintjs/core';
 import type { IconName } from '@blueprintjs/icons';
 
 import CreateAndEditAssetOverlay from './components/CreateAndEditAssetOverlay';
-import PortfolioAnalysis from './components/PortfolioAnalysis';
 import AssetList from './components/AssetList/AssetList';
 import * as assetsSelector from './../../../store/assets/assets.selectors';
-import { formatSyncTime, MARKET_PRICE_UPDATED_AT_KEY, MARKET_PRICE_UPDATED_EVENT } from '../../../utils/syncTimestamps';
+import { formatSyncTime } from '../../../utils/syncTimestamps';
+import { useMarketPriceUpdatedAt } from '../../../utils/useMarketPriceUpdatedAt';
 
 const assetTypes: { type: Asset['type']; label: string; icon?: IconName; symbol?: string }[] = [
 	{ type: 'Stock', label: 'Stocks', icon: 'chart' },
@@ -34,12 +34,7 @@ export default function AnalysisRoute() {
 			localStorage.removeItem(ASSET_TYPE_FILTER_KEY);
 		}
 	}, [selectedType]);
-	const [marketPriceUpdatedAt, setMarketPriceUpdatedAt] = useState<string | null>(() => localStorage.getItem(MARKET_PRICE_UPDATED_AT_KEY));
-	useEffect(() => {
-		const update = (event: Event) => setMarketPriceUpdatedAt((event as CustomEvent<string>).detail);
-		window.addEventListener(MARKET_PRICE_UPDATED_EVENT, update);
-		return () => window.removeEventListener(MARKET_PRICE_UPDATED_EVENT, update);
-	}, []);
+	const marketPriceUpdatedAt = useMarketPriceUpdatedAt();
 	const filteredAssets = selectedType
 		? assets.filter(asset => (asset.type || 'Stock') === selectedType)
 		: assets;
@@ -104,7 +99,6 @@ export default function AnalysisRoute() {
 			{/* Asset Management Area */}
 			{assets.some(asset => asset.current_shares > 0 && asset.quote?.valuationCurrency === 'unknown') &&
 				<p role="status" className="text-sm text-amber-300">Die EUR-Summen sind unvollständig: Positionen ohne gültige Währungsumrechnung sind nicht enthalten.</p>}
-			<PortfolioAnalysis priceUpdatedAt={marketPriceUpdatedAt} />
 			<Card className="glass-card p-0 overflow-hidden min-h-[500px]">
 				<div className="p-4 border-b border-white/5 bg-white/5 flex justify-between items-center">
 					<div className="flex items-center gap-4">

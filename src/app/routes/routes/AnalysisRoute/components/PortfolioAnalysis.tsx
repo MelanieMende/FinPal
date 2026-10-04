@@ -233,7 +233,14 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
               <td className="py-2 pr-3">{position.name}</td>
               <td className="pr-3">{position.quote ? `${position.quote.originalPrice} ${position.quote.originalCurrency}` : 'Unbekannt'}{position.quote?.unitFactor !== undefined && position.quote.unitFactor !== 1 && <><br />Faktor je erfasster Einheit: {position.quote.unitFactor}</>}</td>
               <td className="pr-3">{position.quote?.fxRateToEUR ?? 'Unbekannt'}</td>
-              <td className="pr-3">{position.quote?.source ?? 'Unbekannt'} · {formatSyncTime(position.quote?.quoteAsOf) ?? 'Kurszeit unbekannt'}<br />Abruf: {formatSyncTime(position.quote?.fetchedAt) ?? 'unbekannt'}</td>
+              <td className="pr-3">{position.quote?.source ?? 'Unbekannt'} · {formatSyncTime(position.quote?.quoteAsOf) ?? 'Kurszeit unbekannt'}<br />Abruf: {formatSyncTime(position.quote?.fetchedAt) ?? 'unbekannt'}
+                {position.quote?.exchange && <><br />Kurs-Handelsplatz: {position.quote.exchange}</>}
+                {position.quote?.tradedInPercent && <><br />Prozentnotierung</>}
+                {position.quote?.bondUnits && <><br />Broker-Menge: {position.quote.bondUnits.brokerQuantity} · Erfasst: {position.quote.bondUnits.recordedQuantity}<br />Mengenquelle: Trade Republic · {formatSyncTime(position.quote.bondUnits.fetchedAt)}</>}
+                {position.bondHolding && <><br />Bestätigter Nominalbestand: {position.bondHolding.nominal.toFixed(2)} {position.bondHolding.currency}<br />Stückzinsen beim Kauf: {position.bondHolding.purchaseAccruedInterestEUR.toFixed(2)} EUR
+                  {position.bondHolding.quantityConflict && <span className="block text-amber-300">Abweichende Broker-Menge: {position.bondHolding.brokerQuantity}. Bewertung verwendet den bestätigten Nominalbestand.</span>}
+                </>}
+              </td>
               <td>{position.quote?.fxSource ?? (position.quote?.originalCurrency === 'EUR' ? 'Direkter EUR-Kurs' : 'Unbekannt')}<br />{formatSyncTime(position.quote?.fxAsOf) ?? 'Kein FX-Zeitpunkt'} · {formatSyncTime(position.quote?.convertedAt) ?? 'Keine Umrechnung'}<br />FX-Abruf: {formatSyncTime(position.quote?.fxFetchedAt) ?? 'Nicht erforderlich / unbekannt'}</td>
             </tr>)}</tbody></table></div>
           <a href="https://www.exchangerate-api.com" onClick={e => openSource(e, 'https://www.exchangerate-api.com')} target="_blank" rel="noopener noreferrer" className="underline">Wechselkurse von ExchangeRate-API</a>

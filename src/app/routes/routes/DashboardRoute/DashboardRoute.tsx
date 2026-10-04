@@ -48,6 +48,7 @@ export default function DashboardRoute() {
 	const typeLabels: { [key: string]: string } = {
 		'Stock': 'Einzelaktien',
 		'ETF': 'ETFs',
+		'Fund': 'Fonds',
 		'Bond': 'Anleihen',
 		'Crypto': 'Kryptowährungen',
 		'Commodity': 'Rohstoffe',

@@ -25,6 +25,7 @@ import assets_v_sql from '../../sql/assets_v_sql'
 import transactions_v_sql from '../../sql/transactions_v_sql'
 import appState_sql from '../../sql/appState_sql';
 import cash_sql, { migrateCashInterestSql } from '../../sql/cash_sql';
+import { bondDetailsSql } from '../utils/bondHoldings';
 import { useEffect } from 'react';
 import CashRoute from './routes/CashRoute/CashRoute';
 import MarketPriceRefresh from '../components/MarketPriceRefresh/MarketPriceRefresh';
@@ -138,6 +139,7 @@ export default function RootRoute() {
 	}
 
 	async function setupAssetsView() {
+		await window.API.sendToDB(bondDetailsSql);
 		// Soft Migration: Add type column if it doesn't exist
 		// Note: window.API.sendToDB might return a string error instead of throwing
 		await window.API.sendToDB("ALTER TABLE assets ADD COLUMN type TEXT DEFAULT 'Stock'");

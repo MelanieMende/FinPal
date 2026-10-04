@@ -90,3 +90,9 @@ typings/
 
 # Electron-Forge
 out/
+
+# Local bond correction data and database backup
+/tmp/db-before-confirmed-bond-details.sqlite3
+/tmp/record-bond-details.py
+/tmp/db-before-fund-identity.sqlite3
+/tmp/correct-fund-identity.py

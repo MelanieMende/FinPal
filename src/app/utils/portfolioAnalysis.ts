@@ -19,6 +19,7 @@ export interface AnalysisPosition {
   price: number | null;
   currency: string;
   quote?: QuoteMetadata;
+  bondHolding?: import('./bondHoldings').BondHolding;
   currencyExposure?: 'unknown';
   costBasis: number | null;
   dividendsEarned: number;
@@ -66,7 +67,7 @@ export function buildAnalysisPositions(assets: Asset[]): AnalysisPosition[] {
       price: asset.quote?.valuationCurrency === 'unknown' ? null : price !== null && price > 0 ? price : null,
       // Do not assume that every unlabelled quote is in EUR.
       currency: asset.quote?.valuationCurrency || (asset.currencySymbol === '€' ? 'EUR' : asset.currencySymbol || 'unknown'),
-      quote: asset.quote, currencyExposure: 'unknown', costBasis: invest === null ? null : Math.abs(invest),
+      quote: asset.quote, ...(asset.bondHolding ? { bondHolding: asset.bondHolding } : {}), currencyExposure: 'unknown', costBasis: invest === null ? null : Math.abs(invest),
       dividendsEarned: dividends, realizedGainLoss: flow === null || invest === null ? null : flow - invest + dividends,
     };
   });
@@ -86,12 +87,24 @@ export function validateAnalysisRequest(request: PortfolioAnalysisRequest): void
   for (const position of request.positions) {
     if (!Number.isInteger(position.id) || ids.has(position.id)
       || !Number.isFinite(position.shares) || position.shares <= 0
-      || !['Stock', 'ETF', 'Bond', 'Crypto', 'Commodity', 'RealEstate', 'CashEquivalent'].includes(position.type)
+      || !['Stock', 'ETF', 'Fund', 'Bond', 'Crypto', 'Commodity', 'RealEstate', 'CashEquivalent'].includes(position.type)
       || ![position.name, position.symbol, position.isin, position.currency].every(s => typeof s === 'string' && s.length <= 300)
       || ![position.price, position.costBasis, position.realizedGainLoss].every(n => n === null || Number.isFinite(n))
       || (position.price !== null && position.price <= 0) || (position.costBasis !== null && position.costBasis < 0)
       || !Number.isFinite(position.dividendsEarned)) throw new Error('Die Portfolio-Daten sind ungültig.');
     ids.add(position.id);
+    const holding = position.bondHolding;
+    if (holding && (position.type !== 'Bond' || holding.source !== 'user-confirmed'
+      || !Number.isFinite(holding.nominal) || holding.nominal <= 0 || !/^[A-Z]{3}$/.test(holding.currency)
+      || !Number.isFinite(holding.purchaseAccruedInterestEUR)
+      || (holding.brokerQuantity !== undefined && (!Number.isFinite(holding.brokerQuantity) || holding.brokerQuantity <= 0))
+      || (holding.quantityConflict !== undefined && typeof holding.quantityConflict !== 'boolean')
+      || !Array.isArray(holding.transactions) || !holding.transactions.length || holding.transactions.length > 1000
+      || holding.transactions.some(t => !Number.isInteger(t.id) || typeof t.date !== 'string' || !Number.isFinite(Date.parse(t.date))
+        || !Number.isFinite(t.nominal) || !Number.isFinite(t.accruedInterestEUR))
+      || Math.abs(holding.transactions.reduce((sum, t) => sum + t.nominal, 0) - holding.nominal) > 1e-8)) {
+      throw new Error('Die bestätigten Anleihedaten sind ungültig.');
+    }
     if (position.quote && (!validQuote(position.quote) || position.currency !== position.quote.valuationCurrency
       || (position.quote.valuationCurrency === 'unknown' && position.price !== null)
       || (position.price !== null && position.quote.valuationCurrency === 'EUR'

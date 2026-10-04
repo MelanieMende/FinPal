@@ -62,6 +62,7 @@ export default function AssetOverlay() {
 								options={[
 									{ label: 'Aktie', value: 'Stock' },
 									{ label: 'ETF', value: 'ETF' },
+									{ label: 'Fonds', value: 'Fund' },
 									{ label: 'Anleihe', value: 'Bond' },
 									{ label: 'Krypto', value: 'Crypto' },
 									{ label: 'Rohstoff', value: 'Commodity' },

@@ -1,6 +1,6 @@
 interface Asset {
   ID: number,
-  type: 'Stock' | 'ETF' | 'Bond' | 'Crypto' | 'Commodity' | 'RealEstate' | 'CashEquivalent',
+  type: 'Stock' | 'ETF' | 'Fund' | 'Bond' | 'Crypto' | 'Commodity' | 'RealEstate' | 'CashEquivalent',
   name: string,
   symbol: string,
   isin: string,
@@ -14,6 +14,7 @@ interface Asset {
   avg_price_paid?: float,
   currencySymbol?: string,
   quote?: import('../../utils/quoteMetadata').QuoteMetadata,
+  bondHolding?: import('../../utils/bondHoldings').BondHolding,
   current_profit_loss?: float,
   current_profit_loss_percentage?: float,
   current_profit_loss_percentage_formatted?: string,

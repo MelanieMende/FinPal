@@ -1,5 +1,13 @@
 import { buildAnalysisPositions, validateAnalysisRequest, type PortfolioAnalysisRequest } from './portfolioAnalysis';
 
+it('accepts a fund as a separate asset class without converting it to a stock or ETF', () => {
+  const positions = buildAnalysisPositions([{ ID: 32, name: 'Apollo Global Private Markets ELTIF – A2 UNH', isin: 'LU3170240538', type: 'Fund', current_shares: 0.1, price: 109, currencySymbol: '€' }] as Asset[]);
+  expect(positions[0].type).toBe('Fund');
+  expect(() => validateAnalysisRequest({ provider: 'api', priceUpdatedAt: null, positions,
+    profile: { goal: 'growth', risk: 'medium', horizonYears: 10, buyBudget: 0 },
+  })).not.toThrow();
+});
+
 it('includes only held assets and keeps realized gains separate from their current market value', () => {
   const positions = buildAnalysisPositions([
     { ID: 1, name: 'Asset', type: 'Stock', symbol: 'A', isin: 'ISIN', current_shares: 2, price: 500, current_invest: 100, current_sum_in_out: 120, dividends_earned: 10 },

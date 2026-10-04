@@ -33,10 +33,7 @@ export default function TopNavBar () {
 			data-testid="TopNavBar"
 			className={'sticky top-0 px-2 py-0 ' + theme + ' shadow[0_5px_5px_0_rgba(0, 0, 0, 0.13)]'}>
 			<NavbarGroup id="TopNavBarGroupLeft" align={Alignment.LEFT}>
-				{/* SETTINGS DROPDOWN */}
-				<Popover content={<Settings />} position={Position.BOTTOM_RIGHT}>
-					<Button data-testid="TopNavBarSettings" minimal={true} icon="settings" />
-				</Popover>
+				<span className="finpal-wordmark bg-linear-to-l from-indigo-500 from-10% via-sky-500 via-30% to-emerald-500 to-90%" role="img" aria-label="FinPal" />
 
 				<NavbarDivider />
 
@@ -94,10 +91,15 @@ export default function TopNavBar () {
 			<NavbarGroup id="TopNavBarGroupRight" align={Alignment.RIGHT}>
 
 				<NavbarDivider className="margin-0" />
+				<Popover content={<Settings />} position={Position.BOTTOM_RIGHT}>
+					<Button data-testid="TopNavBarSettings" aria-label="Settings" minimal={true} icon="settings" />
+				</Popover>
 
 				<Tooltip content="Quit FinPal" position={Position.BOTTOM}>
 					<Button
 						data-testid={"quit-button"} 
+						className="finpal-quit-button"
+						aria-label="FinPal schließen"
 						minimal={true}
 						icon="small-cross"
 						onClick={() => window.API.quit()}

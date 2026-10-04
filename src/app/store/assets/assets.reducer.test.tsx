@@ -245,24 +245,32 @@ describe('AssetCreation reducer', () => {
 	});
 
 	it('updates a bond from a compatible percentage quote between TR syncs', async () => {
-		const dispatch = jest.fn();
+		const fetchedAt = '2026-10-02T11:08:06.098Z';
+		const quoteAsOf = '2026-10-02T17:00:11+02:00';
 		const asset = { ID: 30, type: 'Bond', name: 'US-Staatsanleihen', symbol: 'A281P1', isin: 'US912810SQ22', current_shares: 2, is_watched: true } as Asset;
 		window.API = {
 			sendToDB: jest.fn(),
 			sendToYahooFinanceAPI: jest.fn().mockResolvedValue({
-				price: { regularMarketPrice: 58.7, currency: 'EUR' }, source: 'boerse-frankfurt', tradedInPercent: true,
+				price: { regularMarketPrice: 58.7, currency: 'EUR', regularMarketTime: quoteAsOf }, source: 'boerse-frankfurt', tradedInPercent: true, exchange: 'XFRA',
 			}),
 			sendToDivvyDiaryAPI: jest.fn(),
 			getTradeRepublicQuotes: jest.fn().mockResolvedValue({
+				fetchedAt,
 				quotes: [{ name: 'Aug. 2040', isin: 'US912810SQ22', quantity: 180, price: 0.5785, averageBuyIn: 0.5595, netValue: 104.13 }],
 			}),
 		};
 
-		await assetsReducer.loadPricesAndDividends({ preferTradeRepublicPrice: false, includeDividends: false })(
-			dispatch, () => ({ assets: [asset] }), undefined,
-		);
-
-		expect(dispatch.mock.calls.find(([action]) => action.type === assetsReducer.setPrice.type)?.[0].payload.price).toBeCloseTo(52.83);
+		const store = setupStore({ assets: [asset] });
+		await store.dispatch(assetsReducer.loadPricesAndDividends({ preferTradeRepublicPrice: false, includeDividends: false }));
+		const position = buildAnalysisPositions(store.getState().assets)[0];
+		expect(position.price).toBeCloseTo(52.83);
+		expect(position.quote).toMatchObject({ exchange: 'XFRA', tradedInPercent: true,
+			quoteAsOf: '2026-10-02T15:00:11.000Z',
+			bondUnits: { brokerQuantity: 180, recordedQuantity: 2, source: 'trade-republic', fetchedAt },
+		});
+		const restored = { ...asset };
+		restoreQuote(restored);
+		expect(restored.quote).toEqual(position.quote);
 		expect(window.API.sendToYahooFinanceAPI).toHaveBeenCalledWith({ symbol: 'A281P1', isin: 'US912810SQ22', type: 'Bond' });
 	});
 
@@ -280,6 +288,34 @@ describe('AssetCreation reducer', () => {
 
 		expect(localStorage.getItem(MARKET_PRICE_UPDATED_AT_KEY)).toBeNull();
 		expect(dispatch).not.toHaveBeenCalledWith(assetsReducer.setPrice({ asset, price: 0 }));
+	});
+
+	it.each([true, false])('values the confirmed USD nominal instead of the conflicting broker quantity (market available: %s)', async available => {
+		const asset = { ID: 30, type: 'Bond', name: 'US Treasury', symbol: 'A281P1', isin: 'US912810SQ22', current_shares: 2, is_watched: true, price: 52 } as Asset;
+		const details = [
+			{ ID: 112, date: '2025-11-03', type: 'Buy', isin: asset.isin, nominal: 0.19, currency: 'USD', accrued_interest_eur: 0, source: 'user-confirmed' },
+			{ ID: 113, date: '2025-11-03', type: 'Buy', isin: asset.isin, nominal: 79.81, currency: 'USD', accrued_interest_eur: -0.17, source: 'user-confirmed' },
+		];
+		const asOf = '2026-10-02T15:00:11.000Z';
+		window.API = {
+			sendToDB: jest.fn().mockResolvedValue(details),
+			sendToYahooFinanceAPI: jest.fn().mockResolvedValue(available ? {
+				price: { regularMarketPrice: 60, currency: 'USD', regularMarketTime: asOf },
+				source: 'boerse-frankfurt', exchange: 'XFRA', tradedInPercent: true,
+			} : null),
+			getEuroExchangeRates: jest.fn().mockResolvedValue({ rates: { USD: 0.9 }, source: 'ExchangeRate-API', asOf, fetchedAt: asOf }),
+			getTradeRepublicQuotes: jest.fn().mockResolvedValue({ fetchedAt: asOf, quotes: [
+				{ name: 'Aug. 2040', isin: asset.isin, quantity: 180, price: 0.58, netValue: 104.4 },
+			] }),
+		};
+		const store = setupStore({ assets: [asset] });
+		await store.dispatch(assetsReducer.loadPricesAndDividends({ includeDividends: false }));
+		const position = buildAnalysisPositions(store.getState().assets)[0];
+		expect(position.bondHolding).toMatchObject({ nominal: 80, currency: 'USD', purchaseAccruedInterestEUR: -0.17, brokerQuantity: 180, quantityConflict: true });
+		if (available) {
+			expect(position.price! * position.shares).toBeCloseTo(43.2);
+			expect(position.quote).toMatchObject({ originalPrice: 60, originalCurrency: 'USD', fxRateToEUR: 0.9, unitFactor: 0.4, quoteAsOf: asOf, exchange: 'XFRA' });
+		} else expect(position.price).toBeNull();
 	});
 
     it('should dispatch loadAssets thunk', async () => {

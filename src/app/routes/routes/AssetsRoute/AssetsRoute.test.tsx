@@ -30,6 +30,7 @@ describe('AssetsRoute component', () => {
 			{ ID: 8, type: 'CashEquivalent', current_shares: 5, price: 1 },
 			{ ID: 9, type: 'Stock', current_shares: 0, price: 1000 },
 			{ ID: 10, type: 'ETF', current_shares: 10 },
+			{ ID: 32, type: 'Fund', current_shares: 0.1, price: 109 },
 		].map(asset => ({ ...asset, name: `Asset ${asset.ID}`, symbol: `A${asset.ID}`, isin: `ISIN${asset.ID}` })) as Asset[];
 		await act(async () => {
 			render(<AssetsRoute />, { preloadedState: { assets } });
@@ -37,6 +38,7 @@ describe('AssetsRoute component', () => {
 
 		const expected: [string, string, number, string | null][] = [
 			['Stock', 'Stocks', 175, 'chart'], ['ETF', 'ETFs', 80, 'pie-chart'], ['Bond', 'Bonds', 60, 'bank-account'],
+			['Fund', 'Funds', 10.9, 'briefcase'],
 			['Crypto', 'Crypto', 100, null], ['Commodity', 'Commodities', 30, 'cube'],
 			['RealEstate', 'Real Estate', 1000, 'home'], ['CashEquivalent', 'Cash Equivalents', 5, 'dollar'],
 		];

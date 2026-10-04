@@ -300,15 +300,17 @@ ipcMain.handle('yahoo-finance-api-message', async (_event, args: { symbol: strin
 		try {
 			const response = await fetch(`https://api.boerse-frankfurt.de/v1/data/price_information/single?isin=${encodeURIComponent(args.isin)}`);
 			if (!response.ok) throw new Error(`Börse Frankfurt response status: ${response.status}`);
-			const quote = await response.json() as { lastPrice?: number; currency?: { originalValue?: string }; tradedInPercent?: boolean };
+			const quote = await response.json() as { lastPrice?: number; currency?: { originalValue?: string }; tradedInPercent?: boolean; timestampLastPrice?: string; mic?: string };
 			if (typeof quote.lastPrice === 'number') {
 				return {
 					price: {
 						regularMarketPrice: quote.lastPrice,
-						currency: quote.currency?.originalValue || 'EUR',
+						currency: quote.currency?.originalValue || 'unknown',
+						regularMarketTime: quote.timestampLastPrice,
 					},
 					source: 'boerse-frankfurt',
 					tradedInPercent: quote.tradedInPercent === true,
+					exchange: quote.mic,
 				};
 			}
 		} catch (reason) {

@@ -12,6 +12,7 @@ import { useMarketPriceUpdatedAt } from '../../../utils/useMarketPriceUpdatedAt'
 const assetTypes: { type: Asset['type']; label: string; icon?: IconName; symbol?: string }[] = [
 	{ type: 'Stock', label: 'Stocks', icon: 'chart' },
 	{ type: 'ETF', label: 'ETFs', icon: 'pie-chart' },
+	{ type: 'Fund', label: 'Funds', icon: 'briefcase' },
 	{ type: 'Bond', label: 'Bonds', icon: 'bank-account' },
 	{ type: 'Crypto', label: 'Crypto', symbol: '₿' },
 	{ type: 'Commodity', label: 'Commodities', icon: 'cube' },

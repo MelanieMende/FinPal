@@ -2,3 +2,18 @@
 #TopNavBarSettings, #quit {
 	background: none;
 }
+
+#TopNavBar .finpal-quit-button {
+	margin-left: 12px;
+}
+
+#TopNavBar .finpal-wordmark {
+	display: block;
+	flex-shrink: 0;
+	width: 102px;
+	height: 34px;
+	margin: 0 8px;
+	mask: url('../../../assets/finpal-wordmark.svg') center / contain no-repeat;
+	-webkit-mask: url('../../../assets/finpal-wordmark.svg') center / contain no-repeat;
+	user-select: none;
+}

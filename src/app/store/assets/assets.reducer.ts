@@ -1,7 +1,8 @@
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit'
-import { quoteTime, restoreQuote, saveQuote, type QuoteMetadata, type EuroExchangeRates } from '../../utils/quoteMetadata';
+import { quoteTime, restoreQuote, saveQuote, clearCachedQuote, type QuoteMetadata, type EuroExchangeRates } from '../../utils/quoteMetadata';
 import type { TradeRepublicQuote } from '../../utils/tradeRepublicSync';
 import { recordMarketPriceUpdate } from '../../utils/syncTimestamps';
+import { readBondHolding, type BondHolding } from '../../utils/bondHoldings';
 
 export const initialState = [] as Asset[]
 
@@ -98,19 +99,36 @@ export const loadPricesAndDividends = createAsyncThunk(
 			let priceQuote: QuoteMetadata | undefined
 			try {
 				const tradeRepublicQuote = findTradeRepublicQuote(asset, tradeRepublicQuotes)
+				const confirmedHolding = asset.type === 'Bond' ? await readBondHolding(asset) : undefined
+				const bondHolding = confirmedHolding ? { ...confirmedHolding,
+					...(tradeRepublicQuote ? { brokerQuantity: tradeRepublicQuote.quantity,
+						quantityConflict: Math.abs(tradeRepublicQuote.quantity - confirmedHolding.nominal) > 0.01 } : {}),
+				} : undefined
+				if (asset.type === 'Bond') thunkAPI.dispatch(setBondHolding({ asset, bondHolding }))
+				if (bondHolding) {
+					clearCachedQuote(asset)
+					thunkAPI.dispatch(setPrice({ asset, price: undefined }))
+					thunkAPI.dispatch(setQuote({ asset, quote: undefined }))
+				}
 				const cachedPrice = tradeRepublicQuote?.price
 				const usableTradeRepublicQuote = Number.isFinite(cachedPrice) && cachedPrice > 0
-				resultYahooFinance = props?.preferTradeRepublicPrice !== false && tradeRepublicQuote
+				resultYahooFinance = !bondHolding && props?.preferTradeRepublicPrice !== false && tradeRepublicQuote
 					? { price: { regularMarketPrice: tradeRepublicQuote.price, currency: 'EUR' }, source: 'trade-republic' }
 					: await callYahooFinanceAPI(asset).catch((error): null => {
 						console.error(`Failed to fetch market price for ${asset.symbol}:`, error)
 						return null
 					})
 				const marketPrice = resultYahooFinance?.price?.regularMarketPrice
-				if ((!Number.isFinite(marketPrice) || marketPrice <= 0) && usableTradeRepublicQuote) {
+				if ((!Number.isFinite(marketPrice) || marketPrice <= 0) && usableTradeRepublicQuote && !bondHolding) {
 					resultYahooFinance = { price: { regularMarketPrice: cachedPrice, currency: 'EUR' }, source: 'trade-republic' }
 				}
 				console.log(asset.name, '- Price:', resultYahooFinance)
+				if (bondHolding && (!(marketPrice > 0) || resultYahooFinance.source === 'trade-republic'
+					|| resultYahooFinance.tradedInPercent !== true || resultYahooFinance.price.currency !== bondHolding.currency)) {
+					// A mismatched broker quantity cannot establish a price per confirmed nominal unit.
+					thunkAPI.dispatch(setPrice({ asset, price: undefined }))
+					continue
+				}
 
 				if (resultYahooFinance && resultYahooFinance.price) {
 					let price = resultYahooFinance.price.regularMarketPrice
@@ -127,6 +145,8 @@ export const loadPricesAndDividends = createAsyncThunk(
 						originalPrice: price, originalCurrency: currency, valuationCurrency: 'EUR',
 						source: resultYahooFinance.source || 'yahoo-finance',
 						quoteAsOf: quoteTime(resultYahooFinance.price.regularMarketTime), fetchedAt,
+						...(typeof resultYahooFinance.exchange === 'string' ? { exchange: resultYahooFinance.exchange } : {}),
+						...(typeof resultYahooFinance.tradedInPercent === 'boolean' ? { tradedInPercent: resultYahooFinance.tradedInPercent } : {}),
 						convertedAt: null, fxRateToEUR: 1, fxSource: null, fxAsOf: null, fxFetchedAt: null,
 					}
 					if (Number.isFinite(price) && price > 0 && currency !== 'EUR') {
@@ -148,7 +168,13 @@ export const loadPricesAndDividends = createAsyncThunk(
 					
 					if (Number.isFinite(price) && price > 0) {
 						let bondPriceHandled = false
-						if (asset.type === 'Bond' && tradeRepublicQuote && asset.current_shares > 0) {
+						if (bondHolding && asset.current_shares > 0) {
+							const unitFactor = bondHolding.nominal / (100 * asset.current_shares)
+							publishQuote(asset, price * unitFactor, { ...priceQuote, unitFactor })
+							bondPriceHandled = true
+							if (!marketPriceRecorded) { recordMarketPriceUpdate(); marketPriceRecorded = true }
+						}
+						if (!bondHolding && asset.type === 'Bond' && tradeRepublicQuote && asset.current_shares > 0) {
 							const marketPricePerNominal = resultYahooFinance.tradedInPercent ? price / 100 : price
 							const bondPrice = getBondPricePerRecordedShare(
 								asset, tradeRepublicQuote,
@@ -157,7 +183,13 @@ export const loadPricesAndDividends = createAsyncThunk(
 							if (bondPrice !== undefined) {
 								const compatible = marketPricePerNominal >= tradeRepublicQuote.price * 0.9 && marketPricePerNominal <= tradeRepublicQuote.price * 1.1
 								const bondQuote = resultYahooFinance.source === 'trade-republic' || !compatible ? trQuote() : priceQuote
-								publishQuote(asset, bondPrice, { ...bondQuote, unitFactor: bondPrice / (bondQuote.originalPrice * bondQuote.fxRateToEUR) })
+								publishQuote(asset, bondPrice, { ...bondQuote,
+									unitFactor: bondPrice / (bondQuote.originalPrice * bondQuote.fxRateToEUR),
+									...(tradeRepublicQuotesFetchedAt ? { bondUnits: {
+										brokerQuantity: tradeRepublicQuote.quantity, recordedQuantity: asset.current_shares,
+										source: 'trade-republic' as const, fetchedAt: tradeRepublicQuotesFetchedAt,
+									} } : {}),
+								})
 								bondPriceHandled = true
 								if (resultYahooFinance.source !== 'trade-republic' &&
 									marketPricePerNominal >= tradeRepublicQuote.price * 0.9 &&
@@ -433,9 +465,12 @@ const assetsSlice = createSlice({
 			})
 			return mapped
 		},
-		setQuote(state, action: { payload: { asset: Asset; quote: QuoteMetadata } }) {
+		setQuote(state, action: { payload: { asset: Asset; quote?: QuoteMetadata } }) {
 			return state.map(item => item.ID === action.payload.asset.ID
 				? { ...item, quote: action.payload.quote } : item)
+		},
+		setBondHolding(state, action: { payload: { asset: Asset; bondHolding?: BondHolding } }) {
+			return state.map(item => item.ID === action.payload.asset.ID ? { ...item, bondHolding: action.payload.bondHolding } : item)
 		},
 		setAveragePricePaid(state, action) {
 			return state.map((item:Asset) => item.ID === action.payload.asset.ID
@@ -461,6 +496,7 @@ export const {
 	setPayDividendDate,
 	setPrice,
 	setQuote,
+	setBondHolding,
 	setAveragePricePaid
 } = actions
 

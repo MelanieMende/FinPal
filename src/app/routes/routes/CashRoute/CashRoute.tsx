@@ -1,4 +1,5 @@
 import { useAppSelector } from '../../../hooks';
+import { selectCashTotals } from '../../../store/cash/cash.selectors';
 import CashCreation from './components/CashCreation';
 import CashListItem from './components/CashListItem';
 import Table from '../../../components/Table/Table';
@@ -7,29 +8,7 @@ import { Card, H3, Icon } from '@blueprintjs/core';
 
 export default function CashRoute() {
   const cash = useAppSelector(state => state.cash);
-  const transactions = useAppSelector(state => state.transactions) || [];
-  const dividends = useAppSelector(state => state.dividends) || [];
-
-  // compute totals
-  const totalFee = cash.reduce((sum, entry) => sum + (entry.fee || 0), 0);
-  const totalAmount = cash.reduce((sum, entry) => sum + (entry.amount || 0), 0);
-
-  const totalDeposits = cash
-    .filter(entry => entry.type === 'Deposit')
-    .reduce((sum, entry) => sum + (entry.amount || 0), 0);
-
-  const totalWithdrawals = cash
-    .filter(entry => entry.type === 'Withdrawal')
-    .reduce((sum, entry) => sum + (entry.amount || 0), 0);
-
-  const totalInterest = cash
-    .filter(entry => entry.type === 'Interest')
-    .reduce((sum, entry) => sum + (entry.amount || 0), 0);
-
-  const totalTransactionFlow = transactions.reduce((sum, t) => sum + (t.in_out || 0), 0);
-  const totalDividends = dividends.reduce((sum, d) => sum + (d.income || 0), 0);
-
-  const totalLiquidity = totalDeposits + totalInterest - totalWithdrawals - totalFee + totalTransactionFlow + totalDividends;
+  const { totalFee, totalAmount, totalDeposits, totalWithdrawals, totalInterest, totalTransactionFlow, totalDividends, totalLiquidity } = useAppSelector(selectCashTotals);
 
   const euroFormatter = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
 

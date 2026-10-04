@@ -1,6 +1,9 @@
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { render } from '../../../../../testing/test-utils';
 import { setupStore } from '../../../../store';
+import { setCashInternal } from '../../../../store/cash/cash.reducer';
+import { setTransactionsInternal } from '../../../../store/transactions/transactions.reducer';
+import { setDividendsInternal } from '../../../../store/dividends/dividends.reducer';
 import { analyzePortfolio } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
 import AssetList from '../../AssetsRoute/components/AssetList/AssetList';
 import { buildAnalysisPositions } from '../../../../utils/portfolioAnalysis';
@@ -44,8 +47,37 @@ function fillProfile() {
   fireEvent.change(screen.getByLabelText('Anlageziel'), { target: { value: 'growth' } });
   fireEvent.change(screen.getByLabelText('Risikobereitschaft'), { target: { value: 'medium' } });
   fireEvent.change(screen.getByLabelText('Anlagedauer (Jahre)'), { target: { value: '10' } });
-  fireEvent.change(screen.getByLabelText('Zusätzliches Kaufbudget (EUR)'), { target: { value: '100,50' } });
 }
+
+it('uses live total liquidity instead of a saved budget and marks results stale when liquidity changes', async () => {
+  localStorage.setItem(ANALYSIS_PROFILE_KEY, JSON.stringify({ goal: 'growth', risk: 'medium', horizonYears: '10', buyBudget: '999' }));
+  const cash = [
+    { ID: 1, date: '2026-10-04', type: 'Deposit', amount: 200, fee: 2 },
+    { ID: 2, date: '2026-10-04', type: 'Withdrawal', amount: 50, fee: 1 },
+    { ID: 3, date: '2026-10-04', type: 'Interest', amount: 5 },
+  ];
+  const { store } = render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: {
+    assets, cash,
+    transactions: [{ in_out: -80 }, { in_out: 20 }] as Transaction[],
+    dividends: [{ income: 8.5 }] as Dividend[],
+  } });
+  await open();
+  const budget = screen.getByLabelText('Zusätzliches Kaufbudget (EUR)');
+  expect(budget).toHaveValue('100,50');
+  expect(budget).toHaveAttribute('readonly');
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
+  expect(window.API.analyzePortfolio).toHaveBeenCalledWith(expect.objectContaining({
+    profile: expect.objectContaining({ buyBudget: 100.5 }),
+  }), expect.any(String));
+  expect(screen.queryByText(/haben sich seit dieser Analyse/)).not.toBeInTheDocument();
+  act(() => { store.dispatch(setCashInternal([...cash, { ID: 4, date: '2026-10-04', type: 'Deposit', amount: 50 }])); });
+  expect(budget).toHaveValue('150,50');
+  expect(screen.getByRole('status')).toHaveTextContent('haben sich seit dieser Analyse geändert');
+  act(() => { store.dispatch(setTransactionsInternal([])); });
+  expect(budget).toHaveValue('210,50');
+  act(() => { store.dispatch(setDividendsInternal([])); });
+  expect(budget).toHaveValue('202,00');
+});
 
 it('does not transmit data until started and analyzes all held positions using the ChatGPT subscription', async () => {
   render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
@@ -57,7 +89,7 @@ it('does not transmit data until started and analyzes all held positions using t
   fillProfile();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
   expect(window.API.analyzePortfolio).toHaveBeenCalledWith(expect.objectContaining({
-    provider: 'chatgpt', model: 'account-model', profile: { goal: 'growth', risk: 'medium', horizonYears: 10, buyBudget: 100.5 },
+    provider: 'chatgpt', model: 'account-model', profile: { goal: 'growth', risk: 'medium', horizonYears: 10, buyBudget: 0 },
     positions: [expect.objectContaining({ id: 1 }), expect.objectContaining({ id: 2 })],
   }), expect.any(String));
   expect(screen.getByText('Diversifikation prüfen')).toBeInTheDocument();
@@ -194,7 +226,7 @@ it('keeps the saved preference when it is temporarily unavailable and restores i
 it('restores the report and asset indicators on app startup without starting a new analysis', async () => {
   const savedReport = await window.API.analyzePortfolio({} as import('../../../../utils/portfolioAnalysis').PortfolioAnalysisRequest);
   jest.mocked(window.API.analyzePortfolio).mockClear();
-  const profile = { goal: 'growth', risk: 'medium', horizonYears: '10', buyBudget: '100,50' };
+  const profile = { goal: 'growth', risk: 'medium', horizonYears: '10', buyBudget: '0' };
   localStorage.setItem(ANALYSIS_PROFILE_KEY, JSON.stringify(profile));
   const snapshot = JSON.stringify({ positions: buildAnalysisPositions(assets), profile, priceUpdatedAt: null });
   window.API.getLastPortfolioAnalysis = jest.fn().mockResolvedValue({ report: savedReport, snapshot, provider: 'chatgpt' });
@@ -245,7 +277,7 @@ it('persists a cleared investment horizon instead of restoring the previous valu
   expect(screen.getByLabelText('Anlagedauer (Jahre)')).toHaveValue(null);
   expect(screen.getByLabelText('Anlageziel')).toHaveValue('growth');
   expect(screen.getByLabelText('Risikobereitschaft')).toHaveValue('medium');
-  expect(screen.getByLabelText('Zusätzliches Kaufbudget (EUR)')).toHaveValue('500');
+  expect(screen.getByLabelText('Zusätzliches Kaufbudget (EUR)')).toHaveValue('0,00');
 });
 
 

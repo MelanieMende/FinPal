@@ -5,6 +5,7 @@ import { buildAnalysisPositions, validateAnalysisRequest, type InvestmentProfile
 import type { ChatGptModel, ChatGptStatus } from '../../../../utils/chatGptAuth';
 import { analyzePortfolio, setAnalysisOpen, clearAnalysisResult } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
 import { formatSyncTime } from '../../../../utils/syncTimestamps';
+import { selectTotalLiquidity } from '../../../../store/cash/cash.selectors';
 
 export const ANALYSIS_PROFILE_KEY = 'finpal.portfolioAnalysis.profile.v1';
 export const ANALYSIS_MODEL_KEY = 'finpal.portfolioAnalysis.model.v1';
@@ -42,7 +43,9 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
   const { progress, startedAt, result, resultSnapshot } = analysisState;
   const open = standalone || analysisState.open;
   const setOpen = (value: boolean) => dispatch(setAnalysisOpen(value));
-  const [profile, setProfile] = useState<ProfileForm>(readProfile);
+  const [savedProfile, setProfile] = useState<ProfileForm>(readProfile);
+  const totalLiquidity = useAppSelector(selectTotalLiquidity);
+  const profile = { ...savedProfile, buyBudget: String(totalLiquidity) };
   const [provider, setProvider] = useState<'chatgpt' | 'api'>(analysisState.provider);
   const [chatGpt, setChatGpt] = useState(emptyChatGpt);
   const [models, setModels] = useState<ChatGptModel[]>([]);
@@ -216,7 +219,10 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
             </select>
           </label>
           <label className="text-xs text-gray-300">Anlagedauer (Jahre)<input type="number" min="0.1" max="100" step="0.1" className={`${inputClass} mt-1`} value={profile.horizonYears} disabled={busy} onChange={e => updateProfile('horizonYears', e.target.value)} /></label>
-          <label className="text-xs text-gray-300">Zusätzliches Kaufbudget (EUR)<input type="text" inputMode="decimal" className={`${inputClass} mt-1`} value={profile.buyBudget} disabled={busy} onChange={e => updateProfile('buyBudget', e.target.value)} /></label>
+          <div className="text-xs text-gray-300">
+            <label>Zusätzliches Kaufbudget (EUR)<input type="text" inputMode="decimal" className={`${inputClass} mt-1`} value={totalLiquidity.toFixed(2).replace('.', ',')} readOnly aria-describedby="buy-budget-source" /></label>
+            <p id="buy-budget-source" className="mt-1 mb-0 text-gray-400">Entspricht automatisch deiner Total Liquidity.</p>
+          </div>
         </div>
         <p className="text-xs text-gray-400">Beim Start werden Namen, ISINs, Bestände, Kurse, Einstandswerte, Gewinne und Dividenden sowie dein Anlageprofil an OpenAI übertragen. Kurse zuletzt aktualisiert: {formatSyncTime(priceUpdatedAt) ?? 'unbekannt'}.</p>
         <details className="text-xs text-gray-400">

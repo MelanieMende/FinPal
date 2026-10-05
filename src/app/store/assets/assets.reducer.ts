@@ -147,7 +147,8 @@ export const loadPricesAndDividends = createAsyncThunk(
 						originalPrice: price, originalCurrency: currency, valuationCurrency: 'EUR',
 						source: resultYahooFinance.source || 'yahoo-finance',
 						quoteAsOf: quoteTime(resultYahooFinance.price.regularMarketTime), fetchedAt,
-						...(typeof resultYahooFinance.exchange === 'string' ? { exchange: resultYahooFinance.exchange } : {}),
+						...(typeof (resultYahooFinance.exchange ?? resultYahooFinance.price.exchangeName) === 'string'
+							? { exchange: resultYahooFinance.exchange ?? resultYahooFinance.price.exchangeName } : {}),
 						...(typeof resultYahooFinance.tradedInPercent === 'boolean' ? { tradedInPercent: resultYahooFinance.tradedInPercent } : {}),
 						convertedAt: null, fxRateToEUR: 1, fxSource: null, fxAsOf: null, fxFetchedAt: null,
 					}

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Button, Card, H5, Intent, Spinner } from '@blueprintjs/core';
 import { useAppSelector, useAppDispatch } from '../../../../hooks';
-import { buildAnalysisPositions, validateAnalysisRequest, type InvestmentProfile, type PortfolioAnalysisProgress } from '../../../../utils/portfolioAnalysis';
+import { ANALYSIS_TIMEOUT_MS, buildAnalysisPositions, validateAnalysisRequest, type InvestmentProfile, type PortfolioAnalysisProgress } from '../../../../utils/portfolioAnalysis';
 import type { ChatGptModel, ChatGptStatus } from '../../../../utils/chatGptAuth';
 import { analyzePortfolio, setAnalysisOpen, clearAnalysisResult } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
 import { formatSyncTime } from '../../../../utils/syncTimestamps';
@@ -161,9 +161,9 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
       {progress && <div className="mt-4 flex items-center gap-3 rounded-lg border border-indigo-400/20 bg-indigo-500/10 p-3" aria-label="Laufende Analyse">
         <Spinner size={20} />
         <div>
-          <p role="status" className="m-0 text-sm text-indigo-200">{stageLabels[progress.stage]}</p>
+          <p role="status" className="m-0 text-sm text-indigo-200">{stageLabels[progress.stage]}{progress.stage === 'research' && progress.researchTotal && ` · ${progress.researchCompleted ?? 0}/${progress.researchTotal} Gruppen abgeschlossen`}</p>
           <p className="mt-1 mb-0 text-xs text-gray-300">Laufzeit: {duration(Math.max(0, Math.floor((now - startedAt) / 1000)))} · Letzte Rückmeldung vor {Math.max(0, Math.floor((now - progress.lastActivityAt) / 1000))} s</p>
-          <p className="mt-1 mb-0 text-xs text-gray-400">Webrecherche und Analyse können mehrere Minuten dauern. Zeitlimit: 4 Minuten.</p>
+          <p className="mt-1 mb-0 text-xs text-gray-400">Webrecherche und Analyse können mehrere Minuten dauern. Zeitlimit: {ANALYSIS_TIMEOUT_MS / 60000} Minuten. Abgeschlossene Recherchegruppen werden für erneute Versuche bis zu 30 Minuten wiederverwendet.</p>
         </div>
       </div>}
       {open && <div id="portfolio-analysis-content" className="mt-5 space-y-4">

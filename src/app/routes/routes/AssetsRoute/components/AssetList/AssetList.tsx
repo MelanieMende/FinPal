@@ -46,7 +46,7 @@ export default function AnalysisRoute(props: { assets?: Asset[] }) {
       <thead>
 				<tr className="bg-white/5">
 					<th className="p-3 text-left w-12"><RefreshButton /></th>
-					<th className="p-3 text-left w-12">#</th>
+					<th className="p-3 text-left w-12">ID</th>
 					<th className="p-3 text-left min-w-[150px] text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Name</th>
           <th className="p-3 text-center w-14 text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10" title="Empfehlung aus der letzten KI-Analyse">KI</th>
 					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Shares</th>

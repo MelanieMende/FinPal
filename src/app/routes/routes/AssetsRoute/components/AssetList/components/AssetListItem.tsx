@@ -86,7 +86,7 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 			<TableCell className="p-3 text-gray-500 font-mono text-xs text-left">
 				<div className="flex items-center gap-2">
 					<Icon icon={showTransactions ? 'chevron-down' : 'chevron-right'} size={12} />
-					{props.i}
+					{props.asset.ID}
 				</div>
 			</TableCell>
 

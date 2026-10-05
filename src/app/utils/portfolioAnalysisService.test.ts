@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { safeStorage } from 'electron';
 import { PortfolioAnalysisService, readAnalysisStream, validateAnalysisResult } from './portfolioAnalysisService';
-import { buildAnalysisPositions, type PortfolioAnalysisRequest } from './portfolioAnalysis';
+import { ANALYSIS_TIMEOUT_MS, RESEARCH_CACHE_TTL_MS, buildAnalysisPositions, type PortfolioAnalysisRequest } from './portfolioAnalysis';
 import type { ChatGptAuth } from './chatGptAuth';
 
 jest.mock('electron', () => ({ safeStorage: {
@@ -177,6 +177,24 @@ it('emits the actual analysis stages in order without portfolio content', async 
   }
 });
 
+it('passes market closure context to the model and replaces the blanket weekend warning', async () => {
+  const now = jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-05T08:50:03Z'));
+  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research))).mockResolvedValueOnce(new Response(JSON.stringify(structured)));
+  const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
+  try {
+    const result = await service.analyze({ ...request, priceUpdatedAt: '2026-10-05T08:42:00Z', positions: [{ ...request.positions[0], symbol: 'MDLZ', type: 'Stock', quote: {
+      originalPrice: 58.19, originalCurrency: 'USD', valuationCurrency: 'EUR', source: 'yahoo-finance',
+      quoteAsOf: '2026-10-02T20:00:01Z', fetchedAt: '2026-10-05T08:42:05Z', convertedAt: '2026-10-05T08:42:05Z',
+      fxRateToEUR: 50 / 58.19, fxSource: 'FX', fxAsOf: '2026-10-05T00:00:00Z', fxFetchedAt: '2026-10-05T08:42:00Z',
+    } }] });
+    const body = JSON.parse(mockedFetch.mock.calls[1][1].body);
+    expect(JSON.parse(body.input[0].content).quoteFreshness).toEqual([expect.objectContaining({ assetId: 1, status: 'market-closed' })]);
+    expect(body.instructions).toContain('nicht allein wegen mehr als 48 Kalenderstunden veraltet');
+    expect(result.warnings.join(' ')).toContain('Letzter Schlusskurs');
+    expect(result.warnings.join(' ')).not.toContain('älter als 48 Stunden');
+  } finally { now.mockRestore(); }
+});
+
 it('rejects new ideas with missing identity, missing sources, invalid actions or existing holdings', () => {
   const sources = [{ title: 'Source', url: 'https://example.com/report' }];
   for (const invalid of [
@@ -260,7 +278,7 @@ it('stops after one correction and reports the remaining defect without exposing
   const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
   await expect(service.analyze(request)).rejects.toThrow(/Empfehlung 1: Ein Quellenverweis/);
   expect(mockedFetch).toHaveBeenCalledTimes(3);
-  mockedFetch.mockResolvedValueOnce(new Response(JSON.stringify(research))).mockResolvedValueOnce(structuredResponse(report));
+  mockedFetch.mockResolvedValueOnce(structuredResponse(report));
   await expect(service.analyze(request)).resolves.toMatchObject({ summary: report.summary });
 });
 
@@ -291,12 +309,88 @@ it('loads the last successful analysis from disk in a new service instance witho
 it('preserves the saved report when the next analysis fails', async () => {
   const invalid = { ...report, recommendations: [] as typeof report.recommendations };
   const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research))).mockResolvedValueOnce(structuredResponse(report))
-    .mockResolvedValueOnce(new Response(JSON.stringify(research))).mockResolvedValueOnce(structuredResponse(invalid)).mockResolvedValueOnce(structuredResponse(invalid));
+    .mockResolvedValueOnce(structuredResponse(invalid)).mockResolvedValueOnce(structuredResponse(invalid));
   const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
   await service.analyze(request, undefined, 'first-snapshot');
   const saved = service.getLastResult();
   await expect(service.analyze(request, undefined, 'failed-snapshot')).rejects.toThrow(/genau eine/);
   expect(new PortfolioAnalysisService(dir, jest.fn()).getLastResult()).toEqual(saved);
+});
+
+it('researches every position in bounded concurrent groups and merges their citations', async () => {
+  const positions = Array.from({ length: 19 }, (_, index) => ({ ...request.positions[0], id: index + 1, name: 'Asset ' + (index + 1) }));
+  let active = 0;
+  let peak = 0;
+  const researchRequests: any[] = [];
+  const mockedFetch = jest.fn(async (_url, options) => {
+    const body = JSON.parse(options.body);
+    if (!body.tools) return structuredResponse({ ...report, newAssetRecommendations: [], recommendations: positions.map(p => ({ ...report.recommendations[0], assetId: p.id })) });
+    const input = JSON.parse(body.input[0].content);
+    researchRequests.push(input);
+    active++;
+    peak = Math.max(active, peak);
+    await new Promise(resolve => setTimeout(resolve, 1));
+    active--;
+    return new Response(JSON.stringify({ status: 'completed', output: [
+      { type: 'web_search_call', status: 'completed' },
+      { type: 'message', content: [{ type: 'output_text', text: 'Group ' + input.securities[0].id,
+        annotations: [{ type: 'url_citation', title: 'Group source', url: 'https://example.com/' + input.securities[0].id }] }] },
+    ] }));
+  });
+  const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
+  const progress = jest.fn();
+  const result = await service.analyze({ ...request, positions }, progress);
+  expect(peak).toBe(3);
+  expect(researchRequests.map(input => input.securities.length)).toEqual([6, 6, 6, 1]);
+  expect(researchRequests.flatMap(input => input.securities.map((s: any) => s.id))).toEqual(positions.map(p => p.id));
+  expect(researchRequests.filter(input => input.profile)).toHaveLength(1);
+  expect(researchRequests[0].heldSecurities).toHaveLength(19);
+  expect(result.sources.map(source => source.url)).toEqual(['https://example.com/1', 'https://example.com/7', 'https://example.com/13', 'https://example.com/19']);
+  expect(progress).toHaveBeenCalledWith(expect.objectContaining({ stage: 'research', researchCompleted: 4, researchTotal: 4 }));
+});
+
+it('reuses completed research after a failure, expires it and invalidates it when the profile changes', async () => {
+  let analysisFails = true;
+  const mockedFetch = jest.fn(async (_url, options) => {
+    const body = JSON.parse(options.body);
+    if (body.tools) return new Response(JSON.stringify(research));
+    if (analysisFails) throw new Error('Analysis unavailable');
+    return structuredResponse(report);
+  });
+  const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
+  await expect(service.analyze(request)).rejects.toThrow('Analysis unavailable');
+  analysisFails = false;
+  await service.analyze({ ...request, positions: [{ ...request.positions[0], price: 55 }] });
+  const researchCalls = () => mockedFetch.mock.calls.filter(([, options]) => JSON.parse(options.body).tools).length;
+  expect(researchCalls()).toBe(1);
+  const now = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + RESEARCH_CACHE_TTL_MS + 1);
+  try {
+    await service.analyze(request);
+    expect(researchCalls()).toBe(2);
+    await service.analyze({ ...request, profile: { ...request.profile, risk: 'high' } });
+    expect(researchCalls()).toBe(3);
+    service.forgetLastResult();
+    await service.analyze({ ...request, profile: { ...request.profile, risk: 'high' } });
+    expect(researchCalls()).toBe(4);
+  } finally { now.mockRestore(); }
+});
+
+it('allows work beyond four minutes and reports the research timeout without leaving the service busy', async () => {
+  jest.useFakeTimers();
+  const mockedFetch = jest.fn((_url, options) => new Promise<Response>((_resolve, reject) => {
+    options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+  }));
+  const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
+  try {
+    const pending = service.analyze(request);
+    const failure = expect(pending).rejects.toThrow(/zehn Minuten.*Webrecherche/);
+    await jest.advanceTimersByTimeAsync(240000);
+    expect(mockedFetch.mock.calls[0][1].signal.aborted).toBe(false);
+    await jest.advanceTimersByTimeAsync(ANALYSIS_TIMEOUT_MS - 240000);
+    await failure;
+    mockedFetch.mockImplementation(async (_url, options) => JSON.parse(options.body).tools ? new Response(JSON.stringify(research)) : structuredResponse(report));
+    await expect(service.analyze(request)).resolves.toMatchObject({ summary: report.summary });
+  } finally { jest.useRealTimers(); }
 });
 
 it('ignores corrupt or invalid cached analyses without failing startup', () => {

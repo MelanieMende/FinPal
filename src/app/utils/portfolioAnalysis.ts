@@ -1,6 +1,10 @@
 import { validQuote, type QuoteMetadata } from './quoteMetadata';
 
 export const DEFAULT_ANALYSIS_MODEL = 'gpt-5.4-mini';
+export const ANALYSIS_TIMEOUT_MS = 10 * 60 * 1000;
+export const RESEARCH_BATCH_SIZE = 6;
+export const RESEARCH_CONCURRENCY = 3;
+export const RESEARCH_CACHE_TTL_MS = 30 * 60 * 1000;
 
 export interface InvestmentProfile {
   goal: 'growth' | 'income' | 'preservation';
@@ -132,6 +136,8 @@ export function validateAnalysisRequest(request: PortfolioAnalysisRequest): void
 export interface PortfolioAnalysisProgress {
   stage: 'preparing' | 'research' | 'analysis' | 'validating' | 'correcting' | 'retrying';
   lastActivityAt: number;
+  researchCompleted?: number;
+  researchTotal?: number;
 }
 
 export interface SavedPortfolioAnalysis {

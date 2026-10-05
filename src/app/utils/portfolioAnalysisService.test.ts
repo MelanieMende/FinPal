@@ -170,6 +170,19 @@ it('emits the actual analysis stages in order without portfolio content', async 
   }
 });
 
+it('passes Arbor filing discovery hints to research before analyzing the position', async () => {
+  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research))).mockResolvedValueOnce(new Response(JSON.stringify(structured)));
+  const service = new PortfolioAnalysisService(dir, mockedFetch);
+  service.saveKey('sk-testOnlyNotARealKey');
+  await service.analyze({ ...request, positions: [{ ...request.positions[0], name: 'Arbor Metals', isin: 'CA03880B1040', symbol: 'CA03880B1040.SG' }] });
+  const researchBody = JSON.parse(mockedFetch.mock.calls[0][1].body);
+  const researchInput = JSON.parse(researchBody.input[0].content);
+  expect(researchInput.securities[0]).toMatchObject({ id: 1, discoveryHints: { issuer: 'Arbor Metals Corp.' } });
+  expect(researchInput.securities[0].discoveryHints.sourceUrls).toContain('https://www.sedarplus.ca/');
+  expect(researchInput.securities[0]).not.toHaveProperty('shares');
+  expect(mockedFetch).toHaveBeenCalledTimes(2);
+});
+
 it('reports activity when stream bytes arrive', async () => {
   const activity = jest.fn();
   await readAnalysisStream(sse(research), activity);

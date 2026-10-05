@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
 import { render } from '../../../../../testing/test-utils';
 import { setupStore } from '../../../../store';
 import { setCashInternal } from '../../../../store/cash/cash.reducer';
@@ -33,6 +33,30 @@ beforeEach(() => {
 async function open() {
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Portfolio analysieren' })); });
 }
+
+it('displays sourced new assets outside the local asset list and keeps them after a route remount', async () => {
+  const response = await window.API.analyzePortfolio({} as never);
+  jest.mocked(window.API.analyzePortfolio).mockClear();
+  jest.mocked(window.API.analyzePortfolio).mockResolvedValue({ ...response, newAssetRecommendations: [{
+    name: 'New ETF', isin: 'IE00B4L5Y983', symbol: 'IWDA', type: 'ETF', action: 'Kaufen',
+    rationale: 'Breitere Diversifikation', risk: 'Marktrisiko', sourceIndexes: [0],
+  }] });
+  const { store, unmount } = render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
+  await open(); fillProfile();
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
+  const check = () => {
+    const section = within(screen.getByRole('region', { name: 'Neue Kaufideen' }));
+    expect(section.getByText('New ETF')).toBeInTheDocument();
+    expect(section.getByText(/IE00B4L5Y983/)).toHaveTextContent('IWDA');
+    expect(section.getByText('Kaufen')).toBeInTheDocument();
+    expect(section.getByText('Risiken: Marktrisiko')).toBeInTheDocument();
+    expect(section.getByRole('link', { name: '[0] Report' })).toHaveAttribute('href', 'https://example.com/report');
+  };
+  check(); unmount();
+  await act(async () => { render(<PortfolioAnalysis priceUpdatedAt={null} />, { store }); });
+  check();
+  expect(store.getState().assets).toEqual(assets);
+});
 
 it('opens the analysis form directly in its route and updates the displayed price time', async () => {
   localStorage.setItem(MARKET_PRICE_UPDATED_AT_KEY, '2026-10-01T10:30:00.000Z');

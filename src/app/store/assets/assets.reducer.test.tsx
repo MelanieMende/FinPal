@@ -290,6 +290,33 @@ describe('AssetCreation reducer', () => {
 		expect(dispatch).not.toHaveBeenCalledWith(assetsReducer.setPrice({ asset, price: 0 }));
 	});
 
+	it.each([true, false])('uses the matching broker valuation for corrected nominal holdings (market available: %s)', async available => {
+		const asset = { ID: 30, type: 'Bond', name: 'US Treasury', symbol: 'A281P1', isin: 'US912810SQ22', current_shares: 2, is_watched: true } as Asset;
+		const asOf = '2026-10-04T09:56:20.406Z';
+		window.API = {
+			sendToDB: jest.fn().mockResolvedValue([
+				{ ID: 112, date: '2025-11-03', type: 'Buy', isin: asset.isin, nominal: 0.19, currency: 'USD', accrued_interest_eur: 0, source: 'user-confirmed' },
+				{ ID: 113, date: '2025-11-03', type: 'Buy', isin: asset.isin, nominal: 179.81, currency: 'USD', accrued_interest_eur: -0.17, source: 'user-confirmed' },
+			]),
+			sendToYahooFinanceAPI: jest.fn().mockResolvedValue(available ? {
+				price: { regularMarketPrice: 57.96, currency: 'USD', regularMarketTime: asOf }, source: 'boerse-frankfurt', tradedInPercent: true,
+			} : null),
+			getEuroExchangeRates: jest.fn().mockResolvedValue({ rates: { USD: 0.8887838148912174 }, source: 'ExchangeRate-API', asOf, fetchedAt: asOf }),
+			getTradeRepublicQuotes: jest.fn().mockResolvedValue({ fetchedAt: asOf, quotes: [
+				{ name: 'Aug. 2040', isin: asset.isin, quantity: 180, price: 0.5784, averageBuyIn: 0.5595, netValue: 104.11 },
+			] }),
+		};
+		const store = setupStore({ assets: [asset] });
+		await store.dispatch(assetsReducer.loadPricesAndDividends({ preferTradeRepublicPrice: false, includeDividends: false }));
+		let position = buildAnalysisPositions(store.getState().assets)[0];
+		expect(position.bondHolding).toMatchObject({ nominal: 180, brokerQuantity: 180, quantityConflict: false });
+		expect(position.price! * position.shares).toBeCloseTo(104.11);
+		expect(position.quote).toMatchObject({ source: 'trade-republic', originalCurrency: 'EUR', fetchedAt: asOf });
+		await store.dispatch(assetsReducer.loadPricesAndDividends({ includeDividends: false }));
+		position = buildAnalysisPositions(store.getState().assets)[0];
+		expect(position.price! * position.shares).toBeCloseTo(104.11);
+	});
+
 	it.each([true, false])('values the confirmed USD nominal instead of the conflicting broker quantity (market available: %s)', async available => {
 		const asset = { ID: 30, type: 'Bond', name: 'US Treasury', symbol: 'A281P1', isin: 'US912810SQ22', current_shares: 2, is_watched: true, price: 52 } as Asset;
 		const details = [

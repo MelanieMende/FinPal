@@ -17,7 +17,8 @@ const request: PortfolioAnalysisRequest = {
   provider: 'api', profile: { goal: 'growth', risk: 'medium', horizonYears: 10, buyBudget: 100 }, priceUpdatedAt: null,
   positions: buildAnalysisPositions([{ ID: 1, name: 'Asset', current_shares: 2, price: 50, currencySymbol: '€' }] as Asset[]),
 };
-const report = { summary: 'Portfolio prüfen', warnings: ['Kurszeitpunkt fehlt'], recommendations: [{ assetId: 1, action: 'Halten', rationale: 'Begründung [0]', risk: 'Marktrisiko', sourceIndexes: [0] }] };
+const newAsset = { name: 'New ETF', isin: 'IE00B4L5Y983', symbol: 'IWDA', type: 'ETF', action: 'Kaufen', rationale: 'Diversifikation [0]', risk: 'Marktrisiko', sourceIndexes: [0] };
+const report = { summary: 'Portfolio prüfen', warnings: ['Kurszeitpunkt fehlt'], recommendations: [{ assetId: 1, action: 'Halten', rationale: 'Begründung [0]', risk: 'Marktrisiko', sourceIndexes: [0] }], newAssetRecommendations: [newAsset] };
 const research = { status: 'completed', output: [
   { type: 'web_search_call', status: 'completed' },
   { type: 'message', content: [{ type: 'output_text', text: 'Recherche', annotations: [{ type: 'url_citation', title: 'Emittent', url: 'https://example.com/report' }] }] },
@@ -39,7 +40,13 @@ it('encrypts the API key and researches sources before generating a structured r
   const analysisBody = JSON.parse(mockedFetch.mock.calls[1][1].body);
   expect(researchBody).toMatchObject({ store: false, tool_choice: 'required', tools: [{ type: 'web_search' }] });
   expect(researchBody.input[0].content).not.toContain('shares');
+  expect(JSON.parse(researchBody.input[0].content).profile).toEqual(request.profile);
+  expect(researchBody.instructions).toContain('noch nicht gehaltene Assets');
+  expect(result.newAssetRecommendations).toEqual([newAsset]);
+  expect(service.getLastResult()?.report.newAssetRecommendations).toEqual([newAsset]);
   expect(analysisBody.text.format).toMatchObject({ type: 'json_schema', strict: true });
+  expect(analysisBody.text.format.schema.required).toContain('newAssetRecommendations');
+  expect(analysisBody.text.format.schema.properties.newAssetRecommendations.maxItems).toBe(5);
   expect(analysisBody.instructions).toContain('EUR-Preise sind bereits umgerechnet');
   expect(analysisBody.instructions).toContain('Kurswährungsanteile sind keine Währungsrisiko-Allokation');
   const recSchema = analysisBody.text.format.schema.properties.recommendations;
@@ -168,6 +175,20 @@ it('emits the actual analysis stages in order without portfolio content', async 
     expect(Object.keys(update).sort()).toEqual(['lastActivityAt', 'stage']);
     expect(update.lastActivityAt).toEqual(expect.any(Number));
   }
+});
+
+it('rejects new ideas with missing identity, missing sources, invalid actions or existing holdings', () => {
+  const sources = [{ title: 'Source', url: 'https://example.com/report' }];
+  for (const invalid of [
+    { ...newAsset, isin: '', symbol: '' },
+    { ...newAsset, sourceIndexes: [] },
+    { ...newAsset, sourceIndexes: [99] },
+    { ...newAsset, action: 'Verkaufen' },
+    { ...newAsset, name: ' asset ' },
+  ]) expect(() => validateAnalysisResult({ ...report, newAssetRecommendations: [invalid] }, request, sources)).toThrow();
+  expect(() => validateAnalysisResult({ ...report, newAssetRecommendations: [newAsset, { ...newAsset, name: 'Other name' }] }, request, sources)).toThrow(/mehrfach/);
+  expect(() => validateAnalysisResult(report, { ...request, positions: [{ ...request.positions[0], isin: newAsset.isin.toLowerCase() }] }, sources)).toThrow(/bereits im Portfolio/);
+  expect(validateAnalysisResult({ ...report, newAssetRecommendations: undefined }, request, sources).newAssetRecommendations).toEqual([]);
 });
 
 it('passes Arbor filing discovery hints to research before analyzing the position', async () => {

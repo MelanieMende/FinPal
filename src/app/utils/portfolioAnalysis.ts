@@ -46,10 +46,22 @@ export interface PortfolioAnalysisResult {
   summary: string;
   warnings: string[];
   recommendations: AssetRecommendation[];
+  newAssetRecommendations?: NewAssetRecommendation[];
   sources: AnalysisSource[];
   generatedAt: string;
   priceUpdatedAt: string | null;
   model: string;
+}
+
+export interface NewAssetRecommendation {
+  name: string;
+  isin: string;
+  symbol: string;
+  type: Asset['type'];
+  action: 'Kaufen' | 'Prüfen';
+  rationale: string;
+  risk: string;
+  sourceIndexes: number[];
 }
 
 const finiteOrNull = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) ? value : null;

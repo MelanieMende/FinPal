@@ -112,19 +112,21 @@ export const loadPricesAndDividends = createAsyncThunk(
 				}
 				const cachedPrice = tradeRepublicQuote?.price
 				const usableTradeRepublicQuote = Number.isFinite(cachedPrice) && cachedPrice > 0
-				resultYahooFinance = !bondHolding && props?.preferTradeRepublicPrice !== false && tradeRepublicQuote
+				const canUseBrokerHolding = !bondHolding || !bondHolding.quantityConflict
+				resultYahooFinance = canUseBrokerHolding && props?.preferTradeRepublicPrice !== false && tradeRepublicQuote
 					? { price: { regularMarketPrice: tradeRepublicQuote.price, currency: 'EUR' }, source: 'trade-republic' }
 					: await callYahooFinanceAPI(asset).catch((error): null => {
 						console.error(`Failed to fetch market price for ${asset.symbol}:`, error)
 						return null
 					})
 				const marketPrice = resultYahooFinance?.price?.regularMarketPrice
-				if ((!Number.isFinite(marketPrice) || marketPrice <= 0) && usableTradeRepublicQuote && !bondHolding) {
+				if ((!Number.isFinite(marketPrice) || marketPrice <= 0) && usableTradeRepublicQuote && canUseBrokerHolding) {
 					resultYahooFinance = { price: { regularMarketPrice: cachedPrice, currency: 'EUR' }, source: 'trade-republic' }
 				}
 				console.log(asset.name, '- Price:', resultYahooFinance)
-				if (bondHolding && (!(marketPrice > 0) || resultYahooFinance.source === 'trade-republic'
-					|| resultYahooFinance.tradedInPercent !== true || resultYahooFinance.price.currency !== bondHolding.currency)) {
+				if (bondHolding && (resultYahooFinance?.source === 'trade-republic'
+					? !canUseBrokerHolding
+					: (!(marketPrice > 0) || resultYahooFinance.tradedInPercent !== true || resultYahooFinance.price.currency !== bondHolding.currency))) {
 					// A mismatched broker quantity cannot establish a price per confirmed nominal unit.
 					thunkAPI.dispatch(setPrice({ asset, price: undefined }))
 					continue
@@ -169,10 +171,17 @@ export const loadPricesAndDividends = createAsyncThunk(
 					if (Number.isFinite(price) && price > 0) {
 						let bondPriceHandled = false
 						if (bondHolding && asset.current_shares > 0) {
-							const unitFactor = bondHolding.nominal / (100 * asset.current_shares)
-							publishQuote(asset, price * unitFactor, { ...priceQuote, unitFactor })
+							const marketPricePerNominal = resultYahooFinance.source === 'trade-republic' ? undefined : price / 100
+							const brokerPrice = canUseBrokerHolding && tradeRepublicQuote
+								? getBondPricePerRecordedShare(asset, tradeRepublicQuote, marketPricePerNominal) : undefined
+							const compatible = marketPricePerNominal !== undefined && tradeRepublicQuote &&
+								marketPricePerNominal >= tradeRepublicQuote.price * 0.9 && marketPricePerNominal <= tradeRepublicQuote.price * 1.1
+							const bondQuote = brokerPrice !== undefined && !compatible ? trQuote() : priceQuote
+							const bondPrice = brokerPrice ?? price * bondHolding.nominal / (100 * asset.current_shares)
+							const unitFactor = bondPrice / (bondQuote.originalPrice * bondQuote.fxRateToEUR)
+							publishQuote(asset, bondPrice, { ...bondQuote, unitFactor })
 							bondPriceHandled = true
-							if (!marketPriceRecorded) { recordMarketPriceUpdate(); marketPriceRecorded = true }
+							if (bondQuote.source !== 'trade-republic' && !marketPriceRecorded) { recordMarketPriceUpdate(); marketPriceRecorded = true }
 						}
 						if (!bondHolding && asset.type === 'Bond' && tradeRepublicQuote && asset.current_shares > 0) {
 							const marketPricePerNominal = resultYahooFinance.tradedInPercent ? price / 100 : price

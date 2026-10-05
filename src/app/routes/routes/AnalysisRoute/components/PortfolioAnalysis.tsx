@@ -152,7 +152,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <H5 className="m-0 text-sm font-bold text-indigo-300">KI-Portfolio-Analyse</H5>
-          <p className="mt-1 mb-0 text-xs text-gray-400">Kauf-, Halte- und Verkaufsvorschläge für dein gesamtes Portfolio mit aktuellen Quellen.</p>
+          <p className="mt-1 mb-0 text-xs text-gray-400">Kauf-, Halte- und Verkaufsvorschläge für dein Portfolio sowie neue Kaufideen mit aktuellen Quellen.</p>
         </div>
         {!standalone && <Button icon="search" intent={Intent.PRIMARY} onClick={toggleOpen} aria-expanded={open} aria-controls="portfolio-analysis-content">
           {open ? 'Analyse schließen' : 'Portfolio analysieren'}
@@ -167,7 +167,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
         </div>
       </div>}
       {open && <div id="portfolio-analysis-content" className="mt-5 space-y-4">
-        <p className="text-xs text-gray-400">Analysiert werden alle {positions.length} gehaltenen Positionen, unabhängig vom aktiven Asset-Type-Filter. Empfehlungen sind eine Entscheidungshilfe und führen keine Trades aus.</p>
+        <p className="text-xs text-gray-400">Analysiert werden alle {positions.length} gehaltenen Positionen, unabhängig vom aktiven Asset-Type-Filter. Zusätzlich werden passende Assets außerhalb deines Portfolios recherchiert. Empfehlungen sind eine Entscheidungshilfe und führen keine Trades aus.</p>
         <label className="block text-xs text-gray-300">KI-Zugang
           <select className={`${inputClass} mt-1`} style={{ colorScheme: 'dark' }} value={provider} disabled={busy} onChange={e => setProvider(e.target.value as 'chatgpt' | 'api')}>
             <option value="chatgpt">ChatGPT Plus / Pro</option><option value="api">OpenAI API (separat kostenpflichtig)</option>
@@ -264,6 +264,23 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
               <div className="flex flex-wrap gap-2 mt-2">{[...new Set(rec.sourceIndexes)].map(index => <a key={index} href={result.sources[index].url} onClick={e => openSource(e, result.sources[index].url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">[{index}] {result.sources[index].title}</a>)}</div>
             </article>)}
           </div>
+          {result.newAssetRecommendations && <section aria-label="Neue Kaufideen" className="space-y-3">
+            <H5 className="text-sm text-indigo-300">Neue Kaufideen</H5>
+            <p className="text-xs text-gray-400">Mögliche Ergänzungen zu deinem Portfolio, passend zu Anlageprofil und Kaufbudget.</p>
+            {!result.newAssetRecommendations.length && <p className="text-sm text-gray-400">Keine passenden neuen Assets mit ausreichenden Belegen gefunden.</p>}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
+              {result.newAssetRecommendations.map((rec, i) => <article key={i} className="rounded-lg border border-white/10 p-4">
+                <div className="flex justify-between items-start gap-3">
+                  <span className="font-bold text-sm text-white">{rec.name}</span>
+                  <span className={`text-xs font-bold ${rec.action === 'Kaufen' ? 'text-emerald-400' : 'text-amber-300'}`}>{rec.action}</span>
+                </div>
+                <p className="text-xs text-gray-400">{rec.type}{rec.isin && ` · ISIN: ${rec.isin}`}{rec.symbol && ` · Ticker: ${rec.symbol}`}</p>
+                <p className="text-sm text-gray-300 whitespace-pre-wrap">{rec.rationale}</p>
+                <p className="text-xs text-amber-200 whitespace-pre-wrap">Risiken: {rec.risk}</p>
+                <div className="flex flex-wrap gap-2 mt-2">{[...new Set(rec.sourceIndexes)].map(index => <a key={index} href={result.sources[index].url} onClick={e => openSource(e, result.sources[index].url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">[{index}] {result.sources[index].title}</a>)}</div>
+              </article>)}
+            </div>
+          </section>}
           <details className="text-xs text-gray-400"><summary className="cursor-pointer">Recherchequellen</summary><ul className="mt-2 space-y-1">{result.sources.map((source, index) => <li key={source.url}><a href={source.url} onClick={e => openSource(e, source.url)} target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline">[{index}] {source.title}</a></li>)}</ul></details>
         </section>}
       </div>}

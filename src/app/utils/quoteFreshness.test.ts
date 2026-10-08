@@ -54,3 +54,15 @@ it('preserves unknown timestamps and warns about stale prices even after a fresh
   expect(stale.status).toBe('stale');
   expect(quoteFreshnessWarnings([stale])[0]).toContain('Assets 6: Börsenkurs älter als 48 Stunden');
 });
+
+
+it('separates an old ELTIF broker tick from unknown NAV freshness without suppressing ordinary fund warnings', () => {
+  const now = Date.parse('2026-10-08T08:00:00Z');
+  const eltif = { ...position, id: 32, type: 'Fund' as const, name: 'Apollo', isin: 'LU3170240538', quote: { ...quote, source: 'trade-republic', quoteAsOf: '2026-09-10T15:21:10Z', fetchedAt: '2026-10-08T07:00:00Z' } };
+  const result = assessQuoteFreshness(eltif, now);
+  expect(result).toMatchObject({ assetId: 32, status: 'nav-unverified', brokerTickStatus: 'old', quoteAsOf: '2026-09-10T15:21:10Z' });
+  expect(result.brokerTickAgeHours).toBeGreaterThan(48);
+  expect(quoteFreshnessWarnings([result])).toEqual([]);
+  expect(assessQuoteFreshness({ ...eltif, isin: 'OTHER', name: 'Ordinary Fund' }, now).status).toBe('stale');
+  expect(assessQuoteFreshness({ ...eltif, quote: { ...eltif.quote, quoteAsOf: null } }, now)).toMatchObject({ status: 'nav-unverified', brokerTickStatus: 'unknown' });
+});

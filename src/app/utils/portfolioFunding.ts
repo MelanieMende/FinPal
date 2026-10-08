@@ -1,0 +1,54 @@
+import type { PortfolioAnalysisRequest, PortfolioAnalysisResult } from './portfolioAnalysis';
+
+export interface FundingCheck {
+  status: 'no-trades' | 'unknown' | 'insufficient' | 'conditional';
+  cashEUR: number;
+  saleProceedsEUR: number;
+  buyAmountEUR: number;
+  feeScenarioEUR: number;
+  balanceBeforeSpreadAndTaxEUR: number;
+  shortfallEUR: number;
+  warnings: string[];
+}
+
+const cents = (amount: number) => Math.round(amount * 100);
+
+// EUR allocations are scenarios, not executable orders or confirmed net proceeds.
+export function checkPortfolioFunding(request: PortfolioAnalysisRequest,
+  report: Pick<PortfolioAnalysisResult, 'recommendations' | 'newAssetRecommendations'>): FundingCheck {
+  let buys = 0, sales = 0, orders = 0, unknown = false;
+  const warnings: string[] = [];
+  for (const rec of report.recommendations) {
+    if (rec.action !== 'Kaufen' && rec.action !== 'Verkaufen') continue;
+    orders++;
+    const amount = rec.plannedAmountEUR;
+    if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) { unknown = true; continue; }
+    if (rec.action === 'Kaufen') { buys += cents(amount); continue; }
+    const position = request.positions.find(position => position.id === rec.assetId);
+    const marketValue = position?.currency === 'EUR' && position.price !== null ? position.shares * position.price : null;
+    if (marketValue === null || !Number.isFinite(marketValue) || cents(amount) > cents(marketValue)) {
+      unknown = true;
+      warnings.push(`Asset ${rec.assetId}: Verkaufserlös ist nicht durch den aktuellen EUR-Bestand gedeckt.`);
+      continue;
+    }
+    sales += cents(amount);
+  }
+  for (const rec of report.newAssetRecommendations ?? []) {
+    if (rec.action !== 'Kaufen') continue;
+    orders++;
+    if (typeof rec.plannedAmountEUR !== 'number' || !Number.isFinite(rec.plannedAmountEUR) || rec.plannedAmountEUR <= 0) unknown = true;
+    else buys += cents(rec.plannedAmountEUR);
+  }
+  const cash = cents(request.profile.buyBudget);
+  // Two 1-EUR orders per recommendation, e.g. whole units and a fractional remainder.
+  const fees = orders * 200;
+  const balance = cash + sales - buys - fees;
+  if (unknown) warnings.push('Mindestens ein Kauf-/Verkaufsbetrag oder eine EUR-Verkaufsbewertung fehlt. Eine vollständige Finanzierung ist nicht bestätigt.');
+  if (orders) warnings.push('Gebührenszenario: 2 EUR je Kauf-/Verkaufsvorschlag; tatsächliche Orderanzahl, Gebühren, Spreads und Verkaufssteuern sind unbekannt. Der Restbetrag ist kein bestätigtes Nettokaufbudget.');
+  if (sales > 0) warnings.push('Verkaufserlöse werden erst nach ausgeführtem Verkauf und Gutschrift verfügbar. Abhängige Käufe erst danach und nach Prüfung der tatsächlichen Abzüge ausführen. Steuerliche Verlustverrechnung wird nicht als zusätzlicher Erlös angerechnet.');
+  return { status: !orders ? 'no-trades' : unknown ? 'unknown' : balance < 0 ? 'insufficient' : 'conditional',
+    cashEUR: cash / 100, saleProceedsEUR: sales / 100, buyAmountEUR: buys / 100,
+    feeScenarioEUR: fees / 100, balanceBeforeSpreadAndTaxEUR: balance / 100,
+    shortfallEUR: Math.max(0, -balance) / 100, warnings,
+  };
+}

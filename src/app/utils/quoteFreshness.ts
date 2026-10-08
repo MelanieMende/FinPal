@@ -1,3 +1,4 @@
+import { isEltif } from './eltifValuation';
 import type { AnalysisPosition } from './portfolioAnalysis';
 
 const MAX_AGE_MS = 48 * 60 * 60 * 1000;
@@ -15,7 +16,9 @@ function marketDate(timestamp: number) {
 
 export interface QuoteFreshness {
   assetId: number;
-  status: 'recent' | 'market-closed' | 'stale' | 'unknown';
+  status: 'recent' | 'market-closed' | 'stale' | 'unknown' | 'nav-unverified';
+  brokerTickStatus?: 'recent' | 'old' | 'unknown';
+  brokerTickAgeHours?: number;
   quoteAsOf: string | null;
   fetchedAt: string | null;
   marketBasis?: 'exchange' | 'inferred';
@@ -25,6 +28,12 @@ export function assessQuoteFreshness(position: AnalysisPosition, now = Date.now(
   const quote = position.quote;
   const result: QuoteFreshness = { assetId: position.id, status: 'unknown', quoteAsOf: quote?.quoteAsOf ?? null, fetchedAt: quote?.fetchedAt ?? null };
   const timestamp = Date.parse(result.quoteAsOf ?? '');
+  if (isEltif(position)) {
+    const valid = Number.isFinite(timestamp) && timestamp <= now;
+    return { ...result, status: 'nav-unverified', brokerTickStatus: valid ? now - timestamp > MAX_AGE_MS ? 'old' : 'recent' : 'unknown',
+      ...(valid ? { brokerTickAgeHours: Math.floor((now - timestamp) / 3600000) } : {}),
+    };
+  }
   if (!Number.isFinite(timestamp) || timestamp > now) return result;
   const exchange = quote?.exchange?.replace(/[\s-]/g, '').toUpperCase();
   const isEquity = ['Stock', 'ETF', 'Fund'].includes(position.type);

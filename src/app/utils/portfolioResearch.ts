@@ -2,6 +2,10 @@ import type { AnalysisPosition } from './portfolioAnalysis';
 
 // Discovery pointers, not cached financial figures or a claim that this is the latest filing.
 const issuerHints: Record<string, { issuer: string; listing: string; sourceUrls: string[] }> = {
+  LU3170240538: {
+    issuer: 'Apollo Global Private Markets ELTIF, Klasse A2 UNH', listing: 'Nicht börslicher ELTIF; Broker-Preis und offizieller NAV sind getrennt zu prüfen',
+    sourceUrls: ['https://www.apollo.com/agpm-eltif'],
+  },
   CA03880B1040: {
     issuer: 'Arbor Metals Corp.', listing: 'TSXV: ABR; Frankfurt: 432',
     sourceUrls: [
@@ -13,6 +17,9 @@ const issuerHints: Record<string, { issuer: string; listing: string; sourceUrls:
     ],
   },
 };
+
+export const fundResearchInstructions = ' Für Fonds und insbesondere ELTIFs identifiziere die exakte Anteilsklasse per ISIN. Recherchiere den neuesten offiziell veröffentlichten NAV je Anteil mit NAV-Währung, Bewertungsstichtag, Veröffentlichungsdatum, Quelle und Bewertungsfrequenz. Veröffentlichungsdatum und Abrufdatum sind kein NAV-Stichtag. Broker-Kurse und deren Tick-Zeitpunkte sind kein Nachweis eines offiziellen Fonds-NAV. Wenn der aktuelle NAV oder sein Stichtag nicht öffentlich belegt werden kann, diese konkrete Lücke nennen; keinen NAV aus dem Broker-Kurs ableiten. Die Aktualität anhand des belegten Bewertungszyklus prüfen, nicht pauschal anhand einer 48-Stunden-Regel für Börsenkurse.';
+
 
 export function buildResearchSecurities(positions: AnalysisPosition[]) {
   return positions.map(({ id, name, isin, symbol, type }) => {

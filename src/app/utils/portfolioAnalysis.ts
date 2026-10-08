@@ -31,6 +31,7 @@ export interface AnalysisPosition {
 }
 
 export interface PortfolioAnalysisRequest {
+  targetAssetId?: number;
   provider: 'chatgpt' | 'api';
   model?: string;
   positions: AnalysisPosition[];
@@ -40,14 +41,23 @@ export interface PortfolioAnalysisRequest {
 
 export interface AnalysisSource { title: string; url: string; }
 export interface AssetRecommendation {
+  plannedAmountEUR?: number | null;
+  updatedAt?: string;
+  model?: string;
+  navEvidence?: import('./eltifValuation').NavEvidence | null;
+  infos?: string[];
+  warnings?: string[];
   assetId: number;
   action: 'Kaufen' | 'Halten' | 'Verkaufen' | 'Prüfen';
   rationale: string;
   risk: string;
   sourceIndexes: number[];
+  tradeCheck?: { costs: string; taxes: string; conclusion: string };
 }
 export interface PortfolioAnalysisResult {
+  fundingCheck?: import('./portfolioFunding').FundingCheck;
   summary: string;
+  infos?: string[];
   warnings: string[];
   recommendations: AssetRecommendation[];
   newAssetRecommendations?: NewAssetRecommendation[];
@@ -58,6 +68,7 @@ export interface PortfolioAnalysisResult {
 }
 
 export interface NewAssetRecommendation {
+  plannedAmountEUR?: number | null;
   name: string;
   isin: string;
   symbol: string;
@@ -128,13 +139,16 @@ export function validateAnalysisRequest(request: PortfolioAnalysisRequest): void
       throw new Error('Die Kurs- oder Wechselkursdaten sind ungültig.');
     }
   }
+  if (request.targetAssetId !== undefined && (!Number.isInteger(request.targetAssetId) || !ids.has(request.targetAssetId))) {
+    throw new Error('Das ausgewählte Asset wird nicht mehr gehalten.');
+  }
   if (request.priceUpdatedAt !== null && (!request.priceUpdatedAt || !Number.isFinite(Date.parse(request.priceUpdatedAt)))) {
     throw new Error('Der Zeitpunkt der Kursaktualisierung ist ungültig.');
   }
 }
 
 export interface PortfolioAnalysisProgress {
-  stage: 'preparing' | 'research' | 'analysis' | 'validating' | 'correcting' | 'retrying';
+  stage: 'prices' | 'preparing' | 'research' | 'analysis' | 'validating' | 'correcting' | 'retrying';
   lastActivityAt: number;
   researchCompleted?: number;
   researchTotal?: number;

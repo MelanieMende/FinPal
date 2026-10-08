@@ -1,7 +1,11 @@
-import { createAsyncThunk, createSlice, type PayloadAction } from '@reduxjs/toolkit';
+import { createAsyncThunk, createSlice, type PayloadAction, type ThunkDispatch, type UnknownAction } from '@reduxjs/toolkit';
+import { loadPricesAndDividends } from '../assets/assets.reducer';
+import { buildAnalysisPositions } from '../../utils/portfolioAnalysis';
+import { MARKET_PRICE_UPDATED_AT_KEY } from '../../utils/syncTimestamps';
 import type { PortfolioAnalysisRequest, PortfolioAnalysisResult, PortfolioAnalysisProgress, SavedPortfolioAnalysis } from '../../utils/portfolioAnalysis';
 
 interface AnalysisState {
+  targetAssetId?: number | null;
   open: boolean;
   progress: PortfolioAnalysisProgress | null;
   startedAt: number;
@@ -26,16 +30,29 @@ export const restorePortfolioAnalysis = createAsyncThunk<SavedPortfolioAnalysis 
 export const analyzePortfolio = createAsyncThunk<
   { report: PortfolioAnalysisResult; snapshot: string },
   { request: PortfolioAnalysisRequest; snapshot: string },
-  { state: { portfolioAnalysis: AnalysisState }; rejectValue: string }
->('portfolioAnalysis/analyze', async ({ request, snapshot }, { dispatch, requestId, rejectWithValue }) => {
+  { state: { portfolioAnalysis: AnalysisState; assets: Asset[] }; dispatch: ThunkDispatch<{ portfolioAnalysis: AnalysisState; assets: Asset[] }, unknown, UnknownAction>; rejectValue: string }
+>('portfolioAnalysis/analyze', async ({ request, snapshot }, { dispatch, getState, requestId, rejectWithValue }) => {
   let unsubscribe: (() => void) | undefined;
   try {
     // The request and listener belong to the app store, independent of route mounts.
     unsubscribe = window.API.onPortfolioAnalysisProgress?.(progress => {
       dispatch(analysisProgressReceived({ progress, requestId }));
     });
-    const report = await window.API.analyzePortfolio(request, snapshot);
-    return { report, snapshot };
+    await dispatch(loadPricesAndDividends({
+      assetIDs: request.positions.map(position => position.id),
+      preferTradeRepublicPrice: false, includeDividends: false,
+    })).unwrap();
+    const refreshedRequest = { ...request,
+      positions: buildAnalysisPositions(getState().assets),
+      priceUpdatedAt: localStorage.getItem(MARKET_PRICE_UPDATED_AT_KEY) ?? request.priceUpdatedAt,
+    };
+    // Preserve the form's string values for the UI change detector.
+    let profileSnapshot: unknown = request.profile;
+    try { profileSnapshot = JSON.parse(snapshot).profile ?? profileSnapshot; } catch { /* Legacy caller without a JSON snapshot. */ }
+    const refreshedSnapshot = JSON.stringify({ positions: refreshedRequest.positions, profile: profileSnapshot, priceUpdatedAt: refreshedRequest.priceUpdatedAt });
+    dispatch(analysisProgressReceived({ progress: { stage: 'preparing', lastActivityAt: Date.now() }, requestId }));
+    const report = await window.API.analyzePortfolio(refreshedRequest, refreshedSnapshot);
+    return { report, snapshot: refreshedSnapshot };
   } catch (error) {
     return rejectWithValue(error instanceof Error ? error.message : 'Die KI-Anfrage ist fehlgeschlagen.');
   } finally { unsubscribe?.(); }
@@ -59,21 +76,26 @@ const slice = createSlice({
       state.open = true;
     })
     .addCase(analyzePortfolio.pending, (state, action) => {
+      state.targetAssetId = action.meta.arg.request.targetAssetId ?? null;
       state.restoreBlocked = true;
       state.startedAt = Date.now();
-      state.progress = { stage: 'preparing', lastActivityAt: state.startedAt };
+      state.progress = { stage: 'prices', lastActivityAt: state.startedAt };
       state.requestId = action.meta.requestId;
       state.provider = action.meta.arg.request.provider;
       state.model = action.meta.arg.request.model ?? '';
-      state.result = null; state.resultSnapshot = ''; state.error = null;
+      if (action.meta.arg.request.targetAssetId === undefined) { state.result = null; state.resultSnapshot = ''; }
+      state.error = null;
     })
     .addCase(analyzePortfolio.fulfilled, (state, action) => {
+      state.targetAssetId = null;
       state.restoreBlocked = true;
       state.progress = null; state.requestId = null;
       state.lastResult = action.payload.report;
-      state.result = action.payload.report; state.resultSnapshot = action.payload.snapshot;
+      state.result = action.payload.report;
+      if (action.meta.arg.request.targetAssetId === undefined) state.resultSnapshot = action.payload.snapshot;
     })
     .addCase(analyzePortfolio.rejected, (state, action) => {
+      state.targetAssetId = null;
       state.progress = null; state.requestId = null;
       state.error = action.payload ?? action.error.message ?? 'Die KI-Anfrage ist fehlgeschlagen.';
     }),

@@ -5,6 +5,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { safeStorage } from 'electron';
 import extract from 'extract-zip';
+import { tradeRepublicPortfolioExport } from './tradeRepublicPortfolioExport';
 
 const UV_VERSION = '0.11.30';
 const UV_WINDOWS_X64_SHA256 = 'be8d78c992312212e5cc05e9f9de3fa996db73b7c86a186dfb9231eb9f91d33e';
@@ -35,6 +36,8 @@ export interface TradeRepublicQuote {
   price: number;
   averageBuyIn: number;
   netValue: number;
+  quoteAsOf?: string;
+  exchange?: string;
 }
 
 export interface TradeRepublicQuoteCache {
@@ -130,6 +133,10 @@ export function parsePytrPortfolioCsv(contents: string): TradeRepublicQuote[] {
 
   return lines.slice(1).map(line => {
     const values = line.split(';');
+    const timestamp = stringValue(values[column('quoteAsOf')]);
+    const validTime = /^\d{4}-\d{2}-\d{2}T.*(?:Z|[+-]\d{2}:\d{2})$/.test(timestamp)
+      && Number.isFinite(Date.parse(timestamp)) && Date.parse(timestamp) <= Date.now();
+    const exchange = stringValue(values[column('exchange')]);
     return {
       name: stringValue(values[column('Name')]),
       isin: stringValue(values[column('ISIN')]).toUpperCase(),
@@ -137,6 +144,8 @@ export function parsePytrPortfolioCsv(contents: string): TradeRepublicQuote[] {
       price: numberValue(values[column('price')]),
       averageBuyIn: numberValue(values[column('avgCost')]),
       netValue: numberValue(values[column('netValue')]),
+      ...(validTime ? { quoteAsOf: new Date(timestamp).toISOString() } : {}),
+      ...(exchange ? { exchange } : {}),
     };
   }).filter(quote => quote.name.length > 0 && quote.price > 0);
 }
@@ -208,8 +217,10 @@ export class TradeRepublicSync {
       let quoteError: string | undefined;
       let freshQuotes: TradeRepublicQuote[] = [];
       try {
+        const portfolioHelper = path.join(tempDir, 'portfolio-with-timestamps.py');
+        fs.writeFileSync(portfolioHelper, tradeRepublicPortfolioExport, { mode: 0o600 });
         await this.runPytrCommand(runner, [
-          'pytr', 'portfolio', '--lang', 'en', '--no-decimal-localization', '--store_credentials', '--v2',
+          '--with', 'pytr', 'python', portfolioHelper, 'portfolio', '--lang', 'en', '--no-decimal-localization', '--store_credentials', '--v2',
           '--output', portfolioFile,
         ], isolatedHome, portfolioFile);
         freshQuotes = parsePytrPortfolioCsv(fs.readFileSync(portfolioFile, 'utf8'));

@@ -73,6 +73,15 @@ describe('parsePytrJsonLines', () => {
 });
 
 describe('parsePytrPortfolioCsv', () => {
+  it('preserves the exact broker price timestamp and exchange without using the sync date', () => {
+    const input = 'Name;ISIN;quantity;price;avgCost;netValue;quoteAsOf;exchange\nUS Treasury;US912810SQ22;180;0.5784;0.5595;104.11;2026-10-02T17:00:11+02:00;LSX';
+    expect(parsePytrPortfolioCsv(input)[0]).toMatchObject({ quoteAsOf: '2026-10-02T15:00:11.000Z', exchange: 'LSX' });
+  });
+
+  it.each(['', 'not-a-date', '2026-10-02', '2099-01-01T00:00:00Z'])('does not invent or accept an invalid price time (%s)', timestamp => {
+    const input = 'Name;ISIN;quantity;price;avgCost;netValue;quoteAsOf\nApollo;LU3170240538;0.1;109.395;100;10.94;' + timestamp;
+    expect(parsePytrPortfolioCsv(input)[0].quoteAsOf).toBeUndefined();
+  });
   it('maps the Trade Republic portfolio export to current quotes', () => {
     const input = [
       'Name;ISIN;quantity;price;avgCost;netValue',

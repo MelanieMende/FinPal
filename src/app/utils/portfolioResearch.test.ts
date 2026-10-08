@@ -1,5 +1,5 @@
 import { buildAnalysisPositions } from './portfolioAnalysis';
-import { buildResearchSecurities } from './portfolioResearch';
+import { buildResearchSecurities, fundResearchInstructions } from './portfolioResearch';
 
 it('provides filing discovery pointers by normalized ISIN without exposing holdings', () => {
   const positions = buildAnalysisPositions([
@@ -16,4 +16,11 @@ it('provides filing discovery pointers by normalized ISIN without exposing holdi
     expect(security).not.toHaveProperty('price');
     expect(security).not.toHaveProperty('costBasis');
   }
+});
+
+it('identifies the Apollo share class and requires a separately evidenced NAV date', () => {
+  const positions = buildAnalysisPositions([{ ID: 32, name: 'Apollo', isin: 'LU3170240538', symbol: 'A41HPL', type: 'Fund', current_shares: 0.1 }] as Asset[]);
+  expect(buildResearchSecurities(positions)[0].discoveryHints).toMatchObject({ issuer: 'Apollo Global Private Markets ELTIF, Klasse A2 UNH', sourceUrls: ['https://www.apollo.com/agpm-eltif'] });
+  expect(fundResearchInstructions).toContain('Bewertungsstichtag');
+  expect(fundResearchInstructions).toContain('kein Nachweis eines offiziellen Fonds-NAV');
 });

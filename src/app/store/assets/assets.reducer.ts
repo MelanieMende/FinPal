@@ -1,6 +1,7 @@
-import { createAsyncThunk, createSlice } from '@reduxjs/toolkit'
+import { createAsyncThunk, createSlice, type Dispatch } from '@reduxjs/toolkit'
 import { quoteTime, restoreQuote, saveQuote, clearCachedQuote, type QuoteMetadata, type EuroExchangeRates } from '../../utils/quoteMetadata';
 import type { TradeRepublicQuote } from '../../utils/tradeRepublicSync';
+import { calendarDate, todayDate, upcomingForecasts, isDividendForecastAsset, needsDividendForecast, type DividendForecast } from '../../utils/dividendForecasts';
 import { recordMarketPriceUpdate } from '../../utils/syncTimestamps';
 import { readBondHolding, type BondHolding } from '../../utils/bondHoldings';
 
@@ -245,45 +246,71 @@ export const loadPricesAndDividends = createAsyncThunk(
 
 			if (props?.includeDividends === false) continue
 
-			try {
-				const json = await callDivvyDiaryAPI(asset.isin)
-				console.log(asset.name, '- divvydiary: ', json)
-
-				if(json.dividends[0]) {
-					let sql  = `
-						UPDATE assets SET exDividendDate = '${json.dividends[0].exDate}'
-						WHERE ID = ${asset.ID}`
-
-						window.API.sendToDB(sql)
-							.then((result:any) => {
-								console.log(result)
-							});
-
-					let next_estimated_dividend_per_share = new Date(json.dividends[0].payDate) >= new Date() ? json.dividends[0].amount : 0
-
-					// Dividend currency can differ from the trading currency.
-					const dividendCurrency = json.dividends[0].currency || json.currency
-					if (next_estimated_dividend_per_share > 0 && dividendCurrency !== 'EUR') {
-						try {
-							const rate = dividendCurrency ? (await getFX()).rates[dividendCurrency] : undefined
-							if (!Number.isFinite(rate) || rate <= 0) throw new Error('Dividendenwährung oder Wechselkurs fehlt.')
-							next_estimated_dividend_per_share *= rate
-						} catch { next_estimated_dividend_per_share = undefined }
-					}
-
-					thunkAPI.dispatch(setDividends({ asset, dividends: json.dividends }))
-					thunkAPI.dispatch(setExDividendDate({ asset, exDividendDate: json.dividends[0].exDate }))
-					thunkAPI.dispatch(setPayDividendDate({ asset, payDividendDate: json.dividends[0].payDate }))
-					thunkAPI.dispatch(setDividendFrequency({ asset, dividendFrequency: json.dividendFrequency }))
-					thunkAPI.dispatch(setNextEstimatedDividendPerShare({ asset, next_estimated_dividend_per_share}))
-				}
-			} 
-			catch (error) {
-				console.error(error.message);
-			}
+			await refreshAssetDividends(asset, thunkAPI.dispatch, getFX)
 		}
   }
 )
+
+export const loadDividendForecasts = createAsyncThunk('assets/loadDividendForecasts', async (options: { onlyMissing?: boolean } | void, thunkAPI) => {
+  const allAssets = (thunkAPI.getState() as State).assets;
+  const assets = allAssets.filter(options && options.onlyMissing ? needsDividendForecast : isDividendForecastAsset);
+  for (const asset of allAssets) {
+    if (!isDividendForecastAsset(asset) && asset.dividendForecastError) thunkAPI.dispatch(setDividendForecastError({ asset, error: undefined }));
+  }
+  let fx: Promise<EuroExchangeRates> | undefined;
+  const getFX = () => fx ??= window.API.getEuroExchangeRates ? window.API.getEuroExchangeRates() : Promise.reject(new Error('Wechselkurszugriff fehlt.'));
+  for (const asset of assets) await refreshAssetDividends(asset, thunkAPI.dispatch, getFX);
+});
+
+const dividendRequests = new WeakMap<Dispatch, Map<number, object>>();
+
+async function refreshAssetDividends(asset: Asset, dispatch: Dispatch, getFX: () => Promise<EuroExchangeRates>) {
+  if (!isDividendForecastAsset(asset)) {
+    dispatch(setDividendForecastError({ asset, error: undefined }));
+    return;
+  }
+  let requests = dividendRequests.get(dispatch);
+  if (!requests) { requests = new Map(); dividendRequests.set(dispatch, requests); }
+  const request = {};
+  requests.set(asset.ID, request);
+  dispatch(setDividendForecastRequested({ asset }));
+  const isLatest = () => requests!.get(asset.ID) === request;
+  try {
+    const json = await callDivvyDiaryAPI(asset.isin);
+    if (!json || !Array.isArray(json.dividends)) throw new Error('Keine gültigen Dividendendaten erhalten.');
+    const upcoming = upcomingForecasts(json.dividends);
+    const transactions = upcoming.length ? await window.API.sendToDB('SELECT date, type, amount FROM transactions WHERE asset_ID = ' + asset.ID + ' ORDER BY date, ID') : [];
+    const forecasts: DividendForecast[] = [];
+    for (const dividend of upcoming) {
+      const currency = dividend.currency || json.currency;
+      let amountEUR: number | undefined;
+      if (currency === 'EUR') amountEUR = dividend.amount;
+      else if (currency) {
+        try { const rate = (await getFX()).rates[currency]; if (Number.isFinite(rate) && rate > 0) amountEUR = dividend.amount * rate; } catch { /* Display the original currency instead of inventing EUR. */ }
+      }
+      const exDate = calendarDate(dividend.exDate);
+      let eligibleShares: number | undefined;
+      if (exDate && exDate <= todayDate() && Array.isArray(transactions) && transactions.length) {
+        eligibleShares = transactions.filter(row => calendarDate(row.date) && calendarDate(row.date)! < exDate)
+          .reduce((shares, row) => shares + (row.type === 'Buy' ? Number(row.amount) : row.type === 'Sell' ? -Number(row.amount) : 0), 0);
+      } else if (exDate && exDate > todayDate()) eligibleShares = asset.current_shares;
+      forecasts.push({ ...dividend, currency, amountEUR, eligibleShares });
+    }
+    if (!isLatest()) return;
+    dispatch(setDividends({ asset, dividends: forecasts }));
+    dispatch(setDividendForecastError({ asset, error: undefined }));
+    const next = forecasts[0];
+    dispatch(setPayDividendDate({ asset, payDividendDate: next?.payDate }));
+    dispatch(setNextEstimatedDividendPerShare({ asset, next_estimated_dividend_per_share: next?.amountEUR }));
+    dispatch(setDividendFrequency({ asset, dividendFrequency: json.dividendFrequency }));
+    if (next?.exDate) {
+      dispatch(setExDividendDate({ asset, exDividendDate: next.exDate }));
+      if (next.eligibleShares !== undefined) dispatch(setDividendEligibleShares({ asset, shares: next.eligibleShares }));
+    }
+  } catch (error) {
+    if (isLatest()) dispatch(setDividendForecastError({ asset, error: error instanceof Error ? error.message : 'Dividenden konnten nicht geladen werden.' }));
+  }
+}
 
 export const setIsWatched = createAsyncThunk(
   'assets/setIsWatched',
@@ -406,6 +433,18 @@ const assetsSlice = createSlice({
 			})
 			return mapped
 		},
+        setDividendForecastRequested(state, action) {
+          const asset = state.find(item => item.ID === action.payload.asset.ID);
+          if (asset) asset.dividendForecastRequested = true;
+        },
+        setDividendForecastError(state, action) {
+          const asset = state.find(item => item.ID === action.payload.asset.ID);
+          if (asset) asset.dividendForecastError = action.payload.error;
+        },
+        setDividendEligibleShares(state, action) {
+          const asset = state.find(item => item.ID === action.payload.asset.ID);
+          if (asset) asset.current_shares_before_ex_date = action.payload.shares;
+        },
 		setDividends(state, action) {
 			let mapped = state.map((item:Asset, index:number) => { 
 				if(item.ID === action.payload.asset.ID) {
@@ -506,7 +545,10 @@ export const {
 	setAssets,
 	setCurrencySymbol,
 	setCurrentInvest,
+	setDividendForecastRequested,
 	setDividends,
+  setDividendForecastError,
+  setDividendEligibleShares,
 	setDividendFrequency,
 	setDividendYield,
 	setExDividendDate,

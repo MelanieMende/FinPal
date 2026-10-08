@@ -441,3 +441,47 @@ it.each(['current', 'older', 'missing time', 'wrong currency', 'wrong notation',
     expect(position.bondHolding?.purchaseAccruedInterestEUR).toBe(-0.17);
   }).finally(() => clock.mockRestore());
 });
+
+
+it('loads upcoming dividends independently of prices, picks the nearest date and keeps entitlement after selling', async () => {
+  jest.useFakeTimers().setSystemTime(new Date('2026-10-08T12:00:00Z'));
+  const asset = { ID: 11, name: 'MCD', symbol: 'MCD', isin: 'US5801351017', type: 'Stock', current_shares: 0, current_shares_before_ex_date: 10, exDividendDate: '2026-01-01' } as Asset;
+  window.API = {
+    sendToDB: jest.fn().mockResolvedValue([{ date: '2026-09-01', type: 'Buy', amount: 10 }, { date: '2026-10-03', type: 'Sell', amount: 10 }]),
+    sendToDivvyDiaryAPI: jest.fn().mockResolvedValue({ currency: 'USD', dividends: [{ payDate: '2026-01-01', exDate: '2025-12-01', amount: 1 }, { payDate: '2026-12-15', exDate: '2026-12-01', amount: 2 }, { payDate: '2026-10-08', exDate: '2026-10-01', amount: 1.5 }] }),
+    getEuroExchangeRates: jest.fn().mockResolvedValue({ rates: { USD: 0.9 }, source: 'FX', asOf: '2026-10-08T00:00:00Z', fetchedAt: '2026-10-08T10:00:00Z' }),
+    sendToYahooFinanceAPI: jest.fn(),
+  };
+  try {
+    const store = setupStore({ assets: [asset] });
+    await store.dispatch(assetsReducer.loadDividendForecasts()).unwrap();
+    const updated = store.getState().assets[0];
+    expect(updated.payDividendDate).toBe('2026-10-08');
+    expect(updated.next_estimated_dividend_per_share).toBeCloseTo(1.35);
+    expect(updated.dividends![0]).toMatchObject({ eligibleShares: 10, amountEUR: 1.35 });
+    expect(updated.dividends![1].eligibleShares).toBe(0);
+    expect(window.API.sendToYahooFinanceAPI).not.toHaveBeenCalled();
+    expect(window.API.getEuroExchangeRates).toHaveBeenCalledTimes(1);
+    jest.mocked(window.API.sendToDivvyDiaryAPI).mockRejectedValueOnce(new Error('DivvyDiary requires an API key'));
+    await store.dispatch(assetsReducer.loadDividendForecasts()).unwrap();
+    expect(store.getState().assets[0].dividends).toEqual(updated.dividends);
+    expect(store.getState().assets[0].dividendForecastError).toContain('API key');
+  } finally { jest.useRealTimers(); }
+});
+
+it('keeps a successful retry when an older concurrent dividend request fails later', async () => {
+  const asset = { ID: 11, name: 'MCD', symbol: 'MCD', isin: 'US5801351017', type: 'Stock', current_shares: 1, dividendForecastError: 'Previous failure' } as Asset;
+  let failOlder!: (error: Error) => void;
+  window.API = {
+    sendToDB: jest.fn(),
+    sendToDivvyDiaryAPI: jest.fn().mockImplementationOnce(() => new Promise((_, reject) => { failOlder = reject; })).mockResolvedValue({ currency: 'EUR', dividends: [] }),
+  };
+  const store = setupStore({ assets: [asset] });
+  const older = store.dispatch(assetsReducer.loadDividendForecasts());
+  await store.dispatch(assetsReducer.loadDividendForecasts()).unwrap();
+  expect(store.getState().assets[0].dividendForecastError).toBeUndefined();
+  failOlder(new Error('Old API-key error'));
+  await older.unwrap();
+  expect(store.getState().assets[0].dividendForecastError).toBeUndefined();
+  expect(store.getState().assets[0].dividends).toEqual([]);
+});

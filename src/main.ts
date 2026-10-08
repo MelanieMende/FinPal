@@ -7,6 +7,7 @@ import { TradeRepublicSync } from './app/utils/tradeRepublicSync';
 import { ChatGptAuth } from './app/utils/chatGptAuth';
 import { PortfolioAnalysisService } from './app/utils/portfolioAnalysisService';
 import type { PortfolioAnalysisRequest } from './app/utils/portfolioAnalysis';
+import { DivvyDiaryService } from './app/utils/divvyDiaryService';
 import { fetchEuroExchangeRates } from './app/utils/euroExchangeRates';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
@@ -29,6 +30,7 @@ else {
 
 const dataPath = app.getPath('userData');
 const filePath = path.join(dataPath, 'config.json');
+const divvyDiary = new DivvyDiaryService(dataPath);
 const tradeRepublicSync = new TradeRepublicSync(dataPath);
 const chatGptAuth = new ChatGptAuth(dataPath);
 const portfolioAnalysis = new PortfolioAnalysisService(dataPath, fetch, chatGptAuth);
@@ -327,13 +329,8 @@ ipcMain.handle('yahoo-finance-api-message', async (_event, args: { symbol: strin
 	}
 });
 
-ipcMain.handle('divvy-diary-api-message', async (_event, args) => {
-  console.log('Received request for Divvy Diary API with ISIN:', args.isin);
-  const response = await fetch('https://api.divvydiary.com/symbols/' + args.isin)
-  if(!response.ok) {
-    throw new Error(`Response status: ${response.status}`);
-  }
-  const data = await response.json();
-  //console.log(data);
-  return data;
-});
+ipcMain.handle('divvy-diary:status', () => divvyDiary.status());
+ipcMain.handle('divvy-diary:save-key', (_event, key: string) => divvyDiary.saveKey(key));
+ipcMain.handle('divvy-diary:forget-key', () => divvyDiary.forgetKey());
+ipcMain.handle('divvy-diary:settings', () => shell.openExternal('https://divvydiary.com/settings'));
+ipcMain.handle('divvy-diary-api-message', (_event, args: { isin: string }) => divvyDiary.dividends(args.isin));

@@ -4,6 +4,7 @@ import { Card, H3, H5, Icon } from '@blueprintjs/core';
 
 import DividendList from './components/DividendList';
 import DividendCalendar from './components/DividendCalendar';
+import DividendForecastStatus from './components/DividendForecastStatus';
 import UpcomingDividends from './components/UpcomingDividends';
 import DividendBarChart from './components/DividendBarChart';
 
@@ -107,6 +108,7 @@ export default function DividendsRoute() {
 							<H5 className="m-0 text-sm font-bold uppercase tracking-wider text-gray-300">Upcoming Payments</H5>
 						</div>
 						<div className="p-4">
+							<DividendForecastStatus />
 							<UpcomingDividends />
 						</div>
 					</Card>

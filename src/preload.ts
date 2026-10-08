@@ -63,6 +63,10 @@ contextBridge.exposeInMainWorld('API', {
   sendToYahooFinanceAPI(args: { symbol:string, isin?:string, type?:Asset['type']}) {
     return ipcRenderer.invoke('yahoo-finance-api-message', args);
   },
+  getDivvyDiaryStatus: () => ipcRenderer.invoke('divvy-diary:status'),
+  saveDivvyDiaryKey: (key: string) => ipcRenderer.invoke('divvy-diary:save-key', key),
+  forgetDivvyDiaryKey: () => ipcRenderer.invoke('divvy-diary:forget-key'),
+  openDivvyDiarySettings: () => ipcRenderer.invoke('divvy-diary:settings'),
   sendToDivvyDiaryAPI(args: { isin:string}) {
     return ipcRenderer.invoke('divvy-diary-api-message', args);
   },

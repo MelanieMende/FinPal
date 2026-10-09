@@ -1,5 +1,5 @@
 import { buildInvestorContext, deriveAcquisitionHistory, newInvestorFacts, readInvestorFacts, saveInvestorFacts,
-  seedInvestorFacts, validInvestorContext, validAssetInvestorFacts, investorFactsStorageKey } from './investorFacts';
+  seedInvestorFacts, validInvestorContext, validAssetInvestorFacts, investorFactsStorageKey, depotHistoryKey } from './investorFacts';
 import { buildTradeEconomics } from './tradeEconomics';
 import { buildAnalysisPositions, validateAnalysisRequest, type PortfolioAnalysisRequest } from './portfolioAnalysis';
 
@@ -10,6 +10,71 @@ const trades = [
   { ID: 3, asset_ID: 1, date: '2025-03-01', type: 'Sell', amount: 1, price_per_share: 70 },
 ] as Transaction[];
 beforeEach(() => localStorage.clear());
+
+it('inherits one persisted depot confirmation across assets and future purchases, with explicit asset exceptions', () => {
+  const second = { ...asset, ID: 2, current_shares: 1 };
+  const allAssets = [asset, second];
+  const allTrades = [...trades, { ...trades[0], ID: 10, asset_ID: 2, amount: 1 }].map(t => ({ ...t, depot: 'Trade Republic' }));
+  const facts = readInvestorFacts('db', allAssets);
+  facts.depotHistories = { [depotHistoryKey('Trade Republic')]: {
+    provider: 'Trade Republic', coverage: 'complete', confirmedAt: '2026-10-09T10:00:00Z',
+  } };
+  saveInvestorFacts('db', facts);
+  const restored = readInvestorFacts('db', allAssets);
+  const context = buildInvestorContext(restored, allAssets, allTrades);
+  expect(context.assets.map(a => a.acquisitionHistory)).toEqual(expect.arrayContaining([
+    expect.objectContaining({ assetId: 1, coverage: 'complete', coverageSource: 'depot', coverageConfirmedAt: '2026-10-09T10:00:00Z' }),
+    expect.objectContaining({ assetId: 2, coverage: 'complete', coverageSource: 'depot' }),
+  ]));
+  expect(validInvestorContext(context)).toBe(true);
+  restored.assets[2] = { ...restored.assets[2], historyCoverage: 'incomplete', historyCoverageOverride: true, confirmedAt: '2026-10-09T11:00:00Z' };
+  expect(buildInvestorContext(restored, allAssets, allTrades).assets[1].acquisitionHistory).toMatchObject({ coverage: 'incomplete', coverageSource: 'asset' });
+  restored.assets[2].historyCoverageOverride = false;
+  restored.assets[2].historyCoverage = 'unknown';
+  expect(buildInvestorContext(restored, allAssets, allTrades).assets[1].acquisitionHistory.coverage).toBe('complete');
+  // Newly bought assets in the same depot do not require another individual confirmation.
+  const third = { ...second, ID: 3 };
+  const nextAssets = [...allAssets, third];
+  const next = seedInvestorFacts(restored, nextAssets);
+  const nextTrades = [...allTrades, { ...allTrades[3], ID: 11, asset_ID: 3 }];
+  expect(buildInvestorContext(next, nextAssets, nextTrades).assets[2].acquisitionHistory.coverage).toBe('complete');
+});
+
+it('does not inherit completeness across depot changes, unassigned transactions or gaps in holdings', () => {
+  const facts = readInvestorFacts('db', [asset]);
+  facts.depotHistories = { 'trade republic': { provider: 'Trade Republic', coverage: 'complete', confirmedAt: '2026-10-09T10:00:00Z' } };
+  const assigned = trades.map(t => ({ ...t, depot: 'Trade Republic' }));
+  const resolve = (rows = assigned, currentAsset = asset) => buildInvestorContext(facts, [currentAsset], rows).assets[0].acquisitionHistory;
+  expect(resolve().coverage).toBe('complete');
+  expect(resolve([{ ...assigned[0], depot: 'Other broker' }, ...assigned.slice(1)])).toMatchObject({ coverage: 'unknown', coverageIssues: [expect.stringContaining('Depotwechsel')] });
+  expect(resolve(assigned.map(t => ({ ...t, depot: '' })))).toMatchObject({ coverage: 'unknown', coverageIssues: [expect.stringContaining('Depotzuordnung')] });
+  expect(resolve(assigned, { ...asset, current_shares: 5 })).toMatchObject({ coverage: 'unknown', coverageIssues: [expect.stringContaining('Bestand')] });
+  facts.assets[1].custody.provider = 'New depot';
+  expect(resolve()).toMatchObject({ coverage: 'unknown', coverageSource: 'unconfirmed' });
+  expect(validInvestorContext(buildInvestorContext(facts, [asset], assigned))).toBe(true);
+});
+
+it('preserves previous asset confirmations when migrating settings without depot-level coverage', () => {
+  const facts = readInvestorFacts('db', [asset]);
+  delete facts.depotHistories;
+  facts.assets[1].historyCoverage = 'complete';
+  facts.assets[1].confirmedAt = '2026-10-09T10:00:00Z';
+  saveInvestorFacts('db', facts);
+  const restored = readInvestorFacts('db', [asset]);
+  expect(buildInvestorContext(restored, [asset], trades).assets[0].acquisitionHistory).toMatchObject({ coverage: 'complete', coverageSource: 'asset' });
+  expect(readInvestorFacts('another-db', [asset]).depotHistories).toEqual({});
+});
+
+it('asks again when another depot appears after a scoped asset confirmation', () => {
+  const facts = readInvestorFacts('db', [asset]);
+  facts.assets[1] = { ...facts.assets[1], historyCoverage: 'complete', historyCoverageOverride: true,
+    historyCoverageDepots: ['trade republic'], confirmedAt: '2026-10-09T10:00:00Z' };
+  const rows = trades.map(t => ({ ...t, depot: 'Trade Republic' }));
+  expect(buildInvestorContext(facts, [asset], rows).assets[0].acquisitionHistory.coverage).toBe('complete');
+  rows[0].depot = 'Other broker';
+  expect(buildInvestorContext(facts, [asset], rows).assets[0].acquisitionHistory).toMatchObject({ coverage: 'unknown',
+    coverageIssues: [expect.stringContaining('weiteres Depot')] });
+});
 
 it('seeds confirmed Trade Republic custody for current assets and preserves per-asset changes', () => {
   const facts = readInvestorFacts('db-one', [asset]);

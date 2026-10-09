@@ -54,6 +54,7 @@ it('uses stored investor facts in analysis while keeping acquisition lots out of
   expect(input.tradeEconomics[0]).toMatchObject({ taxResidence: 'CH', custody: { provider: 'Trade Republic' },
     acquisitionHistory: { coverage: 'complete', remainingLots: [{ transactionId: 71 }] } });
   expect(analysisBody.instructions).toContain('Bekannte Angaben niemals pauschal als unbekannt');
+  expect(analysisBody.instructions).toContain('Eine unbestätigte Historie allein verlangt weder die Aktion Prüfen');
   expect(JSON.parse(fs.readFileSync(path.join(dir, 'portfolio-ai-last-analysis.json'), 'utf8')).request.investorContext).toEqual(investorContext);
 });
 

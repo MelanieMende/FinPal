@@ -223,7 +223,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
   }
 
   return (
-    <Card className="glass-card mb-6" data-testid="portfolio-analysis">
+    <Card className="glass-card analysis-form mb-6" data-testid="portfolio-analysis">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <H5 className="m-0 text-sm font-bold text-indigo-300">KI-Portfolio-Analyse</H5>
@@ -277,14 +277,14 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
           <label className="block text-xs text-gray-300">OpenAI-API-Schlüssel
             <input type="password" autoComplete="off" className={`${inputClass} mt-1`} value={apiKey} disabled={busy} onChange={e => setApiKey(e.target.value)} placeholder="sk-…" />
           </label>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button disabled={busy || !secureStorage || !apiKey.trim()} onClick={() => void run(async () => {
               await window.API.savePortfolioAIKey(apiKey); setApiKey(''); await refreshStatus();
             })}>Schlüssel speichern</Button>
             {hasKey && <Button disabled={busy} onClick={() => void run(async () => { await window.API.forgetPortfolioAIKey(); setApiKey(''); await refreshStatus(); })}>Schlüssel entfernen</Button>}
           </div>
         </div>}
-        <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
+        <div className="analysis-fields">
           <label className="text-xs text-gray-300">Anlageziel
             <select className={`${inputClass} mt-1`} style={{ colorScheme: 'dark' }} value={profile.goal} disabled={busy} onChange={e => updateProfile('goal', e.target.value)}>
               <option value="">Bitte auswählen</option><option value="growth">Vermögensaufbau</option><option value="income">Laufende Erträge</option><option value="preservation">Kapitalerhalt</option>

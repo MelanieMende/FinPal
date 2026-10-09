@@ -1,5 +1,11 @@
 export const INVESTOR_FACTS_KEY = 'finpal.analysis.investorFacts.v1';
 export type HistoryCoverage = 'unknown' | 'complete' | 'incomplete';
+export interface DepotHistoryConfirmation {
+  provider: string;
+  coverage: HistoryCoverage;
+  confirmedAt: string;
+}
+export const depotHistoryKey = (provider: string) => provider.trim().toLocaleLowerCase('de-DE');
 export interface CustodyFact {
   kind: 'broker' | 'self-custody' | 'mixed' | 'unknown';
   provider: string;
@@ -10,6 +16,8 @@ export interface CustodyFact {
 export interface AssetInvestorFacts {
   custody: CustodyFact;
   historyCoverage: HistoryCoverage;
+  historyCoverageOverride?: boolean;
+  historyCoverageDepots?: string[];
   specialActivities: 'unknown' | 'none' | 'staking' | 'lending' | 'mixed';
   taxContext: 'unknown' | 'private-direct-crypto' | 'security' | 'business';
   targetWeight: { percent: number; minPercent: number; maxPercent: number } | null;
@@ -21,11 +29,15 @@ export interface InvestorFacts {
   defaultCustody: CustodyFact;
   taxResidencies: { country: string; validFrom: string; confirmedAt: string }[];
   assets: Record<string, AssetInvestorFacts>;
+  depotHistories?: Record<string, DepotHistoryConfirmation>;
 }
 export interface AcquisitionHistory {
   assetId: number;
   source: 'recorded-transactions';
   coverage: HistoryCoverage;
+  coverageSource?: 'asset' | 'depot' | 'unconfirmed';
+  coverageConfirmedAt?: string | null;
+  coverageIssues?: string[];
   transactionCount: number;
   firstPurchaseDate: string | null;
   lastPurchaseDate: string | null;
@@ -38,6 +50,7 @@ export interface AcquisitionHistory {
 export interface InvestorContext {
   defaultCustody: CustodyFact;
   taxResidencies: InvestorFacts['taxResidencies'];
+  depotHistories?: InvestorFacts['depotHistories'];
   assets: (AssetInvestorFacts & { assetId: number; acquisitionHistory: AcquisitionHistory })[];
   spread: { status: 'requires-current-order-quote' };
 }
@@ -46,6 +59,11 @@ const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFi
 export const validFactDate = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)
   && Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0, 10) === v;
 const validTime = (v: unknown): v is string => typeof v === 'string' && Number.isFinite(Date.parse(v));
+const validDepotHistories = (v: InvestorFacts['depotHistories']): boolean => v === undefined || (!!v && typeof v === 'object' && !Array.isArray(v)
+  && Object.entries(v).length <= 100 && Object.entries(v).every(([key, fact]) => fact && typeof fact.provider === 'string'
+    && !!fact.provider.trim() && fact.provider.length <= 200 && key === depotHistoryKey(fact.provider)
+    && ['unknown', 'complete', 'incomplete'].includes(fact.coverage) && validTime(fact.confirmedAt)));
+export const hasAssetHistoryOverride = (facts: AssetInvestorFacts) => facts.historyCoverageOverride ?? facts.historyCoverage !== 'unknown';
 export function validCustody(v: CustodyFact): boolean {
   return !!v && ['broker', 'self-custody', 'mixed', 'unknown'].includes(v.kind)
     && typeof v.provider === 'string' && v.provider.length <= 200 && (v.kind === 'unknown' || !!v.provider.trim())
@@ -54,6 +72,9 @@ export function validCustody(v: CustodyFact): boolean {
 }
 export function validAssetInvestorFacts(v: AssetInvestorFacts): boolean {
   return !!v && validCustody(v.custody) && ['unknown', 'complete', 'incomplete'].includes(v.historyCoverage)
+    && (v.historyCoverageOverride === undefined || typeof v.historyCoverageOverride === 'boolean')
+    && (v.historyCoverageDepots === undefined || Array.isArray(v.historyCoverageDepots) && v.historyCoverageDepots.length <= 100
+      && v.historyCoverageDepots.every(depot => typeof depot === 'string' && !!depot.trim() && depot.length <= 200))
     && ['unknown', 'none', 'staking', 'lending', 'mixed'].includes(v.specialActivities)
     && ['unknown', 'private-direct-crypto', 'security', 'business'].includes(v.taxContext)
     && (v.confirmedAt === null || validTime(v.confirmedAt))
@@ -67,7 +88,7 @@ const emptyAssetFacts = (custody: CustodyFact): AssetInvestorFacts => ({ custody
 export function newInvestorFacts(): InvestorFacts {
   // The user explicitly confirmed Trade Republic for all current assets in this session.
   return { version: 1, initialAssetsSeeded: false, defaultCustody: { kind: 'broker', provider: 'Trade Republic',
-    source: 'default', confirmedAt: null, orderFeeEUR: 1 }, taxResidencies: [], assets: {} };
+    source: 'default', confirmedAt: null, orderFeeEUR: 1 }, taxResidencies: [], assets: {}, depotHistories: {} };
 }
 export function investorFactsStorageKey(database: string) {
   return `${INVESTOR_FACTS_KEY}:${encodeURIComponent(database || 'default')}`;
@@ -90,6 +111,7 @@ export function readInvestorFacts(database: string, assets: Asset[]): InvestorFa
     if (saved?.version === 1) {
       if (validCustody(saved.defaultCustody)) defaults.defaultCustody = saved.defaultCustody;
       defaults.initialAssetsSeeded = saved.initialAssetsSeeded === true;
+      if (saved.depotHistories && validDepotHistories(saved.depotHistories)) defaults.depotHistories = saved.depotHistories;
       if (Array.isArray(saved.taxResidencies)) defaults.taxResidencies = saved.taxResidencies.filter((v: InvestorFacts['taxResidencies'][number]) =>
         v && typeof v.country === 'string' && /^[A-Z]{2}$/.test(v.country) && validFactDate(v.validFrom) && validTime(v.confirmedAt)).slice(0, 50).sort((a: InvestorFacts['taxResidencies'][number], b: InvestorFacts['taxResidencies'][number]) => a.validFrom.localeCompare(b.validFrom));
       if (saved.assets && typeof saved.assets === 'object') for (const [id, value] of Object.entries(saved.assets)) {
@@ -140,24 +162,61 @@ export function deriveAcquisitionHistory(asset: Asset, transactions: Transaction
 }
 export function buildInvestorContext(facts: InvestorFacts, assets: Asset[], transactions: Transaction[]): InvestorContext {
   const seeded = seedInvestorFacts(facts, assets);
-  return { defaultCustody: facts.defaultCustody, taxResidencies: facts.taxResidencies, spread: { status: 'requires-current-order-quote' },
+  return { defaultCustody: facts.defaultCustody, taxResidencies: facts.taxResidencies, depotHistories: facts.depotHistories ?? {}, spread: { status: 'requires-current-order-quote' },
     assets: assets.filter(a => a.current_shares > 0).map(asset => {
       const assetFacts = seeded.assets[asset.ID];
       return { ...assetFacts, assetId: asset.ID,
-        acquisitionHistory: deriveAcquisitionHistory(asset, transactions, assetFacts.historyCoverage) };
+        acquisitionHistory: resolveAcquisitionHistory(asset, transactions, assetFacts, facts.depotHistories) };
     }),
   };
 }
 
+export function resolveAcquisitionHistory(asset: Asset, transactions: Transaction[], facts: AssetInvestorFacts,
+  depotHistories: InvestorFacts['depotHistories'] = {}): AcquisitionHistory {
+  const history = deriveAcquisitionHistory(asset, transactions, facts.historyCoverage);
+  const issues: string[] = [];
+  let coverage = facts.historyCoverage;
+  let coverageSource: NonNullable<AcquisitionHistory['coverageSource']> = 'asset';
+  let coverageConfirmedAt = facts.confirmedAt;
+  if (hasAssetHistoryOverride(facts) && facts.historyCoverageDepots) {
+    const currentDepots = [depotHistoryKey(facts.custody.provider), ...transactions.filter(t => t.asset_ID === asset.ID).map(t => depotHistoryKey(t.depot ?? ''))];
+    if (currentDepots.some(depot => depot && !facts.historyCoverageDepots!.includes(depot))) {
+      issues.push('Seit der Einzelbestätigung ist ein weiteres Depot hinzugekommen. Anschaffungsdaten und Überträge für dieses Asset erneut prüfen.');
+    }
+  }
+  if (!hasAssetHistoryOverride(facts)) {
+    const provider = depotHistoryKey(facts.custody.provider);
+    const trades = transactions.filter(t => t.asset_ID === asset.ID);
+    const depots = new Set(trades.map(t => depotHistoryKey(t.depot ?? '')));
+    const confirmation = depotHistories?.[provider];
+    coverage = confirmation?.coverage ?? 'unknown';
+    coverageSource = confirmation ? 'depot' : 'unconfirmed';
+    coverageConfirmedAt = confirmation?.confirmedAt ?? null;
+    if (!provider || ['unknown', 'mixed'].includes(facts.custody.kind)) issues.push('Verwahrort ungeklärt oder mehrere Verwahrorte; Angaben für dieses Asset prüfen.');
+    if (depots.has('')) issues.push('Bei erfassten Transaktionen fehlt die Depotzuordnung.');
+    if ([...depots].some(depot => depot && depot !== provider)) issues.push('Buchungen aus einem anderen Depot oder ein Depotwechsel erkannt. Historie für dieses Asset einschließlich Überträgen prüfen.');
+    if (!confirmation) issues.push('Die Vollständigkeit ist für dieses Depot noch nicht bestätigt.');
+  }
+  if (!history.reconcilesWithHolding) issues.push('Die erfassten Buchungen erklären den Bestand nicht vollständig. Fehlende oder ungültige Buchungen / Überträge prüfen.');
+  // A recorded confirmation never hides contradictory or newly uncovered data.
+  if (coverage === 'complete' && issues.length) coverage = 'unknown';
+  return { ...history, coverage, coverageSource, coverageConfirmedAt, coverageIssues: issues };
+}
+
 export function validInvestorContext(value: InvestorContext): boolean {
   return !!value && validCustody(value.defaultCustody) && Array.isArray(value.taxResidencies) && value.taxResidencies.length <= 50
+    && validDepotHistories(value.depotHistories)
     && value.taxResidencies.every(v => v && typeof v.country === 'string' && /^[A-Z]{2}$/.test(v.country) && validFactDate(v.validFrom) && validTime(v.confirmedAt))
     && value.spread?.status === 'requires-current-order-quote' && Array.isArray(value.assets) && value.assets.length <= 100
     && new Set(value.assets.map(a => a?.assetId)).size === value.assets.length
     && value.assets.every(a => {
       const h = a?.acquisitionHistory;
       return a && Number.isInteger(a.assetId) && validAssetInvestorFacts(a) && h && h.assetId === a.assetId
-        && h.source === 'recorded-transactions' && h.coverage === a.historyCoverage && Number.isInteger(h.transactionCount) && h.transactionCount >= 0
+        && h.source === 'recorded-transactions' && ['unknown', 'complete', 'incomplete'].includes(h.coverage)
+        && (h.coverageSource === undefined ? h.coverage === a.historyCoverage
+          : ['asset', 'depot', 'unconfirmed'].includes(h.coverageSource) && (h.coverageConfirmedAt === null || validTime(h.coverageConfirmedAt))
+            && Array.isArray(h.coverageIssues) && h.coverageIssues.length <= 20 && h.coverageIssues.every(issue => typeof issue === 'string' && issue.length <= 500))
+        && Number.isInteger(h.transactionCount) && h.transactionCount >= 0
         && [h.firstPurchaseDate, h.lastPurchaseDate].every(d => d === null || validTime(d))
         && typeof h.reconcilesWithHolding === 'boolean' && finite(h.unmatchedSoldQuantity) && h.unmatchedSoldQuantity >= 0
         && Number.isInteger(h.invalidTransactionCount) && h.invalidTransactionCount >= 0
@@ -166,5 +225,7 @@ export function validInvestorContext(value: InvestorContext): boolean {
           && validTime(l.purchaseDate) && finite(l.quantity) && l.quantity > 0 && finite(l.unitPrice) && l.unitPrice >= 0);
     });
 }
+
+export const historyCoverageAnalysisInstructions = ' Für die Historienvollständigkeit ist acquisitionHistory.coverage maßgeblich: coverageSource und coverageConfirmedAt zeigen die Bestätigung je Depot oder eine Asset-Ausnahme, coverageIssues konkrete verbleibende Lücken. historyCoverage im Asset enthält nur die gespeicherte Einzelangabe und kann vom aufgelösten Status abweichen. Depotbestätigungen werden bei neuen Depotzuordnungen oder Mengenabweichungen nicht ungeprüft übernommen. Historienvollständigkeit ist optional für eine normale Portfolioanalyse. Eine unbestätigte Historie allein verlangt weder die Aktion Prüfen noch wiederholte Einzelbestätigungen je Asset. Markt-, Risiko-, Diversifikations- und Zielbewertung anhand der vorhandenen Daten durchführen; nur davon abhängige steuerliche Aussagen einschränken und die konkret fehlenden Angaben benennen. Überträge und mehrere Verwahrorte benötigen eine gesonderte Prüfung der Anschaffungsdaten; keine exakte Steuerfreiheit oder Steuerersparnis aus einer Depotbestätigung ableiten.';
 
 export const investorFactsAnalysisInstructions = ' investorContext enthält dauerhaft gespeicherte Angaben mit Herkunft und Bestätigungszeit sowie aus erfassten Transaktionen abgeleitete Anschaffungsdaten. Nutze bestätigte Verwahranbieter, Steuerwohnsitze mit Gültigkeitsbeginn, Historienvollständigkeit, steuerlichen Kontext, Sonderaktivitäten und Zielgewichte. Bekannte Angaben niemals pauschal als unbekannt ausgeben; nenne nur konkrete verbleibende Lücken. custody.source default ist eine unbestätigte Voreinstellung, user-confirmed eine Nutzerangabe. Bekannter Anbieter bedeutet keine Kenntnis seiner internen Wallet-Architektur. Steuerwohnsitze gelten ab validFrom; frühere oder andere Zeiträume nicht unterstellen. Anschaffungsdaten sind bekannte Transaktionsdaten, auch wenn die Vollständigkeit noch unbestätigt ist. remainingLots sind eine illustrative FIFO-Zuordnung, keine bestätigte steuerliche Kostenbasis: bei unvollständiger Historie, Mengenabweichungen, Überträgen, mehreren Verwahrorten, Sonderaktivitäten oder ungeklärter rechtlicher Methode keine exakte Steuer oder Steuerfreiheit behaupten. taxContext ist eine Nutzerangabe, keine geprüfte rechtliche Einordnung. Geltende Behandlung anhand aktueller Primärquellen des bekannten Steuerlands und dieser Fakten prüfen; keine persönlichen Steuersätze, Verlusttöpfe oder Steuerersparnisse erfinden. targetWeight bezieht sich auf das bekannte Gesamtvermögen einschließlich Cash; bestätigte Zielquote und Bandbreite gegenüber einer generischen Konzentrationsregel priorisieren, Überschreitungen beziffern und begründen. Fehlendes externes Vermögen oder unvollständige Bewertung als konkrete Einschränkung nennen. Spread bleibt je Order aktuell zu prüfen; gespeicherter Anbieter, Kurs und Fremdkostenpauschale ersetzen kein aktuelles handelbares Geld-/Brief-Angebot. Bei anderem Anbieter dessen bekannte orderFeeEUR nutzen oder Orderkosten als ungeklärt kennzeichnen; nicht automatisch Trade-Republic-Kosten unterstellen.';

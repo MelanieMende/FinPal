@@ -5,6 +5,7 @@
   "description": "A Finance Visualization application build with Electron, React, Typescript, Tailwind and Vite.",
   "main": ".vite/build/main.js",
   "scripts": {
+    "check:layout": "node scripts/check-analysis-layout.cjs",
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make",

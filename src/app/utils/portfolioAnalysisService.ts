@@ -194,6 +194,10 @@ export function validateAnalysisResult(value: unknown, request: PortfolioAnalysi
     if (!position) fail(prefix + 'Die Asset-ID gehört nicht zum Portfolio.');
     if (seen.has(rec.assetId)) fail(prefix + 'Das Asset wurde mehrfach aufgeführt.');
     if (!['Kaufen', 'Halten', 'Verkaufen', 'Prüfen'].includes(rec.action)) fail(prefix + 'Die Aktion ist ungültig.');
+    if (rec.executionBaseline !== undefined && (!rec.executionBaseline
+      || !Number.isFinite(rec.executionBaseline.shares) || rec.executionBaseline.shares < 0
+      || (rec.executionBaseline.transactionIds !== undefined && (!Array.isArray(rec.executionBaseline.transactionIds)
+        || !rec.executionBaseline.transactionIds.every(Number.isInteger))))) fail(prefix + 'Der Transaktionsstand ist ungültig.');
     if (!text(rec.rationale)) fail(prefix + 'Die Begründung fehlt oder ist ungültig.');
     if (!text(rec.risk)) fail(prefix + 'Die Risikobeschreibung fehlt oder ist ungültig.');
     if (rec.plannedAmountEUR !== undefined && rec.plannedAmountEUR !== null
@@ -526,6 +530,15 @@ export class PortfolioAnalysisService {
       if (request.positions.some(p => !p.quote)) validated.warnings.push('Bei mindestens einer Position fehlen Originalkurs und Kursherkunft.');
       validated.warnings.push('Die wirtschaftliche Währungsrisiko-Allokation ist nicht hinterlegt. Kurswährungen bilden insbesondere bei Fonds und ETFs keine belastbare Risiko-Allokation ab.');
       const report: PortfolioAnalysisResult = { ...validated, sources, generatedAt: new Date().toISOString(), priceUpdatedAt: request.priceUpdatedAt, model };
+      let transactionIds: number[] | undefined;
+      try {
+        const ids = JSON.parse(snapshot).transactionIds;
+        if (Array.isArray(ids) && ids.every(Number.isInteger)) transactionIds = ids;
+      } catch { /* Older callers have no transaction baseline. */ }
+      report.recommendations = report.recommendations.map(rec => ({ ...rec, executionBaseline: {
+        shares: request.positions.find(position => position.id === rec.assetId)!.shares,
+        ...(transactionIds ? { transactionIds } : {}),
+      } }));
       if (previous) {
         const offset = previous.report.sources.length;
         const remapReferences = (text: string) => text.replace(/\[(\d+)\]/g, (reference, index) => Number(index) < sources.length ? `[${Number(index) + offset}]` : reference);

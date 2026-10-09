@@ -37,6 +37,41 @@ async function open() {
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Portfolio analysieren' })); });
 }
 
+it('restores an executed 50 EUR sale as Done in both views and removes its proceeds from the remaining funding plan', async () => {
+  const savedReport = await window.API.analyzePortfolio({} as never);
+  savedReport.recommendations[0] = { ...savedReport.recommendations[0], action: 'Verkaufen', plannedAmountEUR: 50,
+    executionBaseline: { shares: 2, transactionIds: [1] } };
+  savedReport.fundingCheck = { status: 'conditional', cashEUR: 0, saleProceedsEUR: 50, buyAmountEUR: 0,
+    feeScenarioEUR: 2, balanceBeforeSpreadAndTaxEUR: 48, shortfallEUR: 0, warnings: [] };
+  const snapshot = JSON.stringify({ positions: buildAnalysisPositions(assets), profile: {}, priceUpdatedAt: null, transactionIds: [1] });
+  window.API.getLastPortfolioAnalysis = jest.fn().mockResolvedValue({ report: savedReport, snapshot, provider: 'chatgpt' });
+  jest.mocked(window.API.analyzePortfolio).mockClear();
+  const soldAssets = assets.map(asset => asset.ID === 1 ? { ...asset, current_shares: 1, currencySymbol: '€' } : asset);
+  const sale = { ID: 2, asset_ID: 1, type: 'Sell', date: '2026-10-02', amount: 1, price_per_share: 50,
+    fee: 1, in_out: 49 } as Transaction;
+  let store: ReturnType<typeof setupStore>;
+  await act(async () => {
+    ({ store } = render(<><PortfolioAnalysis priceUpdatedAt={null} /><AssetList /></>, { preloadedState: {
+      assets: soldAssets, transactions: [sale], cash: [], dividends: [],
+    } }));
+  });
+  expect(screen.getByTestId('recommendation-execution-1')).toHaveTextContent(/Done.*50,00/);
+  const doneIndicator = screen.getByRole('img', { name: 'KI-Empfehlung: Verkaufen · Done' });
+  expect(doneIndicator).toHaveTextContent('');
+  expect(doneIndicator).toHaveClass('h-8', 'w-8');
+  expect(doneIndicator.querySelector('[data-icon="tick"]')).toBeInTheDocument();
+  const funding = screen.getByRole('region', { name: 'Finanzierungsprüfung' });
+  const value = (label: string) => within(funding).getByText(label).nextElementSibling;
+  expect(value('Vorhandene Barmittel')).toHaveTextContent(/49,00/);
+  expect(value('Geplante Brutto-Verkaufserlöse')).toHaveTextContent(/0,00/);
+  expect(value('Gebührenszenario für Käufe und Verkäufe')).toHaveTextContent(/0,00/);
+  expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
+  await act(async () => { store.dispatch(setTransactionsInternal([{ ...sale, amount: 0.4, in_out: 19 }])); });
+  expect(screen.getByTestId('recommendation-execution-1')).toHaveTextContent(/Teilweise umgesetzt.*20,00.*30,00.*offen/);
+  expect(screen.queryByLabelText('KI-Empfehlung: Verkaufen · Done')).not.toBeInTheDocument();
+  expect(value('Geplante Brutto-Verkaufserlöse')).toHaveTextContent(/30,00/);
+});
+
 it('displays sourced new assets outside the local asset list and keeps them after a route remount', async () => {
   const response = await window.API.analyzePortfolio({} as never);
   jest.mocked(window.API.analyzePortfolio).mockClear();
@@ -406,7 +441,7 @@ it('waits for quotes and sends the refreshed holdings and snapshot to the analys
   expect(window.API.analyzePortfolio).toHaveBeenCalledTimes(1);
   const [request, snapshot] = jest.mocked(window.API.analyzePortfolio).mock.calls[0];
   expect(request.positions[0]).toMatchObject({ id: 1, price: 60, quote: { source: 'yahoo-finance', quoteAsOf: '2026-10-08T08:05:52.000Z' } });
-  expect(JSON.parse(snapshot)).toEqual({ positions: request.positions, profile: { ...request.profile, horizonYears: '10', buyBudget: '0' }, priceUpdatedAt: request.priceUpdatedAt });
+  expect(JSON.parse(snapshot)).toEqual({ positions: request.positions, profile: { ...request.profile, horizonYears: '10', buyBudget: '0' }, priceUpdatedAt: request.priceUpdatedAt, transactionIds: [] });
   expect(store.getState().portfolioAnalysis.resultSnapshot).toBe(snapshot);
   expect(request.priceUpdatedAt).toBe(localStorage.getItem(MARKET_PRICE_UPDATED_AT_KEY));
   unmount();

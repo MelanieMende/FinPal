@@ -41,6 +41,7 @@ export interface PortfolioAnalysisRequest {
 
 export interface AnalysisSource { title: string; url: string; }
 export interface AssetRecommendation {
+  executionBaseline?: { shares: number; transactionIds?: number[] };
   plannedAmountEUR?: number | null;
   updatedAt?: string;
   model?: string;

@@ -90,8 +90,9 @@ it('refreshes only the selected asset with fresh research, preserves the portfol
   const mockedFetch = jest.fn().mockResolvedValueOnce(response(research)).mockResolvedValueOnce(response(structuredResponse(fullReport)))
     .mockResolvedValueOnce(response(freshResearch)).mockResolvedValueOnce(response(structuredResponse(refreshed)));
   const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
-  const original = await service.analyze(fullRequest, undefined, 'original snapshot');
-  const result = await service.analyze({ ...fullRequest, targetAssetId: 1 }, undefined, 'new snapshot');
+  const originalSnapshot = JSON.stringify({ transactionIds: [10] });
+  const original = await service.analyze(fullRequest, undefined, originalSnapshot);
+  const result = await service.analyze({ ...fullRequest, targetAssetId: 1 }, undefined, JSON.stringify({ transactionIds: [10, 11] }));
   expect(mockedFetch).toHaveBeenCalledTimes(4);
   const researchBody = JSON.parse(mockedFetch.mock.calls[2][1].body);
   expect(JSON.parse(researchBody.input[0].content).securities.map((s: { id: number }) => s.id)).toEqual([1]);
@@ -112,9 +113,11 @@ it('refreshes only the selected asset with fresh research, preserves the portfol
   expect(result.generatedAt).toBe(original.generatedAt);
   expect(result.newAssetRecommendations).toEqual(original.newAssetRecommendations);
   expect(result.recommendations[1]).toEqual(original.recommendations[1]);
+  expect(original.recommendations[0].executionBaseline).toEqual({ shares: 2, transactionIds: [10] });
+  expect(result.recommendations[0].executionBaseline).toEqual({ shares: 2, transactionIds: [10, 11] });
   expect(result.recommendations[0]).toMatchObject({ rationale: 'Fresh recommendation [1]', sourceIndexes: [1], warnings: expect.arrayContaining(['Single asset warning']), updatedAt: expect.any(String) });
   expect(result.sources[1].url).toBe('https://example.com/fresh');
-  expect(new PortfolioAnalysisService(dir, mockedFetch).getLastResult()).toEqual({ report: result, snapshot: 'original snapshot', provider: 'api' });
+  expect(new PortfolioAnalysisService(dir, mockedFetch).getLastResult()).toEqual({ report: result, snapshot: originalSnapshot, provider: 'api' });
   mockedFetch.mockRejectedValueOnce(new TypeError('offline'));
   await expect(service.analyze({ ...fullRequest, targetAssetId: 1 })).rejects.toThrow(/erreichbar/);
   expect(service.getLastResult()?.report).toEqual(result);
@@ -263,7 +266,7 @@ it('retains research citations and structured text from finished stream items', 
   const auth = { models: jest.fn().mockResolvedValue([{ slug: 'account-model' }]), accessToken: jest.fn().mockResolvedValue('test-oauth-token') } as unknown as ChatGptAuth;
   const result = await new PortfolioAnalysisService(dir, mockedFetch, auth).analyze({ ...request, provider: 'chatgpt', model: 'account-model' });
   expect(result.summary).toBe(report.summary);
-  expect(result.recommendations).toEqual(report.recommendations);
+  expect(result.recommendations).toEqual(report.recommendations.map(rec => ({ ...rec, executionBaseline: { shares: 2 } })));
   expect(result.sources).toEqual([{ title: 'Emittent', url: 'https://example.com/report' }]);
 });
 
@@ -405,7 +408,7 @@ it('automatically corrects an invalid recommendation once using the existing res
   const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
   const progress = jest.fn();
   const result = await service.analyze(request, progress);
-  expect(result.recommendations).toEqual(report.recommendations);
+  expect(result.recommendations).toEqual(report.recommendations.map(rec => ({ ...rec, executionBaseline: { shares: 2 } })));
   expect(mockedFetch).toHaveBeenCalledTimes(3);
   const retryBody = JSON.parse(mockedFetch.mock.calls[2][1].body);
   expect(retryBody).not.toHaveProperty('tools');

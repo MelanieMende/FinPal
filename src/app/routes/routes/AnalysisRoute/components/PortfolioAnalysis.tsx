@@ -9,6 +9,8 @@ import { assessQuoteFreshness } from '../../../../utils/quoteFreshness';
 import { isEltif, assessNavFreshness, type NavEvidence } from '../../../../utils/eltifValuation';
 import type { AnalysisPosition } from '../../../../utils/portfolioAnalysis';
 import { selectTotalLiquidity } from '../../../../store/cash/cash.selectors';
+import { selectRecommendationExecutions } from '../../../../utils/recommendationExecution';
+import { checkPortfolioFunding } from '../../../../utils/portfolioFunding';
 
 export const ANALYSIS_PROFILE_KEY = 'finpal.portfolioAnalysis.profile.v1';
 export const ANALYSIS_MODEL_KEY = 'finpal.portfolioAnalysis.model.v1';
@@ -87,6 +89,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
   const dispatch = useAppDispatch();
   const analysisState = useAppSelector(state => state.portfolioAnalysis);
   const { progress, startedAt, result, resultSnapshot } = analysisState;
+  const executions = useAppSelector(selectRecommendationExecutions);
   const open = standalone || analysisState.open;
   const setOpen = (value: boolean) => dispatch(setAnalysisOpen(value));
   const [savedProfile, setProfile] = useState<ProfileForm>(readProfile);
@@ -115,7 +118,22 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const snapshot = JSON.stringify({ positions, profile, priceUpdatedAt });
-  const stale = !!result && resultSnapshot !== snapshot;
+  let comparableSnapshot = resultSnapshot;
+  try {
+    const { transactionIds: _transactionIds, ...saved } = JSON.parse(resultSnapshot);
+    comparableSnapshot = JSON.stringify(saved);
+  } catch { /* Legacy snapshots may not be JSON. */ }
+  const stale = !!result && comparableSnapshot !== snapshot;
+  const hasExecution = result?.recommendations.some(rec => executions[rec.assetId]?.status !== 'open' && executions[rec.assetId]);
+  const fundingCheck = result && hasExecution ? checkPortfolioFunding({
+    provider, positions, profile: { ...profile, horizonYears: Number(profile.horizonYears), buyBudget: totalLiquidity } as InvestmentProfile,
+    priceUpdatedAt,
+  }, {
+    ...result,
+    recommendations: result.recommendations.filter(rec => executions[rec.assetId]?.status !== 'done').map(rec => ({
+      ...rec, plannedAmountEUR: executions[rec.assetId]?.remainingEUR ?? rec.plannedAmountEUR,
+    })),
+  }) : result?.fundingCheck;
 
   async function refreshStatus() {
     if (!window.API.getPortfolioAIStatus) throw new Error('Bitte FinPal vollständig neu starten, um die KI-Anbindung zu laden.');
@@ -302,24 +320,30 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
           {stale && <p role="status" className="text-amber-300 text-sm">Portfolio, Kurse oder Anlageprofil haben sich seit dieser Analyse geändert. Bitte neu analysieren.</p>}
           <p className="text-sm text-gray-200 whitespace-pre-wrap">{result.summary}</p>
           <AnalysisMessages infos={result.infos} warnings={result.warnings} />
-          {result.fundingCheck && <section aria-label="Finanzierungsprüfung" className="rounded-lg border border-indigo-400/20 p-4 text-sm text-gray-300">
+          {fundingCheck && <section aria-label="Finanzierungsprüfung" className="rounded-lg border border-indigo-400/20 p-4 text-sm text-gray-300">
             <H5 className="text-sm text-indigo-300">Finanzierungsprüfung</H5>
-            <p className="font-bold text-amber-200">{fundingLabels[result.fundingCheck.status]}</p>
+            {hasExecution && <p className="text-xs text-emerald-300">Aktuelle Barmittel und offene Restbeträge: Erfasste Trades werden nicht erneut eingeplant.</p>}
+            <p className="font-bold text-amber-200">{fundingLabels[fundingCheck.status]}</p>
             <dl className="grid grid-cols-2 gap-2">
-              <dt>Vorhandene Barmittel</dt><dd>{euros(result.fundingCheck.cashEUR)}</dd>
-              <dt>Geplante Brutto-Verkaufserlöse</dt><dd>{euros(result.fundingCheck.saleProceedsEUR)}</dd>
-              <dt>Alle geplanten Käufe</dt><dd>{euros(result.fundingCheck.buyAmountEUR)}</dd>
-              <dt>Gebührenszenario für Käufe und Verkäufe</dt><dd>{euros(result.fundingCheck.feeScenarioEUR)}</dd>
-              <dt>Restbetrag vor Spread und Steuern</dt><dd>{euros(result.fundingCheck.balanceBeforeSpreadAndTaxEUR)}</dd>
+              <dt>Vorhandene Barmittel</dt><dd>{euros(fundingCheck.cashEUR)}</dd>
+              <dt>Geplante Brutto-Verkaufserlöse</dt><dd>{euros(fundingCheck.saleProceedsEUR)}</dd>
+              <dt>Alle geplanten Käufe</dt><dd>{euros(fundingCheck.buyAmountEUR)}</dd>
+              <dt>Gebührenszenario für Käufe und Verkäufe</dt><dd>{euros(fundingCheck.feeScenarioEUR)}</dd>
+              <dt>Restbetrag vor Spread und Steuern</dt><dd>{euros(fundingCheck.balanceBeforeSpreadAndTaxEUR)}</dd>
             </dl>
-            {result.fundingCheck.shortfallEUR > 0 && <p>Mindestens fehlender Betrag im erfassten Szenario: {euros(result.fundingCheck.shortfallEUR)}</p>}
-            <AnalysisMessages warnings={result.fundingCheck.warnings} />
+            {fundingCheck.shortfallEUR > 0 && <p>Mindestens fehlender Betrag im erfassten Szenario: {euros(fundingCheck.shortfallEUR)}</p>}
+            <AnalysisMessages warnings={fundingCheck.warnings} />
           </section>}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             {result.recommendations.map(rec => <article key={rec.assetId} className="rounded-lg border border-white/10 p-4">
               <div className="flex justify-between items-start gap-3"><span className="font-bold text-sm text-white">{assets.find(a => a.ID === rec.assetId)?.name || `Asset ${rec.assetId}`}</span>
                 <span className={`text-xs font-bold ${rec.action === 'Kaufen' ? 'text-emerald-400' : rec.action === 'Verkaufen' ? 'text-red-400' : rec.action === 'Prüfen' ? 'text-amber-300' : 'text-indigo-300'}`}>{rec.action}</span>
               </div>
+              {executions[rec.assetId]?.status !== 'open' && executions[rec.assetId] && <p
+                className="text-xs font-bold text-emerald-400" data-testid={`recommendation-execution-${rec.assetId}`}>
+                {executions[rec.assetId].status === 'done' ? 'Done' : 'Teilweise umgesetzt'} · {euros(executions[rec.assetId].amountEUR)} erfasst
+                {executions[rec.assetId].remainingEUR !== null && executions[rec.assetId].status !== 'done' && ` · ${euros(executions[rec.assetId].remainingEUR!)} offen`}
+              </p>}
               <p className="text-sm text-gray-300 whitespace-pre-wrap">{rec.rationale}</p>
               {typeof rec.plannedAmountEUR === 'number' && <p className="text-xs text-gray-400">Geplanter {rec.action === 'Verkaufen' ? 'Brutto-Verkaufsbetrag' : 'Kaufbetrag'} im Szenario: {euros(rec.plannedAmountEUR)}</p>}
               <Button small disabled={busy || !positions.some(position => position.id === rec.assetId)} onClick={() => analyze(rec.assetId)} aria-label={`Asset ${rec.assetId} neu analysieren`}>Neu analysieren</Button>

@@ -30,9 +30,10 @@ export const restorePortfolioAnalysis = createAsyncThunk<SavedPortfolioAnalysis 
 export const analyzePortfolio = createAsyncThunk<
   { report: PortfolioAnalysisResult; snapshot: string },
   { request: PortfolioAnalysisRequest; snapshot: string },
-  { state: { portfolioAnalysis: AnalysisState; assets: Asset[] }; dispatch: ThunkDispatch<{ portfolioAnalysis: AnalysisState; assets: Asset[] }, unknown, UnknownAction>; rejectValue: string }
+  { state: { portfolioAnalysis: AnalysisState; assets: Asset[]; transactions: Transaction[] }; dispatch: ThunkDispatch<{ portfolioAnalysis: AnalysisState; assets: Asset[]; transactions: Transaction[] }, unknown, UnknownAction>; rejectValue: string }
 >('portfolioAnalysis/analyze', async ({ request, snapshot }, { dispatch, getState, requestId, rejectWithValue }) => {
   let unsubscribe: (() => void) | undefined;
+  const transactionIds = getState().transactions.map(transaction => transaction.ID);
   try {
     // The request and listener belong to the app store, independent of route mounts.
     unsubscribe = window.API.onPortfolioAnalysisProgress?.(progress => {
@@ -49,7 +50,7 @@ export const analyzePortfolio = createAsyncThunk<
     // Preserve the form's string values for the UI change detector.
     let profileSnapshot: unknown = request.profile;
     try { profileSnapshot = JSON.parse(snapshot).profile ?? profileSnapshot; } catch { /* Legacy caller without a JSON snapshot. */ }
-    const refreshedSnapshot = JSON.stringify({ positions: refreshedRequest.positions, profile: profileSnapshot, priceUpdatedAt: refreshedRequest.priceUpdatedAt });
+    const refreshedSnapshot = JSON.stringify({ positions: refreshedRequest.positions, profile: profileSnapshot, priceUpdatedAt: refreshedRequest.priceUpdatedAt, transactionIds });
     dispatch(analysisProgressReceived({ progress: { stage: 'preparing', lastActivityAt: Date.now() }, requestId }));
     const report = await window.API.analyzePortfolio(refreshedRequest, refreshedSnapshot);
     return { report, snapshot: refreshedSnapshot };
@@ -83,7 +84,8 @@ const slice = createSlice({
       state.requestId = action.meta.requestId;
       state.provider = action.meta.arg.request.provider;
       state.model = action.meta.arg.request.model ?? '';
-      if (action.meta.arg.request.targetAssetId === undefined) { state.result = null; state.resultSnapshot = ''; }
+      // Retain the last snapshot for asset execution indicators while a new report is pending.
+      if (action.meta.arg.request.targetAssetId === undefined) state.result = null;
       state.error = null;
     })
     .addCase(analyzePortfolio.fulfilled, (state, action) => {

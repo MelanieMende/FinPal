@@ -1,4 +1,5 @@
 import { validQuote, type QuoteMetadata } from './quoteMetadata';
+import { validInvestorContext, type InvestorContext } from './investorFacts';
 
 export const DEFAULT_ANALYSIS_MODEL = 'gpt-5.4-mini';
 export const ANALYSIS_TIMEOUT_MS = 10 * 60 * 1000;
@@ -31,6 +32,7 @@ export interface AnalysisPosition {
 }
 
 export interface PortfolioAnalysisRequest {
+  investorContext?: InvestorContext;
   targetAssetId?: number;
   provider: 'chatgpt' | 'api';
   model?: string;
@@ -41,6 +43,7 @@ export interface PortfolioAnalysisRequest {
 
 export interface AnalysisSource { title: string; url: string; }
 export interface AssetRecommendation {
+  tradeDecision?: import('./tradeDecision').TradeDecision | null;
   executionBaseline?: { shares: number; transactionIds?: number[] };
   plannedAmountEUR?: number | null;
   updatedAt?: string;
@@ -103,6 +106,7 @@ export function buildAnalysisPositions(assets: Asset[]): AnalysisPosition[] {
 
 export function validateAnalysisRequest(request: PortfolioAnalysisRequest): void {
   if (!request || !['chatgpt', 'api'].includes(request.provider)) throw new Error('Bitte einen KI-Zugang auswählen.');
+  if (request.investorContext !== undefined && !validInvestorContext(request.investorContext)) throw new Error('Die dauerhaften Analyseangaben oder Anschaffungsdaten sind ungültig.');
   const p = request?.profile;
   if (!p || !['growth', 'income', 'preservation'].includes(p.goal) || !['low', 'medium', 'high'].includes(p.risk)
     || !Number.isFinite(p.horizonYears) || p.horizonYears <= 0 || p.horizonYears > 100

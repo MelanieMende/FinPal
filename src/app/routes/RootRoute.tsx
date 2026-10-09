@@ -101,6 +101,13 @@ export default function RootRoute() {
 
 	async function setupTransactions() {
 		await sendToDB(transactions_sql)
+		const columns = await sendToDB('PRAGMA table_info(transactions)');
+		if (Array.isArray(columns) && !columns.some((column: { name: string }) => column.name === 'depot')) {
+			const migration = await sendToDB('ALTER TABLE transactions ADD COLUMN depot TEXT');
+			if (typeof migration === 'string') throw new Error(migration);
+			// All existing transactions belong to Trade Republic according to the user.
+			await sendToDB("UPDATE transactions SET depot = 'Trade Republic' WHERE depot IS NULL");
+		}
 		let sql  = 'SELECT MAX(ID) as ID FROM transactions'
 		var result = await sendToDB(sql)
 		var newID = 0

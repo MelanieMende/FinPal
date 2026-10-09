@@ -82,10 +82,10 @@ export const setTransactions = createAsyncThunk(
 
 export const saveTransaction = createAsyncThunk(
   'transactions/saveTransaction',
-	async (props:{transaction:Transaction, dateInput:string, typeInput:string, assetInput:string, amountInput:string, priceInput:string, feeInput:string, solidaritySurchargeInput:string}, thunkAPI) => {
+	async (props:{transaction:Transaction, dateInput:string, typeInput:string, assetInput:string, depotInput?:string, amountInput:string, priceInput:string, feeInput:string, solidaritySurchargeInput:string}, thunkAPI) => {
 		if(props.dateInput && props.typeInput && props.assetInput && props.amountInput && props.priceInput) {
 			const sql  = `
-				INSERT OR REPLACE INTO transactions (ID, date, type, asset_ID, amount, price_per_share, fee, solidarity_surcharge)
+				INSERT OR REPLACE INTO transactions (ID, date, type, asset_ID, amount, price_per_share, fee, solidarity_surcharge, depot)
 				VALUES (
 					'${props.transaction.ID}',
 					'${props.dateInput}',
@@ -94,7 +94,8 @@ export const saveTransaction = createAsyncThunk(
 					'${props.amountInput}',
 					'${props.priceInput.replace(',', '.')}',
 					'${props.feeInput.replace(',', '.')}',
-					'${props.solidaritySurchargeInput.replace(',', '.')}'
+					'${props.solidaritySurchargeInput.replace(',', '.')}',
+					'${(props.depotInput ?? props.transaction.depot ?? '').trim().slice(0, 200).replace(/'/g, "''")}'
 				)`
 			console.log(sql)
 			window.API.sendToDB(sql).then((result:any) => {

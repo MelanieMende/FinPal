@@ -23,6 +23,21 @@ var API = {
 
 describe('RootRoute component', () => {
 
+  it.each([false, true])('migrates transaction depots only when the column is missing (exists: %s)', async exists => {
+    const sendToDB = jest.fn((sql: string) => sql === 'PRAGMA table_info(transactions)'
+      ? [{ name: 'ID' }, ...(exists ? [{ name: 'depot' }] : [])] : []);
+    window.API = { ...API, sendToDB, getConfig: jest.fn(() => ({ selectedTab: 'transactionsTab', theme: 'bp5-dark', database: 'test.sqlite3' })) };
+    await act(async () => { render(<RootRoute />); });
+    await waitFor(() => expect(sendToDB).toHaveBeenCalledWith('DROP VIEW IF EXISTS transactions_v'));
+    if (exists) {
+      expect(sendToDB).not.toHaveBeenCalledWith('ALTER TABLE transactions ADD COLUMN depot TEXT');
+      expect(sendToDB).not.toHaveBeenCalledWith("UPDATE transactions SET depot = 'Trade Republic' WHERE depot IS NULL");
+    } else {
+      expect(sendToDB).toHaveBeenCalledWith('ALTER TABLE transactions ADD COLUMN depot TEXT');
+      expect(sendToDB).toHaveBeenCalledWith("UPDATE transactions SET depot = 'Trade Republic' WHERE depot IS NULL");
+    }
+  });
+
 	it('renders', async() => {
     const {getAllById} = render(<RootRoute />) 
 		await waitFor(() => {

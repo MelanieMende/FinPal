@@ -10,6 +10,8 @@ import { buildAnalysisPositions } from '../../../../utils/portfolioAnalysis';
 import PortfolioAnalysis, { ANALYSIS_PROFILE_KEY, ANALYSIS_MODEL_KEY } from './PortfolioAnalysis';
 import AnalysisRoute from '../AnalysisRoute';
 import { MARKET_PRICE_UPDATED_AT_KEY, MARKET_PRICE_UPDATED_EVENT } from '../../../../utils/syncTimestamps';
+import { tradeDecisionFixture } from '../../../../../testing/fixtures/tradeDecision';
+import { buildInvestorContext, readInvestorFacts, saveInvestorFacts } from '../../../../utils/investorFacts';
 
 const assets = [
   { ID: 1, name: 'Stock Asset', type: 'Stock', current_shares: 2, price: 50 },
@@ -56,6 +58,7 @@ it('restores an executed 50 EUR sale as Done in both views and removes its proce
     } }));
   });
   expect(screen.getByTestId('recommendation-execution-1')).toHaveTextContent(/Done.*50,00/);
+  expect(screen.getByText(/Diese gespeicherte Empfehlung enthält noch keine Abwägung/)).toBeInTheDocument();
   const doneIndicator = screen.getByRole('img', { name: 'KI-Empfehlung: Verkaufen · Done' });
   expect(doneIndicator).toHaveTextContent('');
   expect(doneIndicator).toHaveClass('h-8', 'w-8');
@@ -70,6 +73,23 @@ it('restores an executed 50 EUR sale as Done in both views and removes its proce
   expect(screen.getByTestId('recommendation-execution-1')).toHaveTextContent(/Teilweise umgesetzt.*20,00.*30,00.*offen/);
   expect(screen.queryByLabelText('KI-Empfehlung: Verkaufen · Done')).not.toBeInTheDocument();
   expect(value('Geplante Brutto-Verkaufserlöse')).toHaveTextContent(/30,00/);
+});
+
+it('restores the detailed sale decision and links scenario evidence outside the original recommendation sources', async () => {
+  const savedReport = await window.API.analyzePortfolio({} as never);
+  savedReport.sources.push({ title: 'Market outlook', url: 'https://example.com/outlook' });
+  savedReport.recommendations[0] = { ...savedReport.recommendations[0], action: 'Verkaufen', plannedAmountEUR: 50,
+    tradeDecision: { ...tradeDecisionFixture, scenarios: tradeDecisionFixture.scenarios.map(s => ({ ...s, sourceIndexes: [1] })) },
+  };
+  window.API.getLastPortfolioAnalysis = jest.fn().mockResolvedValue({ report: savedReport, snapshot: '', provider: 'chatgpt' });
+  jest.mocked(window.API.analyzePortfolio).mockClear();
+  await act(async () => { render(<PortfolioAnalysis standalone priceUpdatedAt={null} />, { preloadedState: { assets } }); });
+  expect(screen.getByRole('region', { name: 'Halten oder jetzt reduzieren' })).toBeInTheDocument();
+  expect(screen.getByText(tradeDecisionFixture.amountRationale)).toBeInTheDocument();
+  const article = screen.getByRole('region', { name: 'Halten oder jetzt reduzieren' }).closest('article')!;
+  expect(within(article).getByRole('link', { name: '[1] Market outlook' })).toHaveAttribute('href', 'https://example.com/outlook');
+  expect(screen.queryByText(/Diese gespeicherte Empfehlung enthält noch keine Abwägung/)).not.toBeInTheDocument();
+  expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
 });
 
 it('displays sourced new assets outside the local asset list and keeps them after a route remount', async () => {
@@ -328,7 +348,9 @@ it('restores the report and asset indicators on app startup without starting a n
   jest.mocked(window.API.analyzePortfolio).mockClear();
   const profile = { goal: 'growth', risk: 'medium', horizonYears: '10', buyBudget: '0' };
   localStorage.setItem(ANALYSIS_PROFILE_KEY, JSON.stringify(profile));
-  const snapshot = JSON.stringify({ positions: buildAnalysisPositions(assets), profile, priceUpdatedAt: null });
+  const facts = readInvestorFacts('', assets);
+  saveInvestorFacts('', facts);
+  const snapshot = JSON.stringify({ positions: buildAnalysisPositions(assets), profile, priceUpdatedAt: null, investorContext: buildInvestorContext(facts, assets, []) });
   window.API.getLastPortfolioAnalysis = jest.fn().mockResolvedValue({ report: savedReport, snapshot, provider: 'chatgpt' });
   await act(async () => { render(<><PortfolioAnalysis priceUpdatedAt={null} /><AssetList /></>, { preloadedState: { assets } }); });
   expect(screen.getByText(savedReport.summary)).toBeInTheDocument();
@@ -441,7 +463,7 @@ it('waits for quotes and sends the refreshed holdings and snapshot to the analys
   expect(window.API.analyzePortfolio).toHaveBeenCalledTimes(1);
   const [request, snapshot] = jest.mocked(window.API.analyzePortfolio).mock.calls[0];
   expect(request.positions[0]).toMatchObject({ id: 1, price: 60, quote: { source: 'yahoo-finance', quoteAsOf: '2026-10-08T08:05:52.000Z' } });
-  expect(JSON.parse(snapshot)).toEqual({ positions: request.positions, profile: { ...request.profile, horizonYears: '10', buyBudget: '0' }, priceUpdatedAt: request.priceUpdatedAt, transactionIds: [] });
+  expect(JSON.parse(snapshot)).toEqual({ positions: request.positions, profile: { ...request.profile, horizonYears: '10', buyBudget: '0' }, priceUpdatedAt: request.priceUpdatedAt, investorContext: request.investorContext, transactionIds: [] });
   expect(store.getState().portfolioAnalysis.resultSnapshot).toBe(snapshot);
   expect(request.priceUpdatedAt).toBe(localStorage.getItem(MARKET_PRICE_UPDATED_AT_KEY));
   unmount();

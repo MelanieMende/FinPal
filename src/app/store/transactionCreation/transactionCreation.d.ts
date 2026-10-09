@@ -5,6 +5,7 @@ interface TransactionCreation {
   typeInput: string,
   typeInputGotTouched: boolean,
   assetInput: string,
+  depotInput?: string,
   assetInputGotTouched: boolean,
   amountInput: string,
   amountInputGotTouched: boolean,

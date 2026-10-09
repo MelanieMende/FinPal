@@ -28,6 +28,8 @@ describe('TransactionsRoute component', () => {
 				appState: { ...appStateReducer.initialState, transactions_AssetFilter: [] },
 			},
 		});
+		expect(screen.getByRole('columnheader', { name: 'Depot' })).toBeInTheDocument();
+		expect(screen.getAllByRole('textbox', { name: 'Depot' })).toHaveLength(2);
 
 		fireEvent.click(screen.getByTestId('asset-filter-button'));
 		fireEvent.click(screen.getByTestId('asset-filter-checkbox-1'));

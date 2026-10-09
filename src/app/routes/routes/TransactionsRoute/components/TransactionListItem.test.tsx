@@ -19,6 +19,19 @@ describe('TransactionListItem component', () => {
 		shares_cumulated: 50,
 	} as Transaction;
 
+	it('keeps the historical depot when the asset now belongs to another provider and saves edits', async () => {
+		window.API = { sendToDB: jest.fn().mockResolvedValue([]) };
+		render(<table><tbody><TransactionListItem i={1} transaction={{ ...transaction, depot: "Old broker" }} /></tbody></table>, {
+			preloadedState: { assets: [{ ID: 1, name: 'Asset', type: 'Stock' }] as Asset[] },
+		});
+		const depot = screen.getByRole('textbox', { name: 'Depot' });
+		expect(depot).toHaveValue('Old broker');
+		fireEvent.change(depot, { target: { value: "Broker's account" } });
+		await act(async () => { fireEvent.blur(depot); });
+		expect(window.API.sendToDB).toHaveBeenCalledWith(expect.stringContaining("'Broker''s account'"));
+		expect(window.API.sendToDB).toHaveBeenCalledWith(expect.stringContaining('solidarity_surcharge, depot'));
+	});
+
 	it('renders correctly', async () => {
 		const { getByText } = render(<table><tbody><TransactionListItem i={1} transaction={transaction} /></tbody></table>);
 		await waitFor(() => {

@@ -207,7 +207,7 @@ export default function ImportRoute() {
         const isBond = mappedAsset?.type === 'Bond';
         const transactionValues = getImportTransactionValues(record, isBond);
         const type = record.type === 'Buy' ? 'Buy' : 'Sell';
-        const sql = `INSERT INTO transactions (date, type, asset_ID, amount, price_per_share, fee, solidarity_surcharge) VALUES ('${record.date}', '${type}', ${assetID}, ${transactionValues.shares}, ${transactionValues.pricePerShare}, ${record.fee}, ${record.tax})`;
+        const sql = `INSERT INTO transactions (date, type, asset_ID, amount, price_per_share, fee, solidarity_surcharge, depot) VALUES ('${record.date}', '${type}', ${assetID}, ${transactionValues.shares}, ${transactionValues.pricePerShare}, ${record.fee}, ${record.tax}, 'Trade Republic')`;
         const result = await window.API.sendToDB(sql);
         if (typeof result === 'string') throw new Error(result);
     };

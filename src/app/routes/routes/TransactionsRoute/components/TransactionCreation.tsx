@@ -4,6 +4,7 @@ import * as transactionCreationReducer from './../../../../../../src/app/store/t
 import TableCell from '../../../../components/Table/TableCell/TableCell';
 import * as assetsSelector from './../../../../store/assets/assets.selectors';
 import { Icon } from '@blueprintjs/core';
+import { readInvestorFacts } from '../../../../utils/investorFacts';
 
 export default function TransactionCreation() {
 	const dispatch = useAppDispatch();
@@ -11,6 +12,9 @@ export default function TransactionCreation() {
 	const dateInput = useAppSelector(state => state.transactionCreation.dateInput)
 	const typeInput = useAppSelector(state => state.transactionCreation.typeInput)
 	const assetInput = useAppSelector(state => state.transactionCreation.assetInput)
+  const depotInput = useAppSelector(state => state.transactionCreation.depotInput);
+  const database = useAppSelector(state => state.appState.database);
+  const suggestedDepot = readInvestorFacts(database, assets).assets[assetInput]?.custody.provider ?? '';
 	const amountInput = useAppSelector(state => state.transactionCreation.amountInput)
 	const priceInput = useAppSelector(state => state.transactionCreation.priceInput)
 	const feeInput = useAppSelector(state => state.transactionCreation.feeInput)
@@ -66,6 +70,12 @@ export default function TransactionCreation() {
 						<option data-testid="asset-option" key={'asset_' + asset.ID} value={asset.ID} className="bg-gray-800 text-white">{asset.name}</option>
 					))}
         </select>
+      </TableCell>
+
+      <TableCell className="p-3">
+        <input aria-label="Depot für neue Transaktion" type="text" value={depotInput ?? suggestedDepot} maxLength={200} placeholder="Unbekannt"
+          onChange={e => dispatch(transactionCreationReducer.setDepotInput(e.target.value))}
+          className="glass-input-minimal text-sm bg-white/5 border border-white/10 rounded px-1 text-white w-full outline-none focus:border-blue-500/50" />
       </TableCell>
 
       <TableCell className="p-3 text-right">

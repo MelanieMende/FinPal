@@ -6,6 +6,8 @@ import { safeStorage } from 'electron';
 import { PortfolioAnalysisService, readAnalysisStream, validateAnalysisResult } from './portfolioAnalysisService';
 import { ANALYSIS_TIMEOUT_MS, RESEARCH_CACHE_TTL_MS, buildAnalysisPositions, type PortfolioAnalysisRequest } from './portfolioAnalysis';
 import type { ChatGptAuth } from './chatGptAuth';
+import { tradeDecisionFixture } from '../../testing/fixtures/tradeDecision';
+import { buildInvestorContext, newInvestorFacts, seedInvestorFacts } from './investorFacts';
 
 jest.mock('electron', () => ({ safeStorage: {
   isEncryptionAvailable: jest.fn(() => true),
@@ -28,6 +30,33 @@ let dir: string;
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-ai-test-')); jest.clearAllMocks(); });
 afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
+it('uses stored investor facts in analysis while keeping acquisition lots out of web research', async () => {
+  const assets = [{ ID: 1, current_shares: 2, price: 50 }] as Asset[];
+  const facts = seedInvestorFacts(newInvestorFacts(), assets);
+  facts.taxResidencies = [{ country: 'CH', validFrom: '2020-01-01', confirmedAt: '2026-10-09T10:00:00Z' }];
+  facts.assets[1] = { ...facts.assets[1], historyCoverage: 'complete', confirmedAt: '2026-10-09T10:00:00Z',
+    targetWeight: { percent: 50, minPercent: 40, maxPercent: 60 } };
+  const investorContext = buildInvestorContext(facts, assets, [
+    { ID: 71, asset_ID: 1, date: '2025-06-12', type: 'Buy', amount: 2, price_per_share: 30 },
+  ] as Transaction[]);
+  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research)))
+    .mockResolvedValueOnce(new Response(JSON.stringify(structured)));
+  const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
+  await service.analyze({ ...request, investorContext });
+  const researchBody = JSON.parse(mockedFetch.mock.calls[0][1].body);
+  const analysisBody = JSON.parse(mockedFetch.mock.calls[1][1].body);
+  const publicInput = JSON.parse(researchBody.input[0].content);
+  expect(publicInput.taxJurisdiction).toBe('CH');
+  expect(researchBody.input[0].content).not.toContain('remainingLots');
+  expect(researchBody.input[0].content).not.toContain('2025-06-12');
+  const input = JSON.parse(analysisBody.input[0].content);
+  expect(input.portfolio.investorContext).toEqual(investorContext);
+  expect(input.tradeEconomics[0]).toMatchObject({ taxResidence: 'CH', custody: { provider: 'Trade Republic' },
+    acquisitionHistory: { coverage: 'complete', remainingLots: [{ transactionId: 71 }] } });
+  expect(analysisBody.instructions).toContain('Bekannte Angaben niemals pauschal als unbekannt');
+  expect(JSON.parse(fs.readFileSync(path.join(dir, 'portfolio-ai-last-analysis.json'), 'utf8')).request.investorContext).toEqual(investorContext);
+});
+
 it('accepts zero allocations from the schema without retrying or failing the entire analysis', async () => {
   const zeroReport = { ...report, recommendations: [{ ...report.recommendations[0], plannedAmountEUR: 0 }],
     newAssetRecommendations: [{ ...newAsset, plannedAmountEUR: 0 }],
@@ -42,6 +71,44 @@ it('accepts zero allocations from the schema without retrying or failing the ent
   expect(result.fundingCheck.status).toBe('unknown');
   expect(service.getLastResult()?.report).toEqual(result);
   expect(zeroReport.recommendations[0].plannedAmountEUR).toBe(0);
+});
+
+it('requires a sourced hold-versus-reduce decision for new sales while restoring older reports', () => {
+  const sources = [{ title: 'Source', url: 'https://example.com' }];
+  const sell = { ...report, recommendations: [{ ...report.recommendations[0], action: 'Verkaufen', plannedAmountEUR: 50 }] };
+  expect(() => validateAnalysisResult(sell, request, sources)).not.toThrow();
+  expect(() => validateAnalysisResult(sell, request, sources, true)).toThrow(/Halten oder jetzt reduzieren/);
+  const complete = { ...sell, recommendations: [{ ...sell.recommendations[0], tradeDecision: tradeDecisionFixture }] };
+  expect(validateAnalysisResult(complete, request, sources, true).recommendations[0].tradeDecision).toEqual(tradeDecisionFixture);
+  const invalid = { ...complete, recommendations: [{ ...complete.recommendations[0], tradeDecision: {
+    ...tradeDecisionFixture, scenarios: tradeDecisionFixture.scenarios.map(s => ({ ...s, sourceIndexes: [5] })),
+  } }] };
+  expect(() => validateAnalysisResult(invalid, request, sources, true)).toThrow(/Verkaufsabwägung/);
+});
+
+it('researches sourced outlooks and requests a profile-aware timing decision without exposing holdings to web research', async () => {
+  const sellReport = { ...report, newAssetRecommendations: [] as typeof report.newAssetRecommendations, recommendations: [{ ...report.recommendations[0],
+    action: 'Verkaufen', plannedAmountEUR: 50, tradeDecision: tradeDecisionFixture,
+  }] };
+  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research)))
+    .mockResolvedValueOnce(structuredResponse(sellReport));
+  const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
+  const result = await service.analyze(request);
+  expect(result.recommendations[0].tradeDecision).toEqual(tradeDecisionFixture);
+  expect(service.getLastResult()?.report.recommendations[0].tradeDecision).toEqual(tradeDecisionFixture);
+  const researchBody = JSON.parse(mockedFetch.mock.calls[0][1].body);
+  const analysisBody = JSON.parse(mockedFetch.mock.calls[1][1].body);
+  expect(researchBody.instructions).toContain('Veröffentlichungsdatum, Zeithorizont');
+  expect(researchBody.input[0].content).not.toContain('shares');
+  expect(analysisBody.instructions).toContain('Konzentration allein ist kein Beleg');
+  expect(analysisBody.instructions).toContain('hohem Risiko und langem Horizont');
+  expect(analysisBody.instructions).not.toContain('Keine garantierten Renditen, Kursprognosen');
+  const schema = analysisBody.text.format.schema.properties.recommendations.items;
+  expect(schema.required).toContain('tradeDecision');
+  expect(schema.properties.tradeDecision.properties.scenarios.minItems).toBe(3);
+  expect(JSON.parse(analysisBody.input[0].content).decisionContext).toMatchObject({ heldValueEUR: 100,
+    totalValueEUR: 200, positions: [{ assetId: 1, shareIncludingCashPercent: 50 }],
+  });
 });
 
 it('ignores irrelevant hold and review allocations while retaining valid buy amounts', () => {
@@ -62,19 +129,29 @@ it.each([-1, '10 EUR', Infinity, 1e9 + 1])('continues rejecting invalid allocati
 
 it('corrects an unfunded combined plan and persists a locally calculated financing check', async () => {
   const overBudget = { ...report, newAssetRecommendations: [{ ...newAsset, plannedAmountEUR: 100 }] };
-  const corrected = { ...overBudget, newAssetRecommendations: [{ ...newAsset, plannedAmountEUR: 98 }] };
+  const corrected = { ...overBudget, newAssetRecommendations: [{ ...newAsset, plannedAmountEUR: 99 }] };
   const answer = (value: unknown) => new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(value) }] }] }));
   const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research)))
     .mockResolvedValueOnce(answer(overBudget)).mockResolvedValueOnce(answer(corrected));
   const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
   const result = await service.analyze(request);
-  expect(result.fundingCheck).toMatchObject({ cashEUR: 100, buyAmountEUR: 98, feeScenarioEUR: 2,
+  expect(result.fundingCheck).toMatchObject({ cashEUR: 100, buyAmountEUR: 99, feeScenarioEUR: 1,
     balanceBeforeSpreadAndTaxEUR: 0, status: 'conditional' });
   expect(mockedFetch).toHaveBeenCalledTimes(3);
   const correction = JSON.parse(mockedFetch.mock.calls[2][1].body);
-  expect(correction.input[1].content).toContain('2.00 EUR');
+  expect(correction.input[1].content).toContain('1.00 EUR');
+  expect(correction.instructions).toContain('ohne investorContext: 1 EUR je regulärer Trade-Republic-Order');
+  expect(correction.instructions).toContain('gespeicherte Ordergebühr je Kauf- oder Verkaufsvorschlag');
   expect(correction.text.format.schema.properties.newAssetRecommendations.items.required).toContain('plannedAmountEUR');
   expect(service.getLastResult()?.report.fundingCheck).toEqual(result.fundingCheck);
+  const resultFile = path.join(dir, 'portfolio-ai-last-analysis.json');
+  const legacySaved = JSON.parse(fs.readFileSync(resultFile, 'utf8'));
+  legacySaved.report.fundingCheck = { ...result.fundingCheck, feeScenarioEUR: 2,
+    balanceBeforeSpreadAndTaxEUR: -1, shortfallEUR: 1, status: 'insufficient', warnings: ['Gebührenszenario: 2 EUR je Kauf-/Verkaufsvorschlag'] };
+  fs.writeFileSync(resultFile, JSON.stringify(legacySaved));
+  const restored = service.getLastResult();
+  expect(restored?.report.fundingCheck).toEqual(result.fundingCheck);
+  expect(restored?.report.generatedAt).toBe(result.generatedAt);
 });
 
 it('refreshes only the selected asset with fresh research, preserves the portfolio report and restores the merged sources', async () => {
@@ -82,7 +159,7 @@ it('refreshes only the selected asset with fresh research, preserves the portfol
   const fullReport = { ...report, recommendations: [...report.recommendations, { ...report.recommendations[0], assetId: 2 }] };
   const response = (value: unknown) => new Response(JSON.stringify(value));
   const refreshed = { ...report, summary: 'Single asset summary', warnings: ['Single asset warning'], newAssetRecommendations: [] as typeof report.newAssetRecommendations,
-    recommendations: [{ ...report.recommendations[0], rationale: 'Fresh recommendation [0]' }],
+    recommendations: [{ ...report.recommendations[0], rationale: 'Fresh recommendation [0]', tradeDecision: tradeDecisionFixture }],
   };
   const freshResearch = { ...research, output: [research.output[0], { type: 'message', content: [{ type: 'output_text', text: 'Fresh research',
     annotations: [{ type: 'url_citation', title: 'Fresh source', url: 'https://example.com/fresh' }] }] }] };
@@ -115,6 +192,9 @@ it('refreshes only the selected asset with fresh research, preserves the portfol
   expect(result.recommendations[1]).toEqual(original.recommendations[1]);
   expect(original.recommendations[0].executionBaseline).toEqual({ shares: 2, transactionIds: [10] });
   expect(result.recommendations[0].executionBaseline).toEqual({ shares: 2, transactionIds: [10, 11] });
+  expect(result.recommendations[0].tradeDecision.holdCase).toContain('[1]');
+  expect(result.recommendations[0].tradeDecision.scenarios[0].sourceIndexes).toEqual([1]);
+  expect(result.recommendations[0].tradeDecision.scenarios[2].implication).toContain('[1]');
   expect(result.recommendations[0]).toMatchObject({ rationale: 'Fresh recommendation [1]', sourceIndexes: [1], warnings: expect.arrayContaining(['Single asset warning']), updatedAt: expect.any(String) });
   expect(result.sources[1].url).toBe('https://example.com/fresh');
   expect(new PortfolioAnalysisService(dir, mockedFetch).getLastResult()).toEqual({ report: result, snapshot: originalSnapshot, provider: 'api' });

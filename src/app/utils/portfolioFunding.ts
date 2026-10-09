@@ -16,11 +16,21 @@ const cents = (amount: number) => Math.round(amount * 100);
 // EUR allocations are scenarios, not executable orders or confirmed net proceeds.
 export function checkPortfolioFunding(request: PortfolioAnalysisRequest,
   report: Pick<PortfolioAnalysisResult, 'recommendations' | 'newAssetRecommendations'>): FundingCheck {
-  let buys = 0, sales = 0, orders = 0, unknown = false;
+  let buys = 0, sales = 0, orders = 0, fees = 0, unknown = false;
+  const addOrderFee = (assetId?: number) => {
+    const context = request.investorContext;
+    const custody = assetId === undefined ? context?.defaultCustody : context?.assets.find(a => a.assetId === assetId)?.custody;
+    const fee = context ? custody?.orderFeeEUR : 1;
+    if (typeof fee !== 'number' || !Number.isFinite(fee) || fee < 0) {
+      unknown = true;
+      warnings.push(assetId === undefined ? 'Orderkosten für eine neue Kaufidee fehlen.' : `Asset ${assetId}: Orderkosten des gespeicherten Verwahranbieters fehlen.`);
+    } else fees += cents(fee);
+  };
   const warnings: string[] = [];
   for (const rec of report.recommendations) {
     if (rec.action !== 'Kaufen' && rec.action !== 'Verkaufen') continue;
     orders++;
+    addOrderFee(rec.assetId);
     const amount = rec.plannedAmountEUR;
     if (typeof amount !== 'number' || !Number.isFinite(amount) || amount <= 0) { unknown = true; continue; }
     if (rec.action === 'Kaufen') { buys += cents(amount); continue; }
@@ -36,15 +46,17 @@ export function checkPortfolioFunding(request: PortfolioAnalysisRequest,
   for (const rec of report.newAssetRecommendations ?? []) {
     if (rec.action !== 'Kaufen') continue;
     orders++;
+    addOrderFee();
     if (typeof rec.plannedAmountEUR !== 'number' || !Number.isFinite(rec.plannedAmountEUR) || rec.plannedAmountEUR <= 0) unknown = true;
     else buys += cents(rec.plannedAmountEUR);
   }
   const cash = cents(request.profile.buyBudget);
-  // Two 1-EUR orders per recommendation, e.g. whole units and a fractional remainder.
-  const fees = orders * 200;
+  // One regular order per recommendation; use the respective provider fee when available.
   const balance = cash + sales - buys - fees;
-  if (unknown) warnings.push('Mindestens ein Kauf-/Verkaufsbetrag oder eine EUR-Verkaufsbewertung fehlt. Eine vollständige Finanzierung ist nicht bestätigt.');
-  if (orders) warnings.push('Gebührenszenario: 2 EUR je Kauf-/Verkaufsvorschlag; tatsächliche Orderanzahl, Gebühren, Spreads und Verkaufssteuern sind unbekannt. Der Restbetrag ist kein bestätigtes Nettokaufbudget.');
+  if (unknown) warnings.push('Mindestens ein Kauf-/Verkaufsbetrag, eine Ordergebühr oder eine EUR-Verkaufsbewertung fehlt. Eine vollständige Finanzierung ist nicht bestätigt.');
+  if (orders) warnings.push(request.investorContext
+    ? 'Gebührenszenario: gespeicherte Gebühr des jeweiligen Anbieters für eine reguläre Order pro Kauf-/Verkaufsvorschlag. Für neue Kaufideen gilt der gespeicherte Standardanbieter. Fehlende Gebühren bleiben ungeklärt. Zusätzliche separate Orders, Spreads, Drittkosten und Verkaufssteuern sind nicht enthalten.'
+    : 'Gebührenszenario: 1 EUR Fremdkostenpauschale je regulärer Trade-Republic-Order; pro Kauf-/Verkaufsvorschlag wird eine Order angenommen, auch bei Bruchstücken. Sparplanausführungen sind ausgenommen. Zusätzliche separate Orders, Spreads, Drittkosten und Verkaufssteuern sind nicht enthalten. Der Restbetrag ist kein bestätigtes Nettokaufbudget.');
   if (sales > 0) warnings.push('Verkaufserlöse werden erst nach ausgeführtem Verkauf und Gutschrift verfügbar. Abhängige Käufe erst danach und nach Prüfung der tatsächlichen Abzüge ausführen. Steuerliche Verlustverrechnung wird nicht als zusätzlicher Erlös angerechnet.');
   return { status: !orders ? 'no-trades' : unknown ? 'unknown' : balance < 0 ? 'insufficient' : 'conditional',
     cashEUR: cash / 100, saleProceedsEUR: sales / 100, buyAmountEUR: buys / 100,

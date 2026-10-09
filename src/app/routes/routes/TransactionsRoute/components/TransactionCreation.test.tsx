@@ -12,6 +12,7 @@ describe('TransactionCreation Component', () => {
 
   beforeEach(() => {
     store = mockStore({
+      appState: { database: '' },
       assets: [
         { ID: '1', name: 'Asset 1' },
         { ID: '2', name: 'Asset 2' },
@@ -48,6 +49,7 @@ describe('TransactionCreation Component', () => {
     expect(screen.getByTestId("priceInput")).toBeInTheDocument();
     expect(screen.getByTestId("feeInput")).toBeInTheDocument();
     expect(screen.getByTestId("solidaritySurchargeInput")).toBeInTheDocument();
+    expect(screen.getByLabelText('Depot für neue Transaktion')).toBeInTheDocument();
   });
 
   it('dispatches setDateInput action on date input change', () => {

@@ -11,6 +11,10 @@ import type { AnalysisPosition } from '../../../../utils/portfolioAnalysis';
 import { selectTotalLiquidity } from '../../../../store/cash/cash.selectors';
 import { selectRecommendationExecutions } from '../../../../utils/recommendationExecution';
 import { checkPortfolioFunding } from '../../../../utils/portfolioFunding';
+import TradeDecisionReview from './TradeDecisionReview';
+import InvestorFactsEditor from './InvestorFactsEditor';
+import { useInvestorFacts } from '../../../../utils/useInvestorFacts';
+import { buildInvestorContext } from '../../../../utils/investorFacts';
 
 export const ANALYSIS_PROFILE_KEY = 'finpal.portfolioAnalysis.profile.v1';
 export const ANALYSIS_MODEL_KEY = 'finpal.portfolioAnalysis.model.v1';
@@ -85,6 +89,10 @@ function readProfile(): ProfileForm {
 
 export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }: { priceUpdatedAt: string | null; standalone?: boolean }) {
   const assets = useAppSelector(state => state.assets);
+  const transactions = useAppSelector(state => state.transactions);
+  const database = useAppSelector(state => state.appState.database || '');
+  const { facts: investorFacts, save: saveInvestorFacts, error: investorFactsError } = useInvestorFacts(database, assets);
+  const investorContext = buildInvestorContext(investorFacts, assets, transactions);
   const positions = buildAnalysisPositions(assets);
   const dispatch = useAppDispatch();
   const analysisState = useAppSelector(state => state.portfolioAnalysis);
@@ -117,7 +125,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
   const [notice, setNotice] = useState<string | null>(null);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  const snapshot = JSON.stringify({ positions, profile, priceUpdatedAt });
+  const snapshot = JSON.stringify({ positions, profile, priceUpdatedAt, investorContext });
   let comparableSnapshot = resultSnapshot;
   try {
     const { transactionIds: _transactionIds, ...saved } = JSON.parse(resultSnapshot);
@@ -126,6 +134,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
   const stale = !!result && comparableSnapshot !== snapshot;
   const hasExecution = result?.recommendations.some(rec => executions[rec.assetId]?.status !== 'open' && executions[rec.assetId]);
   const fundingCheck = result && hasExecution ? checkPortfolioFunding({
+    investorContext,
     provider, positions, profile: { ...profile, horizonYears: Number(profile.horizonYears), buyBudget: totalLiquidity } as InvestmentProfile,
     priceUpdatedAt,
   }, {
@@ -197,9 +206,11 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
 
   function analyze(targetAssetId?: number) {
     void run(async () => {
+      if (investorFactsError) throw new Error(investorFactsError);
       if (!profile.horizonYears.trim() || !profile.buyBudget.trim()) throw new Error('Bitte Anlagedauer und Kaufbudget angeben.');
       const request = {
         provider, model, positions, priceUpdatedAt, ...(targetAssetId === undefined ? {} : { targetAssetId }),
+        investorContext,
         profile: { goal: profile.goal, risk: profile.risk, horizonYears: Number(profile.horizonYears), buyBudget: Number(profile.buyBudget.replace(',', '.')) } as InvestmentProfile,
       };
       validateAnalysisRequest(request);
@@ -290,7 +301,8 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
             <p id="buy-budget-source" className="mt-1 mb-0 text-gray-400">Entspricht automatisch deiner Total Liquidity.</p>
           </div>
         </div>
-        <p className="text-xs text-gray-400">Beim Start werden Namen, ISINs, Bestände, Kurse, Einstandswerte, Gewinne und Dividenden sowie dein Anlageprofil an OpenAI übertragen. Kurse zuletzt aktualisiert: {formatSyncTime(priceUpdatedAt) ?? 'unbekannt'}.</p>
+        <InvestorFactsEditor key={database} facts={investorFacts} assets={assets} transactions={transactions} onSave={saveInvestorFacts} busy={busy} storageError={investorFactsError} />
+        <p className="text-xs text-gray-400">Beim Start werden Namen, ISINs, Bestände, Kurse, Einstandswerte, Gewinne und Dividenden sowie dein Anlageprofil, gespeicherte Verwahr- und Steuerangaben, Zielgewichte und abgeleitete Anschaffungsdaten an OpenAI übertragen. Kommentare und Zugangsdaten werden nicht übertragen. Kurse zuletzt aktualisiert: {formatSyncTime(priceUpdatedAt) ?? 'unbekannt'}.</p>
         <details className="text-xs text-gray-400">
           <summary className="cursor-pointer">Kurswährungen und EUR-Umrechnung</summary>
           <p>Kurswährungen zeigen keine vollständige Währungsrisiko-Allokation. Für Fonds und ETFs fehlen Angaben zu den enthaltenen Anlagen und Absicherungen.</p>
@@ -345,6 +357,8 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                 {executions[rec.assetId].remainingEUR !== null && executions[rec.assetId].status !== 'done' && ` · ${euros(executions[rec.assetId].remainingEUR!)} offen`}
               </p>}
               <p className="text-sm text-gray-300 whitespace-pre-wrap">{rec.rationale}</p>
+              {rec.tradeDecision ? <TradeDecisionReview decision={rec.tradeDecision} />
+                : rec.action === 'Verkaufen' && <p className="text-xs text-sky-200">Diese gespeicherte Empfehlung enthält noch keine Abwägung von Halten und Reduzieren mit Kursszenarien. Über „Neu analysieren“ ergänzen.</p>}
               {typeof rec.plannedAmountEUR === 'number' && <p className="text-xs text-gray-400">Geplanter {rec.action === 'Verkaufen' ? 'Brutto-Verkaufsbetrag' : 'Kaufbetrag'} im Szenario: {euros(rec.plannedAmountEUR)}</p>}
               <Button small disabled={busy || !positions.some(position => position.id === rec.assetId)} onClick={() => analyze(rec.assetId)} aria-label={`Asset ${rec.assetId} neu analysieren`}>Neu analysieren</Button>
               {rec.updatedAt && <p className="text-xs text-gray-400">Einzelanalyse vom {formatSyncTime(rec.updatedAt)} · {rec.model}. Portfolio-Zusammenfassung und übrige Empfehlungen stammen aus der Gesamtanalyse.</p>}
@@ -356,7 +370,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                 <p className="m-0"><span className="font-bold text-white">Steuern:</span> {rec.tradeCheck.taxes}</p>
                 <p className="m-0"><span className="font-bold text-white">Ergebnis:</span> {rec.tradeCheck.conclusion}</p>
               </div>}
-              <div className="flex flex-wrap gap-2 mt-2">{[...new Set([...rec.sourceIndexes, ...('navEvidence' in rec ? rec.navEvidence?.sourceIndexes ?? [] : [])])].map(index => <a key={index} href={result.sources[index].url} onClick={e => openSource(e, result.sources[index].url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">[{index}] {result.sources[index].title}</a>)}</div>
+              <div className="flex flex-wrap gap-2 mt-2">{[...new Set([...rec.sourceIndexes, ...('navEvidence' in rec ? rec.navEvidence?.sourceIndexes ?? [] : []), ...(rec.tradeDecision?.scenarios.flatMap(s => s.sourceIndexes) ?? [])])].map(index => <a key={index} href={result.sources[index].url} onClick={e => openSource(e, result.sources[index].url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">[{index}] {result.sources[index].title}</a>)}</div>
             </article>)}
           </div>
           {result.newAssetRecommendations && <section aria-label="Neue Kaufideen" className="space-y-3">

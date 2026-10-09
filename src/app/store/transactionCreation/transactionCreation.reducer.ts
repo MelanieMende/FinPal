@@ -1,6 +1,7 @@
 import { createAsyncThunk, createSlice } from '@reduxjs/toolkit'
 import * as transactionsReducer from '../transactions/transactions.reducer';
 import * as assetsReducer from '../assets/assets.reducer';
+import { readInvestorFacts } from '../../utils/investorFacts';
 
 export const initialState = {
   dateInput: '',
@@ -95,7 +96,9 @@ export const validateAndSave = createAsyncThunk(
   async (props, thunkAPI) => {
 		let state = thunkAPI.getState() as State
     if(isValid(state)) {
-      let sql  = 'INSERT OR REPLACE INTO transactions (ID, date, type, asset_ID, amount, price_per_share, fee, solidarity_surcharge) '
+      const custody = readInvestorFacts(state.appState.database, state.assets).assets[state.transactionCreation.assetInput]?.custody;
+      const depot = (state.transactionCreation.depotInput ?? custody?.provider ?? '').trim().slice(0, 200);
+      let sql  = 'INSERT OR REPLACE INTO transactions (ID, date, type, asset_ID, amount, price_per_share, fee, solidarity_surcharge, depot) '
           sql += 'VALUES (\'' + state.transactionCreation.newID
           sql += '\',\'' + state.transactionCreation.dateInput
           sql += '\',\'' + state.transactionCreation.typeInput.replace('\'', '\'\'')
@@ -103,7 +106,8 @@ export const validateAndSave = createAsyncThunk(
           sql += '\',\'' + state.transactionCreation.amountInput.replace(',', '.') 
           sql += '\',\'' + state.transactionCreation.priceInput.replace(',', '.') 
           sql += '\',\'' + state.transactionCreation.feeInput.replace(',', '.')
-          sql += '\',\'' + state.transactionCreation.solidaritySurchargeInput.replace(',', '.') + '\')'
+          sql += '\',\'' + state.transactionCreation.solidaritySurchargeInput.replace(',', '.')
+          sql += '\',\'' + depot.replace(/'/g, "''") + '\')'
     
       console.log(sql)
      
@@ -133,6 +137,7 @@ export const reset = createAsyncThunk(
 		thunkAPI.dispatch(setTypeInput('Buy'))
     thunkAPI.dispatch(setAssetInputGotTouched(false))
 		thunkAPI.dispatch(setAssetInput(''))
+    thunkAPI.dispatch(setDepotInput(undefined))
     thunkAPI.dispatch(setAmountInputGotTouched(false))
 		thunkAPI.dispatch(setAmountInput(''))
     thunkAPI.dispatch(setPriceInputGotTouched(false))
@@ -171,6 +176,9 @@ const transactionCreationSlice = createSlice({
     setAssetInputGotTouched(state, action) {
 			state.assetInputGotTouched = action.payload
 		},
+    setDepotInput(state, action) {
+      state.depotInput = action.payload
+    },
     setAmountInput(state, action) {
 			state.amountInput = action.payload
 		},
@@ -208,6 +216,7 @@ export const {
   setTypeInput,
   setTypeInputGotTouched,
   setAssetInput,
+  setDepotInput,
   setAssetInputGotTouched,
   setAmountInput,
   setAmountInputGotTouched,

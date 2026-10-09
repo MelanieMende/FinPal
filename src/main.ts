@@ -1,8 +1,11 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import fs from 'fs';
 import started from 'electron-squirrel-startup';
 import installExtension, { REDUX_DEVTOOLS, REACT_DEVELOPER_TOOLS } from 'electron-devtools-installer';
+import { TradeRepublicTradingService, tradingProcessTransport } from './app/utils/tradeRepublicTradingService';
+import type { TradeDraft } from './app/utils/tradeRepublicTrading';
 import { TradeRepublicSync } from './app/utils/tradeRepublicSync';
 import { ChatGptAuth } from './app/utils/chatGptAuth';
 import { PortfolioAnalysisService } from './app/utils/portfolioAnalysisService';
@@ -32,6 +35,9 @@ const dataPath = app.getPath('userData');
 const filePath = path.join(dataPath, 'config.json');
 const divvyDiary = new DivvyDiaryService(dataPath);
 const tradeRepublicSync = new TradeRepublicSync(dataPath);
+const trading = new TradeRepublicTradingService(dataPath, async () => tradingProcessTransport(await tradeRepublicSync.createTradingProcess()));
+let mainRendererId: number | undefined;
+let mainRendererURL: string | undefined;
 const chatGptAuth = new ChatGptAuth(dataPath);
 const portfolioAnalysis = new PortfolioAnalysisService(dataPath, fetch, chatGptAuth);
 
@@ -86,8 +92,12 @@ const createWindow = async () => {
     },
   });
 
+  mainRendererId = mainWindow.webContents.id;
+  const tradingRendererId = mainWindow.webContents.id;
+  mainWindow.webContents.once('destroyed', () => trading.disconnect(tradingRendererId));
   // and load the index.html of the app.
   if (MAIN_WINDOW_VITE_DEV_SERVER_URL) {
+    mainRendererURL = new URL(MAIN_WINDOW_VITE_DEV_SERVER_URL).href;
     mainWindow.loadURL(MAIN_WINDOW_VITE_DEV_SERVER_URL);
   } else {
     mainWindow.loadFile(
@@ -195,6 +205,22 @@ ipcMain.handle('get-config', async (event) => {
   return appState
 })
 
+function tradingOwner(event: Electron.IpcMainInvokeEvent): number {
+  if (event.sender.id !== mainRendererId || event.senderFrame !== event.sender.mainFrame) throw new Error('Handelszugriff nur aus dem FinPal-Hauptfenster.');
+  const caller = new URL(event.senderFrame.url);
+  const expected = new URL(mainRendererURL!);
+  caller.hash = ''; caller.search = ''; expected.hash = ''; expected.search = '';
+  if (caller.href !== expected.href) throw new Error('Handelszugriff nur aus der lokalen FinPal-Oberfläche.');
+  return event.sender.id;
+}
+ipcMain.handle('trade-republic:trading-status', event => trading.status(tradingOwner(event)));
+ipcMain.handle('trade-republic:trading-connect', (event, code?: string) => trading.connect(tradingOwner(event), code));
+ipcMain.handle('trade-republic:trading-disconnect', (event, forgetSession?: boolean) => { trading.disconnect(tradingOwner(event)); if (forgetSession === true) tradeRepublicSync.clearTradingSession(); return true; });
+ipcMain.handle('trade-republic:trading-preview', (event, draft: TradeDraft) => trading.preview(tradingOwner(event), draft));
+ipcMain.handle('trade-republic:trading-submit', (event, id: string, confirmed: boolean) => trading.submit(tradingOwner(event), id, confirmed));
+ipcMain.handle('trade-republic:trading-orders', (event, accountNumber: string) => trading.orders(tradingOwner(event), accountNumber));
+app.on('before-quit', () => { if (mainRendererId !== undefined) trading.disconnect(mainRendererId); });
+
 ipcMain.handle('trade-republic:status', async () => ({
   runnerAvailable: await tradeRepublicSync.isRunnerAvailable(),
   hasSavedCredentials: tradeRepublicSync.hasSavedCredentials(),
@@ -220,7 +246,8 @@ ipcMain.handle('market:eur-exchange-rates', async () => {
   return euroRatesPromise;
 });
 
-ipcMain.handle('trade-republic:forget', async () => {
+ipcMain.handle('trade-republic:forget', async event => {
+  trading.disconnect(tradingOwner(event));
   tradeRepublicSync.forgetCredentials();
   return true;
 });

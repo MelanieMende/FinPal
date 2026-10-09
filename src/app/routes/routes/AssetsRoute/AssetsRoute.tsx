@@ -1,11 +1,14 @@
 import React, { useEffect, useState } from 'react';
-import { useAppSelector } from './../../../hooks'
+import { useAppDispatch, useAppSelector } from './../../../hooks'
 import { Card, H5, Icon } from '@blueprintjs/core';
 import type { IconName } from '@blueprintjs/icons';
 
 import CreateAndEditAssetOverlay from './components/CreateAndEditAssetOverlay';
+import TradeRepublicTradeDialog from './components/TradeRepublicTradeDialog';
 import AssetList from './components/AssetList/AssetList';
 import * as assetsSelector from './../../../store/assets/assets.selectors';
+import { selectTotalLiquidity } from '../../../store/cash/cash.selectors';
+import { changeSelectedTab } from '../../../store/appState/appState.reducer';
 import { formatSyncTime } from '../../../utils/syncTimestamps';
 import { useMarketPriceUpdatedAt } from '../../../utils/useMarketPriceUpdatedAt';
 
@@ -23,7 +26,10 @@ const euroFormatter = new Intl.NumberFormat('de-DE', { style: 'currency', curren
 export const ASSET_TYPE_FILTER_KEY = 'finpal.assets.selectedType.v1';
 
 export default function AnalysisRoute() {
+	const dispatch = useAppDispatch();
 	const assets = useAppSelector(state => state.assets);
+	const totalLiquidity = useAppSelector(selectTotalLiquidity);
+	const totalWealth = assets.reduce((sum, asset) => sum + (assetsSelector.get_current_value(asset) || 0), 0) + totalLiquidity;
 	const [selectedType, setSelectedType] = useState<Asset['type'] | null>(() => {
 		const savedType = localStorage.getItem(ASSET_TYPE_FILTER_KEY);
 		return assetTypes.find(({ type }) => type === savedType)?.type ?? null;
@@ -56,6 +62,19 @@ export default function AnalysisRoute() {
 			<div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
 				
 				<div className="flex flex-wrap gap-4">
+					<Card
+						data-testid="asset-total-wealth"
+						title="Aktuelle Positionswerte inklusive Cash Equivalents plus Total Liquidity aus Cash Management"
+						className="glass-card py-2 px-4 flex items-center gap-3 !border-emerald-400/30 !bg-emerald-500/10"
+					>
+						<div className="p-2 rounded-lg bg-emerald-500/10">
+							<Icon icon="bank-account" className="text-emerald-400" size={16} />
+						</div>
+						<div>
+							<div className="text-[10px] uppercase font-bold tracking-wider text-emerald-300">Total Wealth</div>
+							<div className={`text-lg font-bold ${totalWealth === 0 ? 'text-slate-500' : 'text-white'}`}>{euroFormatter.format(totalWealth)}</div>
+						</div>
+					</Card>
 					{valuesByType.map(({ type, label, icon, symbol, value }) => {
 						const isSelected = selectedType === type;
 
@@ -94,6 +113,29 @@ export default function AnalysisRoute() {
 						</Card>
 						);
 					})}
+					<Card
+						data-testid="asset-cash-value"
+						interactive
+						role="link"
+						tabIndex={0}
+						title="Cash Management öffnen"
+						onClick={() => dispatch(changeSelectedTab('cashTab'))}
+						onKeyDown={(event) => {
+							if (event.key === 'Enter' || event.key === ' ') {
+								event.preventDefault();
+								dispatch(changeSelectedTab('cashTab'));
+							}
+						}}
+						className="glass-card py-2 px-4 flex items-center gap-3 cursor-pointer transition-colors duration-200 border-transparent hover:border-indigo-500/30"
+					>
+						<div className="p-2 rounded-lg bg-indigo-500/10">
+							<Icon icon="bank-account" className="text-indigo-500" size={16} />
+						</div>
+						<div>
+							<div className="text-[10px] uppercase font-bold tracking-wider text-gray-400">Cash</div>
+							<div className={`text-lg font-bold ${totalLiquidity === 0 ? 'text-slate-500' : 'text-white'}`}>{euroFormatter.format(totalLiquidity)}</div>
+						</div>
+					</Card>
 				</div>
 			</div>
 
@@ -110,6 +152,7 @@ export default function AnalysisRoute() {
 						</span>
 					</div>
 				</div>
+				<div className="px-4 py-3 border-b border-white/5"><TradeRepublicTradeDialog assets={assets}/></div>
 				<div className="overflow-x-auto">
 					<AssetList assets={filteredAssets}/>
 				</div>

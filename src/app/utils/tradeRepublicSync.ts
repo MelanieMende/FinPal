@@ -5,6 +5,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { safeStorage } from 'electron';
 import extract from 'extract-zip';
+import { TradeRepublicSessionStore } from './tradeRepublicSession';
+import { tradeRepublicTradingWorker } from './tradeRepublicTradingWorker';
 import { tradeRepublicPortfolioExport } from './tradeRepublicPortfolioExport';
 
 const UV_VERSION = '0.11.30';
@@ -152,11 +154,14 @@ export function parsePytrPortfolioCsv(contents: string): TradeRepublicQuote[] {
 
 export class TradeRepublicSync {
   private readonly credentialsFile: string;
+  private readonly tradingSession: TradeRepublicSessionStore;
+  private tradingSessionGeneration = 0;
   private readonly runnerDir: string;
   private readonly quoteCacheFile: string;
   private readonly syncStatusFile: string;
   constructor(userDataPath: string) {
     this.credentialsFile = path.join(userDataPath, 'trade-republic-credentials.bin');
+    this.tradingSession = new TradeRepublicSessionStore(userDataPath, safeStorage);
     this.runnerDir = path.join(userDataPath, 'tools', `uv-${UV_VERSION}`);
     this.quoteCacheFile = path.join(userDataPath, 'trade-republic-quotes.json');
     this.syncStatusFile = path.join(userDataPath, 'trade-republic-sync-status.json');
@@ -173,9 +178,13 @@ export class TradeRepublicSync {
     }
   }
   hasSavedCredentials(): boolean { return fs.existsSync(this.credentialsFile) && safeStorage.isEncryptionAvailable(); }
-  forgetCredentials(): void { if (fs.existsSync(this.credentialsFile)) fs.unlinkSync(this.credentialsFile); }
+  clearTradingSession(): void { this.tradingSessionGeneration++; this.tradingSession.clear(); }
+  forgetCredentials(): void { this.clearTradingSession(); if (fs.existsSync(this.credentialsFile)) fs.unlinkSync(this.credentialsFile); }
   private saveCredentials(value: TradeRepublicCredentials): void {
     if (!safeStorage.isEncryptionAvailable()) throw new Error('Die sichere Speicherung ist auf diesem System nicht verfügbar.');
+    let previous: TradeRepublicCredentials | null = null;
+    try { previous = this.readCredentials(); } catch { /* A newly saved login replaces an unreadable credential file. */ }
+    if (!previous || previous.phone.trim() !== value.phone.trim() || previous.pin.trim() !== value.pin.trim()) this.clearTradingSession();
     fs.writeFileSync(this.credentialsFile, safeStorage.encryptString(JSON.stringify(value)), { mode: 0o600 });
   }
   private readCredentials(): TradeRepublicCredentials | null {
@@ -240,6 +249,46 @@ export class TradeRepublicSync {
       fs.writeFileSync(this.syncStatusFile, JSON.stringify({ lastSyncAt }));
       return { ...result, quotes: quoteCache.quotes, quotesFetchedAt: quoteCache.fetchedAt, quoteError, lastSyncAt };
     } finally { fs.rmSync(tempDir, { recursive: true, force: true }); }
+  }
+  async createTradingProcess() {
+    let login: TradeRepublicCredentials | null;
+    try { login = this.readCredentials(); } catch { throw new Error('Der gespeicherte Trade-Republic-Zugang ist nicht lesbar. Bitte unter Import erneut speichern.'); }
+    if (!login || typeof login.phone !== 'string' || typeof login.pin !== 'string' || !login.phone.trim() || !login.pin.trim()) throw new Error('Bitte zuerst unter Import den Trade-Republic-Zugang sicher speichern.');
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-tr-trading-'));
+    try {
+      const isolatedHome = path.join(tempDir, 'profile');
+      fs.mkdirSync(path.join(isolatedHome, '.pytr'), { recursive: true });
+      const runner = await this.ensureRunner();
+      const helper = path.join(tempDir, 'trading.py');
+      fs.writeFileSync(helper, tradeRepublicTradingWorker, { mode: 0o600 });
+      const child = spawn(runner, ['--with', 'pytr==0.4.10', 'python', helper], {
+        windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, PYTHONUNBUFFERED: '1', USERPROFILE: isolatedHome, HOME: isolatedHome },
+      });
+      const cleanup = () => {
+        const target = path.resolve(tempDir);
+        if (!target.startsWith(path.resolve(os.tmpdir()) + path.sep) || !path.basename(target).startsWith('finpal-tr-trading-')) throw new Error('Unexpected trading profile path.');
+        fs.rmSync(target, { recursive: true, force: true });
+      };
+      child.once('close', cleanup);
+      const credentials = {phone: login.phone.trim(), pin: login.pin.trim()};
+      const generation = this.tradingSessionGeneration;
+      return { child, credentials, session: this.tradingSession.load(credentials), saveSession: (cookies: unknown) => {
+        const current = this.readCredentials();
+        if (generation === this.tradingSessionGeneration && current && current.phone.trim() === credentials.phone && current.pin.trim() === credentials.pin) this.tradingSession.save(credentials, cookies);
+      }, dispose: () => {
+        if (child.exitCode !== null || child.signalCode !== null || child.killed) return;
+        child.stdin.end();
+        if (process.platform === 'win32' && child.pid && child.pid > 0) {
+          const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
+          killer.once('error', () => child.kill());
+        } else child.kill();
+      } };
+    } catch (error) {
+      const target = path.resolve(tempDir);
+      if (target.startsWith(path.resolve(os.tmpdir()) + path.sep) && path.basename(target).startsWith('finpal-tr-trading-')) fs.rmSync(target, { recursive: true, force: true });
+      throw error;
+    }
   }
   private prepareIsolatedProfile(credentials: TradeRepublicCredentials, tempDir: string): string {
     // Python's getpass reads directly from the Windows console instead of a

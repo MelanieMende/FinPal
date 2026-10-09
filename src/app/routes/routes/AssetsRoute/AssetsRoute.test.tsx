@@ -4,8 +4,69 @@ import AssetsRoute, { ASSET_TYPE_FILTER_KEY } from './AssetsRoute';
 import { MARKET_PRICE_UPDATED_AT_KEY, MARKET_PRICE_UPDATED_EVENT } from '../../../utils/syncTimestamps';
 
 describe('AssetsRoute component', () => {
+	const originalSaveSelectedTab = window.API.saveSelectedTab;
 	beforeEach(() => localStorage.removeItem(ASSET_TYPE_FILTER_KEY));
-	afterEach(() => localStorage.removeItem(ASSET_TYPE_FILTER_KEY));
+	afterEach(() => {
+		localStorage.removeItem(ASSET_TYPE_FILTER_KEY);
+		window.API.saveSelectedTab = originalSaveSelectedTab;
+	});
+
+	it.each(['click', 'Enter', ' '])('opens the Cash tab via %s without changing the asset filter', async (activation) => {
+		window.API.saveSelectedTab = jest.fn().mockResolvedValue(undefined);
+		localStorage.setItem(ASSET_TYPE_FILTER_KEY, 'Stock');
+		const { store } = render(<AssetsRoute />, { preloadedState: {
+			assets: [], transactions: [], dividends: [],
+			cash: [{ ID: 1, date: '2026-10-09', type: 'Deposit', amount: 125 }],
+		} });
+		const card = screen.getByRole('link', { name: /Cash/ });
+		expect(card).toHaveTextContent(/125,00/);
+		expect(card.parentElement?.lastElementChild).toBe(card);
+		await act(async () => {
+			if (activation === 'click') fireEvent.click(card);
+			else fireEvent.keyDown(card, { key: activation });
+		});
+		expect(store.getState().appState.selectedTab).toBe('cashTab');
+		expect(window.API.saveSelectedTab).toHaveBeenCalledWith('cashTab');
+		expect(localStorage.getItem(ASSET_TYPE_FILTER_KEY)).toBe('Stock');
+		expect(screen.getByTestId('asset-type-value-Stock')).toHaveAttribute('aria-pressed', 'true');
+	});
+
+	it('shows total wealth first, including liquidity and cash equivalent positions once, regardless of the filter', async () => {
+		const assets = [
+			{ ID: 1, type: 'Stock', name: 'Stock', symbol: 'STK', isin: 'STOCK', current_shares: 2, price: 50 },
+			{ ID: 2, type: 'CashEquivalent', name: 'Cash equivalent', symbol: 'CE', isin: 'CASH', current_shares: 5, price: 10 },
+		] as Asset[];
+		await act(async () => {
+			render(<AssetsRoute />, { preloadedState: {
+				assets,
+				cash: [
+					{ ID: 1, date: '2026-10-09', type: 'Deposit', amount: 300, fee: 2 },
+					{ ID: 2, date: '2026-10-09', type: 'Withdrawal', amount: 20 },
+					{ ID: 3, date: '2026-10-09', type: 'Interest', amount: 5 },
+				],
+				transactions: [{ ID: 1, asset_ID: 1, in_out: -100 }] as Transaction[],
+				dividends: [{ ID: 1, asset_ID: 1, income: 7 }] as Dividend[],
+			} });
+		});
+		// Positions 150 + liquidity (300 - 2 - 20 + 5 - 100 + 7) = 340.
+		const total = screen.getByTestId('asset-total-wealth');
+		expect(total.parentElement?.firstElementChild).toBe(total);
+		expect(total).toHaveTextContent('Total Wealth');
+		expect(total).toHaveTextContent(/340,00/);
+		await act(async () => fireEvent.click(screen.getByTestId('asset-type-value-Stock')));
+		expect(total).toHaveTextContent(/340,00/);
+		expect(screen.getByTestId('TableCellCurrentValueSum')).toHaveTextContent(/100,00/);
+	});
+
+	it('includes negative liquidity even when there are no positions', async () => {
+		await act(async () => {
+			render(<AssetsRoute />, { preloadedState: {
+				assets: [], transactions: [], dividends: [],
+				cash: [{ ID: 1, date: '2026-10-09', type: 'Withdrawal', amount: 25 }],
+			} });
+		});
+		expect(screen.getByTestId('asset-total-wealth')).toHaveTextContent(/-25,00/);
+	});
 
 	it('shows a saved market price time and updates it when a new quote arrives', async () => {
 		localStorage.setItem(MARKET_PRICE_UPDATED_AT_KEY, '2026-10-01T10:30:00.000Z');

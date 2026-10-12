@@ -32,6 +32,7 @@ export interface TradeRepublicCashRecord {
 }
 
 export interface TradeRepublicQuote {
+  instrumentType?: string;
   name: string;
   isin: string;
   quantity: number;
@@ -148,6 +149,8 @@ export function parsePytrPortfolioCsv(contents: string): TradeRepublicQuote[] {
       netValue: numberValue(values[column('netValue')]),
       ...(validTime ? { quoteAsOf: new Date(timestamp).toISOString() } : {}),
       ...(exchange ? { exchange } : {}),
+      ...(/^[a-zA-Z-]{1,40}$/.test(stringValue(values[column('instrumentType')]))
+        ? { instrumentType: stringValue(values[column('instrumentType')]).toLowerCase() } : {}),
     };
   }).filter(quote => quote.name.length > 0 && quote.price > 0);
 }

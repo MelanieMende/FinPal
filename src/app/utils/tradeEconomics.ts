@@ -24,7 +24,9 @@ export function buildTradeEconomics(position: AnalysisPosition, investorContext?
       : 'Szenarien mit 1 EUR für eine Order bzw. 2 EUR für zwei Orders; tatsächliche Gebühren und Broker nicht bestätigt, Spread und weitere Kosten unbekannt.',
     taxResidence: taxResidence?.country ?? 'unknown', taxResidenceValidFrom: taxResidence?.validFrom ?? null,
     custody: facts?.custody ?? null, acquisitionHistory: facts?.acquisitionHistory ?? null,
-    taxContext: facts?.taxContext ?? 'unknown', specialActivities: facts?.specialActivities ?? 'unknown', targetWeight: facts?.targetWeight ?? null,
+    taxContext: facts?.resolvedTaxContext?.context ?? facts?.taxContext ?? 'unknown',
+    taxContextProvenance: facts?.resolvedTaxContext ?? null,
+    specialActivities: facts?.specialActivities ?? 'unknown', targetWeight: facts?.targetWeight ?? null,
     taxCostBasis: 'unknown', lossPots: 'unknown', taxSavingsEUR: null as number | null,
     accountingBasis: 'costBasis ist die FinPal-Restkostenbasis, keine bestätigte steuerliche FIFO-Anschaffungskostenbasis. realizedGainLoss enthält Dividenden und ist kein Aktien-Verlusttopf.',
   };

@@ -59,6 +59,9 @@ async function checkInChromium(html, output) {
           await window.webContents.executeJavaScript(`document.querySelector('[data-testid="investor-facts-1"]').scrollIntoView(); new Promise(resolve => requestAnimationFrame(resolve))`);
           const assetScreenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'asset-fields-900.png'), assetScreenshot.toPNG());
+          await window.webContents.executeJavaScript(`document.querySelector('[aria-label="Steuerlicher Kontext je Depot"]').scrollIntoView(); new Promise(resolve => requestAnimationFrame(resolve))`);
+          const depotScreenshot = await window.webContents.capturePage();
+          fs.writeFileSync(path.join(output, 'depot-tax-900.png'), depotScreenshot.toPNG());
           await window.webContents.executeJavaScript('scrollTo(0, 0)');
         }
       }

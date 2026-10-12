@@ -63,6 +63,41 @@ describe('AssetCreation reducer', () => {
 
   describe('Assets Thunks', () => {
 
+    it.each([false, true])('rebuilds current investment from transactions after an asset reload (single: %s)', async single => {
+      const assets = [
+        { ID: 1, name: 'Partially sold', symbol: 'PART', current_shares: 6, current_invest: -1000 },
+        { ID: 2, name: 'Held', symbol: 'HOLD', current_shares: 2, current_invest: -201 },
+        { ID: 3, name: 'Sold', symbol: 'SOLD', current_shares: 0, current_invest: -300 },
+        { ID: 4, name: 'Watchlist', symbol: 'WATCH', current_shares: 0 },
+      ] as Asset[];
+      // Deliberately unordered, with same-day trades and no calculated cost basis.
+      const transactions = [
+        { ID: 2, asset_ID: 1, rank: 2, date: '2026-10-12', type: 'Sell', shares_cumulated: 6, in_out: 500 },
+        { ID: 1, asset_ID: 1, rank: 1, date: '2026-10-12', type: 'Buy', shares_cumulated: 10, in_out: -1000 },
+        { ID: 3, asset_ID: 2, rank: 1, date: '2026-10-11', type: 'Buy', shares_cumulated: 2, in_out: -201 },
+        { ID: 4, asset_ID: 3, rank: 1, date: '2026-10-11', type: 'Buy', shares_cumulated: 3, in_out: -300 },
+        { ID: 5, asset_ID: 3, rank: 2, date: '2026-10-12', type: 'Sell', shares_cumulated: 0, in_out: 350 },
+      ] as Transaction[];
+      window.API = {
+        sendToDB: jest.fn(async (sql: string) => sql === 'SELECT * FROM transactions_v'
+          ? transactions
+          : assets.filter(asset => !single || asset.ID === 1).map(({ current_invest, ...row }) => row)),
+      };
+      const store = setupStore({ assets });
+
+      if (single) await store.dispatch(assetsReducer.loadAsset({ assetID: 1 }));
+      else await store.dispatch(assetsReducer.loadAssets());
+
+      expect(store.getState().assets.map(asset => asset.current_invest)).toEqual(
+        single ? [-600, -201, -300, undefined] : [-600, -201, 0, 0]
+      );
+      // A repeated manual refresh must retain the same correctly calculated values.
+      if (!single) {
+        await store.dispatch(assetsReducer.loadAssets());
+        expect(store.getState().assets.map(asset => asset.current_invest)).toEqual([-600, -201, 0, 0]);
+      }
+    });
+
   it.each(['USD', 'DKK', 'CHF', 'GBP'])('converts %s and retains its FX provenance across reloads', async currency => {
     const asset = { ID: 901, name: currency, symbol: currency, is_watched: true, current_shares: 2 } as Asset;
     const asOf = '2026-10-03T00:00:00.000Z';

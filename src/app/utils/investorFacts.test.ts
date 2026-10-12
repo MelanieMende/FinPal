@@ -1,6 +1,8 @@
 import { buildInvestorContext, deriveAcquisitionHistory, newInvestorFacts, readInvestorFacts, saveInvestorFacts,
   seedInvestorFacts, validInvestorContext, validAssetInvestorFacts, investorFactsStorageKey, depotHistoryKey } from './investorFacts';
 import { buildTradeEconomics } from './tradeEconomics';
+import { resolveTaxContext, missingAssetAnalysisFacts } from './investorFacts';
+import { brokerProduct } from './instrumentClassification';
 import { buildAnalysisPositions, validateAnalysisRequest, type PortfolioAnalysisRequest } from './portfolioAnalysis';
 
 const asset = { ID: 1, name: 'Bitcoin', type: 'Crypto', symbol: 'BTC', isin: '', currencySymbol: '€', current_shares: 2, price: 100 } as Asset;
@@ -10,6 +12,39 @@ const trades = [
   { ID: 3, asset_ID: 1, date: '2025-03-01', type: 'Sell', amount: 1, price_per_share: 70 },
 ] as Transaction[];
 beforeEach(() => localStorage.clear());
+
+it('persists depot ownership, derives product-specific tax context, and retains legacy and explicit exceptions', () => {
+  const known = { ...asset, isin: 'BTC' };
+  known.brokerProduct = brokerProduct(known, [{ name: 'Bitcoin', isin: 'BTC', instrumentType: 'crypto', quantity: 2, price: 100, averageBuyIn: 50, netValue: 200 }]);
+  const facts = readInvestorFacts('db', [known]);
+  expect(resolveTaxContext(known, facts.assets[1]).context).toBe('unknown');
+  facts.depotTaxContexts = { 'trade republic': { provider: 'Trade Republic', ownership: 'private', confirmedAt: '2026-10-09T10:00:00Z' } };
+  saveInvestorFacts('db', facts);
+  const restored = readInvestorFacts('db', [known]);
+  const context = buildInvestorContext(restored, [known], trades);
+  expect(context.assets[0].resolvedTaxContext).toMatchObject({ context: 'private-direct-crypto', source: 'depot-and-product' });
+  expect(validInvestorContext(context)).toBe(true);
+  expect(buildTradeEconomics(buildAnalysisPositions([known])[0], context).taxContext).toBe('private-direct-crypto');
+  expect(missingAssetAnalysisFacts(known, restored.assets[1], context.assets[0].acquisitionHistory, restored.depotTaxContexts)).not.toContain('Steuerlicher Kontext');
+  const security = { ...known, brokerProduct: { ...known.brokerProduct!, kind: 'security' as const, instrumentType: 'etp' } };
+  expect(resolveTaxContext(security, restored.assets[1], restored.depotTaxContexts).context).toBe('security');
+  expect(missingAssetAnalysisFacts(security, restored.assets[1], context.assets[0].acquisitionHistory, restored.depotTaxContexts)).not.toContain('Sonderaktivitäten (Staking / Lending)');
+  expect(resolveTaxContext({ ...known, brokerProduct: undefined }, restored.assets[1], restored.depotTaxContexts).context).toBe('unknown');
+  const otherDepot = { ...restored.assets[1], custody: { ...restored.assets[1].custody, provider: 'Other' } };
+  expect(resolveTaxContext(known, otherDepot, restored.depotTaxContexts).context).toBe('unknown');
+  restored.assets[1] = { ...restored.assets[1], taxContext: 'business', confirmedAt: '2026-10-09T11:00:00Z' };
+  expect(resolveTaxContext(known, restored.assets[1], restored.depotTaxContexts)).toMatchObject({ context: 'business', source: 'asset' });
+  restored.assets[1].taxContextOverride = false;
+  expect(resolveTaxContext(known, restored.assets[1], restored.depotTaxContexts).context).toBe('private-direct-crypto');
+  restored.assets[1].taxContextOverride = true;
+  restored.assets[1].taxContext = 'unknown';
+  expect(resolveTaxContext(known, restored.assets[1], restored.depotTaxContexts)).toMatchObject({ context: 'unknown', source: 'asset' });
+  restored.depotTaxContexts!['trade republic'].ownership = 'business';
+  restored.assets[1].taxContextOverride = false;
+  expect(resolveTaxContext({ ...known, brokerProduct: undefined }, restored.assets[1], restored.depotTaxContexts).context).toBe('business');
+  const invalid = { ...context, depotTaxContexts: { 'trade republic': { provider: 'Trade Republic', ownership: 'private' as const, confirmedAt: 'invalid' } } };
+  expect(validInvestorContext(invalid)).toBe(false);
+});
 
 it('inherits one persisted depot confirmation across assets and future purchases, with explicit asset exceptions', () => {
   const second = { ...asset, ID: 2, current_shares: 1 };

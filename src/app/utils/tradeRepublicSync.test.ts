@@ -2,6 +2,12 @@ import { normalizeLegacyTradeRepublicQuote, parsePytrJsonLines, parsePytrPortfol
 
 jest.mock('electron', () => ({ safeStorage: {} }));
 
+it('preserves explicit instrument types from portfolio exports without inventing types for legacy caches', () => {
+  const csv = 'Name;ISIN;quantity;price;avgCost;netValue;instrumentType\nBitcoin;BTC;1;100;80;100;crypto';
+  expect(parsePytrPortfolioCsv(csv)[0].instrumentType).toBe('crypto');
+  expect(parsePytrPortfolioCsv(csv.replace(';instrumentType', '').replace(';crypto', ''))[0].instrumentType).toBeUndefined();
+});
+
 describe('parsePytrJsonLines', () => {
   it('maps supported pytr rows to FinPal transactions', () => {
     const input = [

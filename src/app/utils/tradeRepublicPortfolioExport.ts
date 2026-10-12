@@ -10,12 +10,17 @@ from pytr.portfolio import Portfolio
 from pytr.main import main
 
 ticks = {}
+instruments = {}
 original_recv = TradeRepublicApi.recv
 original_write_csv = Portfolio.write_csv
 
 async def recv(self):
     item = await original_recv(self)
     _, subscription, response = item
+    if subscription.get('type') == 'instrument' and isinstance(response, dict):
+        key = subscription.get('id', '')
+        if key and (response.get('isin') or response.get('id')) == key:
+            instruments[key] = response.get('typeId') or response.get('type') or ''
     if subscription.get('type') == 'ticker':
         key = subscription.get('id', '')
         last = response.get('last', {})
@@ -45,18 +50,18 @@ def write_csv(self):
                 stamp = datetime.fromtimestamp(millis / 1000, timezone.utc).isoformat().replace('+00:00', 'Z')
         except (ValueError, TypeError, ArithmeticError, OverflowError):
             pass
-        metadata[isin] = (stamp, exchange)
+        metadata[isin] = (stamp, exchange, instruments.get(isin, ''))
     path = Path(self.output)
     with path.open(encoding='utf-8', newline='') as handle:
         rows = list(csv.DictReader(handle, delimiter=';'))
     if not rows:
         return
-    columns = list(rows[0]) + ['quoteAsOf', 'exchange']
+    columns = list(dict.fromkeys(list(rows[0]) + ['quoteAsOf', 'exchange', 'instrumentType']))
     with path.open('w', encoding='utf-8', newline='') as handle:
         writer = csv.DictWriter(handle, fieldnames=columns, delimiter=';')
         writer.writeheader()
         for row in rows:
-            row['quoteAsOf'], row['exchange'] = metadata.get(row['ISIN'], ('', ''))
+            row['quoteAsOf'], row['exchange'], row['instrumentType'] = metadata.get(row['ISIN'], ('', '', ''))
             writer.writerow(row)
 
 TradeRepublicApi.recv = recv

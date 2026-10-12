@@ -14,6 +14,8 @@ interface Asset {
   avg_price_paid?: float,
   currencySymbol?: string,
   quote?: import('../../utils/quoteMetadata').QuoteMetadata,
+  brokerProduct?: { kind: 'direct-crypto' | 'security'; source: 'trade-republic'; instrumentId: string; instrumentType: string },
+  brokerProduct?: { kind: 'direct-crypto' | 'security'; source: 'trade-republic'; instrumentId: string; instrumentType: string },
   bondHolding?: import('../../utils/bondHoldings').BondHolding,
   current_profit_loss?: float,
   current_profit_loss_percentage?: float,

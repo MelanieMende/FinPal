@@ -1,6 +1,7 @@
 import { useState } from 'react';
-import { Button } from '@blueprintjs/core';
-import { resolveAcquisitionHistory, depotHistoryKey, hasAssetHistoryOverride, validAssetInvestorFacts, validCustody, validFactDate,
+import { Button, Icon } from '@blueprintjs/core';
+import { resolveTaxContext, hasAssetTaxOverride, type DepotTaxConfirmation } from '../../../../utils/investorFacts';
+import { resolveAcquisitionHistory, missingAssetAnalysisFacts, depotHistoryKey, hasAssetHistoryOverride, validAssetInvestorFacts, validCustody, validFactDate,
   type AssetInvestorFacts, type CustodyFact, type InvestorFacts, type DepotHistoryConfirmation, type HistoryCoverage } from '../../../../utils/investorFacts';
 
 const input = 'mt-1 w-full rounded border border-white/15 bg-slate-900 px-2 py-1 text-sm text-white';
@@ -20,8 +21,8 @@ function CustodyFields({ value, onChange }: { value: CustodyFact; onChange: (v: 
   </div>;
 }
 
-function AssetFactsEditor({ asset, facts, transactions, depotHistories, onSave }: {
-  asset: Asset; facts: AssetInvestorFacts; transactions: Transaction[]; depotHistories: InvestorFacts['depotHistories']; onSave: (v: AssetInvestorFacts) => void;
+function AssetFactsEditor({ asset, facts, transactions, depotHistories, depotTaxContexts, onSave }: {
+  asset: Asset; facts: AssetInvestorFacts; transactions: Transaction[]; depotHistories: InvestorFacts['depotHistories']; depotTaxContexts: InvestorFacts['depotTaxContexts']; onSave: (v: AssetInvestorFacts) => void;
 }) {
   const [draft, setDraft] = useState(facts);
   const [target, setTarget] = useState(facts.targetWeight ? String(facts.targetWeight.percent) : '');
@@ -29,6 +30,8 @@ function AssetFactsEditor({ asset, facts, transactions, depotHistories, onSave }
   const [maximum, setMaximum] = useState(facts.targetWeight ? String(facts.targetWeight.maxPercent) : '');
   const [error, setError] = useState('');
   const history = resolveAcquisitionHistory(asset, transactions, draft, depotHistories);
+  const missing = missingAssetAnalysisFacts(asset, facts, resolveAcquisitionHistory(asset, transactions, facts, depotHistories), depotTaxContexts);
+  const tax = resolveTaxContext(asset, draft, depotTaxContexts);
   function save() {
     const timestamp = new Date().toISOString();
     const targetWeight = [target, minimum, maximum].some(v => v.trim())
@@ -40,9 +43,19 @@ function AssetFactsEditor({ asset, facts, transactions, depotHistories, onSave }
     if (!validAssetInvestorFacts(next)) { setError('Bitte Verwahranbieter und Gebühren prüfen. Für ein Zielgewicht sind Ziel, Unter- und Obergrenze zwischen 0 und 100 erforderlich: Untergrenze ≤ Ziel ≤ Obergrenze.'); return; }
     setError(''); onSave(next);
   }
-  return <details className="rounded border border-white/10 p-3" data-testid={`investor-facts-${asset.ID}`}>
-    <summary className="cursor-pointer font-bold text-white">{asset.name || `Asset ${asset.ID}`} · {facts.custody.provider || 'Verwahrung unbekannt'}</summary>
+  return <details className={`rounded border p-3 ${missing.length ? 'border-amber-400/40 bg-amber-500/5' : 'border-white/10'}`} data-testid={`investor-facts-${asset.ID}`}>
+    <summary className="cursor-pointer font-bold text-white">
+      {asset.name || `Asset ${asset.ID}`} · {facts.custody.provider || 'Verwahrung unbekannt'}{' '}
+      <span className={`inline-flex max-w-full items-center gap-1 rounded px-2 py-1 align-middle text-[11px] ${missing.length ? 'bg-amber-500/15 text-amber-200' : 'bg-emerald-500/10 text-emerald-200'}`}>
+        <Icon icon={missing.length ? 'warning-sign' : 'tick'} size={12} aria-hidden="true" />
+        <span className="min-w-0">{missing.length ? `${missing.length} ${missing.length === 1 ? 'Angabe' : 'Angaben'} offen` : 'Asset-Angaben erfasst'}</span>
+      </span>
+    </summary>
     <div className="mt-3 space-y-3">
+      {!!missing.length && <div className="rounded border border-amber-400/20 bg-amber-500/5 p-3 text-amber-200" aria-label={`Offene Angaben für ${asset.name || `Asset ${asset.ID}`}`}>
+        <p className="m-0 font-bold">Noch offen</p>
+        <ul className="mt-1 mb-0 list-disc pl-4">{missing.map(field => <li key={field}>{field}</li>)}</ul>
+      </div>}
       <CustodyFields value={draft.custody} onChange={custody => setDraft({ ...draft, custody })} />
       <div className="analysis-fields">
         <label>Transaktionshistorie<select className={input} value={hasAssetHistoryOverride(draft) ? draft.historyCoverage : 'inherit'} onChange={e => setDraft({ ...draft,
@@ -54,11 +67,20 @@ function AssetFactsEditor({ asset, facts, transactions, depotHistories, onSave }
         <label>Sonderaktivitäten<select className={input} value={draft.specialActivities} onChange={e => setDraft({ ...draft, specialActivities: e.target.value as AssetInvestorFacts['specialActivities'] })}>
           <option value="unknown">Unbekannt</option><option value="none">Keine</option><option value="staking">Staking</option><option value="lending">Lending</option><option value="mixed">Mehrere / sonstige</option>
         </select></label>
-        <label>Steuerlicher Kontext (eigene Angabe)<select className={input} value={draft.taxContext} onChange={e => setDraft({ ...draft, taxContext: e.target.value as AssetInvestorFacts['taxContext'] })}>
+        <label>Steuerlicher Kontext (eigene Angabe)<select className={input} value={hasAssetTaxOverride(draft) ? draft.taxContext : 'auto'} onChange={e => setDraft({ ...draft,
+          taxContextOverride: e.target.value !== 'auto', taxContext: e.target.value === 'auto' ? 'unknown' : e.target.value as AssetInvestorFacts['taxContext'] })}>
+          <option value="auto">Automatisch aus Depot und Produktdaten</option>
           <option value="unknown">Ungeklärt</option><option value="private-direct-crypto">Direkt gehaltene Kryptowerte im Privatvermögen</option>
           <option value="security">Wertpapier im Privatvermögen</option><option value="business">Betrieblicher Kontext</option>
         </select></label>
       </div>
+      <p className={tax.context === 'unknown' ? 'text-amber-200' : 'text-sky-200'}>
+        Steuerlicher Kontext: {tax.context === 'security' ? 'Wertpapier im Privatvermögen' : tax.context === 'private-direct-crypto'
+          ? 'Direkt gehaltene Kryptowerte im Privatvermögen' : tax.context === 'business' ? 'Betrieblicher Kontext' : 'Ungeklärt'}.
+        {tax.source === 'asset' ? ' Eigene Ausnahme für dieses Asset.' : tax.source === 'depot-and-product'
+          ? ` Aus der Depotangabe${tax.product ? ` und Trade-Republic-Produktdaten (${tax.product.instrumentType}, ${tax.product.instrumentId})` : ''} abgeleitet.`
+          : ' Depotangabe und eindeutige Produktdaten prüfen oder eine eigene Ausnahme festlegen.'}
+      </p>
       <p className="text-gray-400">Vollständigkeit: {history.coverage === 'complete' ? 'Vollständig' : history.coverage === 'incomplete' ? 'Unvollständig' : 'Unbestätigt'}
         {history.coverageSource === 'depot' ? ' · Depotbestätigung' : history.coverageSource === 'asset' ? ' · Eigene Angabe für dieses Asset' : ''}.</p>
       {!!history.coverageIssues?.length && <p className="text-amber-200">{history.coverageIssues.join(' ')}</p>}
@@ -102,6 +124,19 @@ function DepotHistoryEditor({ provider, confirmation, onSave }: {
   </div>;
 }
 
+function DepotTaxEditor({ provider, confirmation, onSave }: {
+  provider: string; confirmation?: DepotTaxConfirmation; onSave: (v: DepotTaxConfirmation) => void;
+}) {
+  const [ownership, setOwnership] = useState<DepotTaxConfirmation['ownership']>(confirmation?.ownership ?? 'unknown');
+  return <div className="rounded border border-white/10 p-3 space-y-2">
+    <label>Vermögenszuordnung für {provider}<select className={input} value={ownership} onChange={e => setOwnership(e.target.value as DepotTaxConfirmation['ownership'])}>
+      <option value="unknown">Ungeklärt</option><option value="private">Privatvermögen</option><option value="business">Betriebsvermögen</option>
+    </select></label>
+    <Button small onClick={() => onSave({ provider, ownership, confirmedAt: new Date().toISOString() })}>Vermögenszuordnung für {provider} speichern</Button>
+    {confirmation && <p className="text-gray-400">Bestätigt am {new Date(confirmation.confirmedAt).toLocaleString('de-DE')}</p>}
+  </div>;
+}
+
 export default function InvestorFactsEditor({ facts, assets, transactions, onSave, busy, storageError }: {
   facts: InvestorFacts; assets: Asset[]; transactions: Transaction[]; onSave: (v: InvestorFacts) => boolean; busy: boolean; storageError: string | null;
 }) {
@@ -112,7 +147,8 @@ export default function InvestorFactsEditor({ facts, assets, transactions, onSav
   const [notice, setNotice] = useState('');
   const providers = new Map<string, string>();
   for (const name of [...assets.map(asset => facts.assets[asset.ID]?.custody.provider ?? ''),
-    ...transactions.map(transaction => transaction.depot ?? ''), ...Object.values(facts.depotHistories ?? {}).map(v => v.provider)]) {
+    ...transactions.map(transaction => transaction.depot ?? ''), ...Object.values(facts.depotHistories ?? {}).map(v => v.provider),
+    ...Object.values(facts.depotTaxContexts ?? {}).map(v => v.provider)]) {
     if (name.trim()) providers.set(depotHistoryKey(name), name.trim());
   }
   const historyReviews = assets.flatMap(asset => {
@@ -123,6 +159,10 @@ export default function InvestorFactsEditor({ facts, assets, transactions, onSav
       : facts.depotHistories?.[depotHistoryKey(assetFacts.custody.provider)]?.coverage === 'complete';
     return confirmedComplete && history.coverage !== 'complete' ? [{ asset, history }] : [];
   });
+  const assetsWithMissingFacts = assets.filter(asset => {
+    const assetFacts = facts.assets[asset.ID];
+    return assetFacts && missingAssetAnalysisFacts(asset, assetFacts, resolveAcquisitionHistory(asset, transactions, assetFacts, facts.depotHistories), facts.depotTaxContexts).length;
+  }).length;
   function save(next: InvestorFacts) {
     if (onSave(next)) { setError(''); setNotice('Angaben dauerhaft gespeichert. Sie werden bei der nächsten Analyse berücksichtigt.'); }
   }
@@ -135,7 +175,11 @@ export default function InvestorFactsEditor({ facts, assets, transactions, onSav
     save({ ...facts, taxResidencies });
   }
   return <details className="rounded-lg border border-white/10 p-4 text-xs text-gray-300" data-testid="durable-analysis-facts">
-    <summary className="cursor-pointer font-bold text-indigo-200">Dauerhafte Angaben für die Analyse</summary>
+    <summary className="cursor-pointer font-bold text-indigo-200">Dauerhafte Angaben für die Analyse{' '}
+      {!!assetsWithMissingFacts && <span className="inline-block max-w-full rounded bg-amber-500/15 px-2 py-1 align-middle text-[11px] text-amber-200">
+        {assetsWithMissingFacts} {assetsWithMissingFacts === 1 ? 'Asset mit offenen Angaben' : 'Assets mit offenen Angaben'}
+      </span>}
+    </summary>
     <fieldset disabled={busy} className="mt-3 space-y-4 border-0 p-0">
       <p>Die Angaben werden für diese FinPal-Datenbank gespeichert. Bekannte Fakten fließen automatisch in Gesamt- und Einzelanalysen ein.</p>
       <section aria-label="Steuerwohnsitz" className="space-y-2">
@@ -161,6 +205,14 @@ export default function InvestorFactsEditor({ facts, assets, transactions, onSav
         }}>Standard speichern</Button>
         <p className="text-gray-400">Bestehende Asset-Angaben bleiben erhalten. Neue Assets erhalten eine unbestätigte Voreinstellung, die du unten bestätigen oder ändern kannst.</p>
       </section>
+      <section aria-label="Steuerlicher Kontext je Depot" className="space-y-2">
+        <h6 className="m-0 font-bold text-white">Vermögenszuordnung einmal je Depot bestätigen</h6>
+        <p>Die Angabe gilt für die zugehörigen Assets. Eindeutige Trade-Republic-Produktdaten ergänzen die automatische Einordnung. Bestehende eigene Angaben bleiben als Ausnahmen erhalten.</p>
+        {[...providers].map(([key, provider]) => <DepotTaxEditor key={`${key}-${JSON.stringify(facts.depotTaxContexts?.[key])}`}
+          provider={provider} confirmation={facts.depotTaxContexts?.[key]} onSave={confirmation => save({ ...facts,
+            depotTaxContexts: { ...facts.depotTaxContexts, [key]: confirmation } })} />)}
+        <p className="text-gray-400">Steuerwohnsitz und Sonderaktivitäten werden separat angegeben. Die Einordnung ersetzt keine Prüfung der konkreten steuerlichen Behandlung.</p>
+      </section>
       <section aria-label="Vollständigkeit je Depot" className="space-y-2">
         <h6 className="m-0 font-bold text-white">Transaktionshistorie einmal je Depot bestätigen</h6>
         <p>Die Depotbestätigung gilt gemeinsam für die zugehörigen Assets. Einzelne Ausnahmen kannst du unten festlegen. Berücksichtige auch frühere Käufe und Verkäufe sowie Anschaffungsdaten übertragener Bestände.</p>
@@ -176,7 +228,7 @@ export default function InvestorFactsEditor({ facts, assets, transactions, onSav
       <section aria-label="Angaben je Asset" className="space-y-2">
         <h6 className="m-0 font-bold text-white">Angaben je Asset</h6>
         {assets.map(asset => facts.assets[asset.ID] && <AssetFactsEditor key={`${asset.ID}-${JSON.stringify(facts.assets[asset.ID])}`} asset={asset}
-          facts={facts.assets[asset.ID]} transactions={transactions} depotHistories={facts.depotHistories} onSave={value => save({ ...facts, assets: { ...facts.assets, [asset.ID]: value } })} />)}
+          facts={facts.assets[asset.ID]} transactions={transactions} depotHistories={facts.depotHistories} depotTaxContexts={facts.depotTaxContexts} onSave={value => save({ ...facts, assets: { ...facts.assets, [asset.ID]: value } })} />)}
       </section>
       <p className="text-gray-400">Der Spread wird nicht als dauerhafte Tatsache gespeichert. Vor einer Order muss ein aktuelles handelbares Geld-/Brief-Angebot geprüft werden.</p>
       {(error || storageError) && <p role="alert" className="text-red-300">{error || storageError}</p>}

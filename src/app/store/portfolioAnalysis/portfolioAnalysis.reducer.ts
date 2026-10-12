@@ -2,7 +2,7 @@ import { createAsyncThunk, createSlice, type PayloadAction, type ThunkDispatch, 
 import { loadPricesAndDividends } from '../assets/assets.reducer';
 import { buildAnalysisPositions } from '../../utils/portfolioAnalysis';
 import { MARKET_PRICE_UPDATED_AT_KEY } from '../../utils/syncTimestamps';
-import { resolveAcquisitionHistory } from '../../utils/investorFacts';
+import { resolveAcquisitionHistory, resolveTaxContext } from '../../utils/investorFacts';
 import type { PortfolioAnalysisRequest, PortfolioAnalysisResult, PortfolioAnalysisProgress, SavedPortfolioAnalysis } from '../../utils/portfolioAnalysis';
 
 interface AnalysisState {
@@ -52,7 +52,7 @@ export const analyzePortfolio = createAsyncThunk<
       ...request.investorContext,
       assets: request.investorContext.assets.map(facts => {
         const asset = getState().assets.find(a => a.ID === facts.assetId);
-        return asset ? { ...facts, acquisitionHistory: resolveAcquisitionHistory(asset, getState().transactions, facts, request.investorContext.depotHistories) } : facts;
+        return asset ? { ...facts, resolvedTaxContext: resolveTaxContext(asset, facts, request.investorContext.depotTaxContexts), acquisitionHistory: resolveAcquisitionHistory(asset, getState().transactions, facts, request.investorContext.depotHistories) } : facts;
       }),
     };
     // Preserve the form's string values for the UI change detector.

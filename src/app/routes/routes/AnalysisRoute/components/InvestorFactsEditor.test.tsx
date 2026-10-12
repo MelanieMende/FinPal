@@ -1,7 +1,7 @@
 import { act, fireEvent, screen, within } from '@testing-library/react';
 import { render } from '../../../../../testing/test-utils';
 import PortfolioAnalysis from './PortfolioAnalysis';
-import { investorFactsStorageKey, readInvestorFacts } from '../../../../utils/investorFacts';
+import { investorFactsStorageKey, readInvestorFacts, saveInvestorFacts } from '../../../../utils/investorFacts';
 
 const assets = [{ ID: 31, name: 'Bitcoin', type: 'Crypto', symbol: 'BTC', isin: '', current_shares: 1, price: 100, currencySymbol: '€' }] as Asset[];
 const transactions = [{ ID: 1, asset_ID: 31, date: '2025-01-01', type: 'Buy', amount: 1, price_per_share: 80 }] as Transaction[];
@@ -13,6 +13,75 @@ beforeEach(() => {
     getPortfolioChatGptModels: jest.fn().mockResolvedValue([{ slug: 'model', displayName: 'Model' }]),
     analyzePortfolio: jest.fn().mockResolvedValue({ summary: 'Summary', warnings: [], recommendations: [], sources: [], generatedAt: '2026-10-09T10:00:00Z', model: 'model', priceUpdatedAt: null }),
   };
+});
+
+it('applies one saved depot ownership to recognized products and keeps manual exceptions after remount', async () => {
+  const knownAssets = [{ ...assets[0], isin: 'BTC', brokerProduct: { kind: 'direct-crypto', source: 'trade-republic', instrumentId: 'BTC', instrumentType: 'crypto' } },
+    { ...assets[0], ID: 32, name: 'Bitcoin ETP', isin: 'ETP', brokerProduct: { kind: 'security', source: 'trade-republic', instrumentId: 'ETP', instrumentType: 'etp' } }] as Asset[];
+  const first = render(<PortfolioAnalysis standalone priceUpdatedAt={null} />, { preloadedState: { assets: knownAssets, transactions } });
+  await act(async () => {});
+  const btc = () => within(screen.getByTestId('investor-facts-31'));
+  const etp = () => within(screen.getByTestId('investor-facts-32'));
+  expect(btc().getByLabelText('Steuerlicher Kontext (eigene Angabe)')).toHaveValue('auto');
+  fireEvent.change(screen.getByLabelText('Vermögenszuordnung für Trade Republic'), { target: { value: 'private' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Vermögenszuordnung für Trade Republic speichern' }));
+  expect(btc().getByText(/Steuerlicher Kontext: Direkt gehaltene Kryptowerte im Privatvermögen/)).toBeInTheDocument();
+  expect(etp().getByText(/Steuerlicher Kontext: Wertpapier im Privatvermögen/)).toBeInTheDocument();
+  expect(within(btc().getByLabelText('Offene Angaben für Bitcoin')).queryByText('Steuerlicher Kontext')).not.toBeInTheDocument();
+  fireEvent.change(btc().getByLabelText('Steuerlicher Kontext (eigene Angabe)'), { target: { value: 'unknown' } });
+  fireEvent.click(btc().getByRole('button', { name: 'Angaben für Bitcoin speichern' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Vermögenszuordnung für Trade Republic speichern' }));
+  expect(btc().getByText(/Steuerlicher Kontext: Ungeklärt/)).toBeInTheDocument();
+  expect(etp().getByText(/Steuerlicher Kontext: Wertpapier im Privatvermögen/)).toBeInTheDocument();
+  first.unmount();
+  render(<PortfolioAnalysis standalone priceUpdatedAt={null} />, { store: first.store });
+  await act(async () => {});
+  expect(screen.getByLabelText('Vermögenszuordnung für Trade Republic')).toHaveValue('private');
+  expect(btc().getByLabelText('Steuerlicher Kontext (eigene Angabe)')).toHaveValue('unknown');
+  expect(etp().getByLabelText('Steuerlicher Kontext (eigene Angabe)')).toHaveValue('auto');
+  fireEvent.change(btc().getByLabelText('Steuerlicher Kontext (eigene Angabe)'), { target: { value: 'auto' } });
+  fireEvent.click(btc().getByRole('button', { name: 'Angaben für Bitcoin speichern' }));
+  // Refreshed broker data must reach the analysis even when the local category still says Crypto.
+  window.API.getTradeRepublicQuotes = jest.fn().mockResolvedValue({ quotes: [
+    { name: 'Bitcoin', isin: 'BTC', instrumentType: 'etp', quantity: 1, price: 100, averageBuyIn: 80, netValue: 100 },
+    { name: 'Bitcoin ETP', isin: 'ETP', instrumentType: 'etp', quantity: 1, price: 100, averageBuyIn: 80, netValue: 100 },
+  ] });
+  fireEvent.change(screen.getByLabelText('Anlageziel'), { target: { value: 'growth' } });
+  fireEvent.change(screen.getByLabelText('Risikobereitschaft'), { target: { value: 'high' } });
+  fireEvent.change(screen.getByLabelText('Anlagedauer (Jahre)'), { target: { value: '10' } });
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
+  const context = jest.mocked(window.API.analyzePortfolio).mock.calls[0][0].investorContext!;
+  expect(context.assets[0].resolvedTaxContext).toMatchObject({ context: 'security', source: 'depot-and-product', product: { instrumentType: 'etp' } });
+});
+
+it('highlights missing saved asset facts in collapsed headings and clears the badge after shared and individual confirmations', async () => {
+  const allAssets = [...assets, { ...assets[0], ID: 32, name: 'ETF', type: 'ETF' as const }];
+  const allTrades = [transactions[0], { ...transactions[0], ID: 2, asset_ID: 32 }].map(t => ({ ...t, depot: 'Trade Republic' }));
+  const facts = readInvestorFacts('', allAssets);
+  facts.assets[32] = { ...facts.assets[32], taxContext: 'security', historyCoverage: 'complete', confirmedAt: '2026-10-09T10:00:00Z' };
+  saveInvestorFacts('', facts);
+  render(<PortfolioAnalysis standalone priceUpdatedAt={null} />, { preloadedState: { assets: allAssets, transactions: allTrades } });
+  await act(async () => {});
+  const btc = () => within(screen.getByTestId('investor-facts-31'));
+  const heading = () => screen.getByTestId('investor-facts-31').querySelector('summary')!;
+  expect(heading()).toHaveTextContent('3 Angaben offen');
+  expect(screen.getByTestId('investor-facts-31')).toHaveClass('border-amber-400/40');
+  expect(screen.getByText('1 Asset mit offenen Angaben')).toBeInTheDocument();
+  expect(screen.getByTestId('investor-facts-32').querySelector('summary')).toHaveTextContent('Asset-Angaben erfasst');
+  const missing = within(btc().getByLabelText('Offene Angaben für Bitcoin'));
+  expect(missing.getByText('Transaktionshistorie je Depot bestätigen')).toBeInTheDocument();
+  expect(missing.getByText('Steuerlicher Kontext')).toBeInTheDocument();
+  expect(missing.queryByText(/Zielgewicht|Spread/)).not.toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText('Transaktionshistorie für Trade Republic'), { target: { value: 'complete' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Historie für Trade Republic speichern' }));
+  expect(heading()).toHaveTextContent('2 Angaben offen');
+  fireEvent.change(btc().getByLabelText('Sonderaktivitäten'), { target: { value: 'none' } });
+  fireEvent.change(btc().getByLabelText('Steuerlicher Kontext (eigene Angabe)'), { target: { value: 'private-direct-crypto' } });
+  expect(heading()).toHaveTextContent('2 Angaben offen'); // Unsaved drafts must not appear complete.
+  fireEvent.click(btc().getByRole('button', { name: 'Angaben für Bitcoin speichern' }));
+  expect(heading()).toHaveTextContent('Asset-Angaben erfasst');
+  expect(btc().queryByLabelText('Offene Angaben für Bitcoin')).not.toBeInTheDocument();
+  expect(screen.queryByText('1 Asset mit offenen Angaben')).not.toBeInTheDocument();
 });
 
 it('confirms history once per depot, keeps asset exceptions, restores inheritance and sends resolved coverage after remount', async () => {

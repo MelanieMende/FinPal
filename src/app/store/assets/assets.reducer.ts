@@ -1,6 +1,8 @@
 import { createAsyncThunk, createSlice, type Dispatch } from '@reduxjs/toolkit'
 import { quoteTime, restoreQuote, saveQuote, clearCachedQuote, type QuoteMetadata, type EuroExchangeRates } from '../../utils/quoteMetadata';
 import type { TradeRepublicQuote } from '../../utils/tradeRepublicSync';
+import { brokerProduct } from '../../utils/instrumentClassification';
+import { loadTransactions } from '../transactions/transactions.reducer';
 import { calendarDate, todayDate, upcomingForecasts, isDividendForecastAsset, needsDividendForecast, type DividendForecast } from '../../utils/dividendForecasts';
 import { recordMarketPriceUpdate } from '../../utils/syncTimestamps';
 import { readBondHolding, type BondHolding } from '../../utils/bondHoldings';
@@ -36,6 +38,9 @@ export const loadAssets = createAsyncThunk<void, { assetIDs?: number[] } | void>
 		}
 		thunkAPI.dispatch(setAssets(assets))
 		if (assets.length === 0) return
+		// assets_v does not contain current_invest; rebuild the remaining cost basis
+		// from transactions whenever database rows replace the loaded assets.
+		await thunkAPI.dispatch(loadTransactions())
 		thunkAPI.dispatch(loadPricesAndDividends({
 			assetIDs: props ? props.assetIDs : undefined,
 			preferTradeRepublicPrice: false,
@@ -56,6 +61,7 @@ export const loadAsset = createAsyncThunk(
 			console.log('loaded asset: ', asset)
 			thunkAPI.dispatch(setAsset(asset))
 		}
+		await thunkAPI.dispatch(loadTransactions({ assetIDs: [props.assetID] }))
 		thunkAPI.dispatch(loadPricesAndDividends({ assetIDs: [props.assetID], preferTradeRepublicPrice: false }))
   }
 )
@@ -88,6 +94,7 @@ export const loadPricesAndDividends = createAsyncThunk(
 			const quoteCache = await window.API.getTradeRepublicQuotes?.()
 			tradeRepublicQuotes = quoteCache?.quotes ?? []
 			tradeRepublicQuotesFetchedAt = quoteCache?.fetchedAt
+			for (const asset of assetsToRefresh) thunkAPI.dispatch(setBrokerProduct({ asset, product: brokerProduct(asset, tradeRepublicQuotes) }))
 		} catch (error) {
 			console.error('Failed to load cached Trade Republic quotes:', error)
 		}
@@ -526,6 +533,10 @@ const assetsSlice = createSlice({
 			return state.map(item => item.ID === action.payload.asset.ID
 				? { ...item, quote: action.payload.quote } : item)
 		},
+		setBrokerProduct(state, action: { payload: { asset: Asset; product?: Asset['brokerProduct'] } }) {
+			const asset = state.find(a => a.ID === action.payload.asset.ID)
+			if (asset) asset.brokerProduct = action.payload.product
+		},
 		setBondHolding(state, action: { payload: { asset: Asset; bondHolding?: BondHolding } }) {
 			return state.map(item => item.ID === action.payload.asset.ID ? { ...item, bondHolding: action.payload.bondHolding } : item)
 		},
@@ -557,6 +568,7 @@ export const {
 	setPrice,
 	setQuote,
 	setBondHolding,
+	setBrokerProduct,
 	setAveragePricePaid
 } = actions
 

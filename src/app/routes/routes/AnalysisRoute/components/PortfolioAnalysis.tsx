@@ -3,19 +3,20 @@ import { Button, Card, Dialog, H5, Icon, Intent, Spinner } from '@blueprintjs/co
 import { useAppSelector, useAppDispatch } from '../../../../hooks';
 import { ANALYSIS_TIMEOUT_MS, buildAnalysisPositions, validateAnalysisRequest, type InvestmentProfile, type PortfolioAnalysisProgress } from '../../../../utils/portfolioAnalysis';
 import type { ChatGptModel, ChatGptStatus } from '../../../../utils/chatGptAuth';
-import { analyzePortfolio, setAnalysisOpen, clearAnalysisResult } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
+import { analyzePortfolio, refreshPortfolioForecast, setAnalysisOpen, clearAnalysisResult } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
 import { formatSyncTime } from '../../../../utils/syncTimestamps';
-import { assessQuoteFreshness } from '../../../../utils/quoteFreshness';
+import { assessQuoteFreshness, isMarketClosedInfo } from '../../../../utils/quoteFreshness';
 import { isEltif, assessNavFreshness, type NavEvidence } from '../../../../utils/eltifValuation';
 import type { AnalysisPosition } from '../../../../utils/portfolioAnalysis';
 import { selectTotalLiquidity } from '../../../../store/cash/cash.selectors';
 import { selectRecommendationExecutions } from '../../../../utils/recommendationExecution';
 import { checkPortfolioFunding } from '../../../../utils/portfolioFunding';
 import TradeDecisionReview from './TradeDecisionReview';
-import AllocationReview from './AllocationReview';
+import AllocationReview, { AssetOptimizationDetails } from './AllocationReview';
 import InvestorFactsEditor from './InvestorFactsEditor';
 import { useInvestorFacts } from '../../../../utils/useInvestorFacts';
 import { buildInvestorContext } from '../../../../utils/investorFacts';
+import { allocationCandidateKey } from '../../../../utils/portfolioAllocation';
 
 export const ANALYSIS_PROFILE_KEY = 'finpal.portfolioAnalysis.profile.v1';
 export const ANALYSIS_MODEL_KEY = 'finpal.portfolioAnalysis.model.v1';
@@ -24,6 +25,7 @@ const emptyProfile: ProfileForm = { goal: '', risk: '', horizonYears: '', buyBud
 const inputClass = 'w-full rounded border border-white/15 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-indigo-400';
 const stageLabels: Record<PortfolioAnalysisProgress['stage'], string> = {
   prices: 'Kurse werden aktualisiert',
+  forecast: 'Forecast wird aktualisiert',
   preparing: 'KI-Verbindung wird vorbereitet',
   research: 'Aktuelle Quellen werden recherchiert',
   analysis: 'Portfolio und Empfehlungen werden analysiert',
@@ -88,8 +90,9 @@ export function AIConnectionSettings(props: AIConnectionSettingsProps) {
 // Reclassify this known neutral message in older saved analyses; keep other warnings intact.
 const legacyQuoteInfo = 'Die Kurse aller Positionen besitzen einen quoteAsOf-Zeitpunkt; ein fehlender Kurszeitpunkt liegt nicht vor. Die US-Schlusskurse mit Status market-closed werden nicht allein wegen Börsenschluss oder Vorbörse beanstandet.';
 function AnalysisMessages({ infos = [], warnings = [] }: { infos?: string[]; warnings?: string[] }) {
-  const information = [...new Set([...infos, ...warnings.filter(message => message.trim() === legacyQuoteInfo)])];
-  const alerts = warnings.filter(message => message.trim() !== legacyQuoteInfo);
+  const neutralInfo = (message: string) => message.trim() === legacyQuoteInfo || isMarketClosedInfo(message);
+  const information = [...new Set([...infos, ...warnings.filter(neutralInfo)])];
+  const alerts = warnings.filter(message => !neutralInfo(message));
   const [activeTab, setActiveTab] = useState<'warnings' | 'infos'>('warnings');
   const tabsId = useId().replace(/:/g, '');
   const signature = `${alerts.join('\u0000')}\u0001${information.join('\u0000')}`;
@@ -304,6 +307,23 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
     });
   }
 
+  function refreshForecast(assetId?: number) {
+    void run(async () => {
+      if (investorFactsError) throw new Error(investorFactsError);
+      if (!result) throw new Error('Für die Forecast-Aktualisierung ist zuerst eine gespeicherte Analyse erforderlich.');
+      if (!profile.horizonYears.trim() || !profile.buyBudget.trim()) throw new Error('Bitte Anlagedauer und Kaufbudget angeben.');
+      const request = { provider, model, positions, priceUpdatedAt, investorContext,
+        profile: { goal: profile.goal, risk: profile.risk, horizonYears: Number(profile.horizonYears), buyBudget: Number(profile.buyBudget.replace(',', '.')) } as InvestmentProfile,
+      };
+      validateAnalysisRequest(request);
+      localStorage.setItem(ANALYSIS_PROFILE_KEY, JSON.stringify(profile));
+      await dispatch(refreshPortfolioForecast({ request, snapshot, assetId })).unwrap();
+      if (alive.current) setNotice(assetId === undefined
+        ? 'Alle Forecasts wurden aktualisiert. Die bestehende KI-Analyse wurde beibehalten.'
+        : 'Forecast aktualisiert. Die bestehende KI-Einzelanalyse wurde beibehalten.');
+    });
+  }
+
   return (
     <Card className="glass-card analysis-form mb-6" data-testid="portfolio-analysis">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -390,7 +410,11 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
         </details>
         {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
         {notice && <p role="status" className="text-sm text-amber-300">{notice}</p>}
-        <Button intent={Intent.PRIMARY} loading={analyzing} disabled={busy || !positions.length} onClick={() => analyze()}>Analyse starten</Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button intent={Intent.PRIMARY} loading={analyzing} disabled={busy || !positions.length} onClick={() => analyze()}>Analyse starten</Button>
+          <Button icon="refresh" disabled={busy || !positions.length || !result} onClick={() => refreshForecast()}>Alle Forecasts neu laden</Button>
+        </div>
+        <p className="mt-1 text-xs text-gray-400">„Analyse starten“ verwendet den gültigen lokalen Forecast-Cache. „Alle Forecasts neu laden“ aktualisiert nur Forecasts und lokale Zielgewichtung; die bestehende KI-Analyse bleibt erhalten.</p>
         {!positions.length && <p className="text-xs text-gray-400">Es sind keine gehaltenen Assets vorhanden.</p>}
         {result && <section aria-label="Analyseergebnis" className="space-y-3 border-t border-white/10 pt-4">
           <p className="text-xs text-gray-400">Analyse vom {formatSyncTime(result.generatedAt)} · {result.model} · Kursstand: {formatSyncTime(result.priceUpdatedAt) ?? 'unbekannt'}</p>
@@ -422,11 +446,15 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                 {executions[rec.assetId].status === 'done' ? 'Done' : 'Teilweise umgesetzt'} · {euros(executions[rec.assetId].amountEUR)} erfasst
                 {executions[rec.assetId].remainingEUR !== null && executions[rec.assetId].status !== 'done' && ` · ${euros(executions[rec.assetId].remainingEUR!)} offen`}
               </p>}
+              <AssetOptimizationDetails plan={result.allocationPlan} allocationKey={String(rec.assetId)} onOpenSource={openSource} />
               <p className="text-sm text-gray-300 whitespace-pre-wrap">{rec.rationale}</p>
               {rec.tradeDecision ? <TradeDecisionReview decision={rec.tradeDecision} />
                 : rec.action === 'Verkaufen' && <p className="text-xs text-sky-200">Diese gespeicherte Empfehlung enthält noch keine Abwägung von Halten und Reduzieren mit Kursszenarien. Über „Neu analysieren“ ergänzen.</p>}
-              {typeof rec.plannedAmountEUR === 'number' && <p className="text-xs text-gray-400">{result.allocationPlan ? 'Berechneter' : 'Geplanter'} {rec.action === 'Verkaufen' ? 'Brutto-Verkaufsbetrag' : 'Kaufbetrag'} {result.allocationPlan ? 'zur Zielgewichtung' : 'im Szenario'}: {euros(rec.plannedAmountEUR)}</p>}
-              <Button small disabled={busy || !positions.some(position => position.id === rec.assetId)} onClick={() => analyze(rec.assetId)} aria-label={`Asset ${rec.assetId} neu analysieren`}>Neu analysieren</Button>
+              {typeof rec.plannedAmountEUR === 'number' && !result.allocationPlan?.positions.some(position => position.key === String(rec.assetId)) && <p className="text-xs text-gray-400">Geplanter {rec.action === 'Verkaufen' ? 'Brutto-Verkaufsbetrag' : 'Kaufbetrag'} im Szenario: {euros(rec.plannedAmountEUR)}</p>}
+              <div className="flex flex-wrap gap-2">
+                <Button small disabled={busy || !positions.some(position => position.id === rec.assetId)} onClick={() => analyze(rec.assetId)} aria-label={`Asset ${rec.assetId} neu analysieren`}>Neu analysieren</Button>
+                <Button small icon="refresh" disabled={busy || !positions.some(position => position.id === rec.assetId)} onClick={() => refreshForecast(rec.assetId)} aria-label={`Forecast für Asset ${rec.assetId} neu laden`}>Forecast neu laden</Button>
+              </div>
               {rec.updatedAt && <p className="text-xs text-gray-400">Einzelanalyse vom {formatSyncTime(rec.updatedAt)} · {rec.model}. Portfolio-Zusammenfassung und übrige Empfehlungen stammen aus der Gesamtanalyse.</p>}
               <EltifValuation position={positions.find(position => position.id === rec.assetId)} evidence={rec.navEvidence} />
               <AnalysisMessages infos={rec.infos} warnings={rec.warnings} />
@@ -450,14 +478,15 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                   <span className={`text-xs font-bold ${rec.action === 'Kaufen' ? 'text-emerald-400' : 'text-amber-300'}`}>{rec.action}</span>
                 </div>
                 <p className="text-xs text-gray-400">{rec.type}{rec.isin && ` · ISIN: ${rec.isin}`}{rec.symbol && ` · Ticker: ${rec.symbol}`}</p>
+                <AssetOptimizationDetails plan={result.allocationPlan} allocationKey={allocationCandidateKey(rec)} onOpenSource={openSource} />
                 <p className="text-sm text-gray-300 whitespace-pre-wrap">{rec.rationale}</p>
-                {typeof rec.plannedAmountEUR === 'number' && <p className="text-xs text-gray-400">{result.allocationPlan ? 'Berechneter Kaufbetrag zur Zielgewichtung' : 'Geplanter Kaufbetrag im Szenario'}: {euros(rec.plannedAmountEUR)}</p>}
+                {typeof rec.plannedAmountEUR === 'number' && !result.allocationPlan?.positions.some(position => position.key === allocationCandidateKey(rec)) && <p className="text-xs text-gray-400">Geplanter Kaufbetrag im Szenario: {euros(rec.plannedAmountEUR)}</p>}
                 <p className="text-xs text-amber-200 whitespace-pre-wrap">Risiken: {rec.risk}</p>
                 <div className="flex flex-wrap gap-2 mt-2">{[...new Set(rec.sourceIndexes)].map(index => <a key={index} href={result.sources[index].url} onClick={e => openSource(e, result.sources[index].url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">[{index}] {result.sources[index].title}</a>)}</div>
               </article>)}
             </div>
           </section>}
-          <details className="text-xs text-gray-400"><summary className="cursor-pointer">Recherchequellen</summary><ul className="mt-2 space-y-1">{result.sources.map((source, index) => <li key={source.url}><a href={source.url} onClick={e => openSource(e, source.url)} target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline">[{index}] {source.title}</a></li>)}</ul></details>
+          <details className="text-xs text-gray-400"><summary className="cursor-pointer">Recherchequellen</summary><ul className="mt-2 space-y-1">{result.sources.map((source, index) => <li key={index}><a href={source.url} onClick={e => openSource(e, source.url)} target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline">[{index}] {source.title}</a></li>)}</ul></details>
         </section>}
       </div>}
     </Card>

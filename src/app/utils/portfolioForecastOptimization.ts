@@ -15,6 +15,8 @@ export interface ReturnForecast {
   annualVolatilityPercent: number;
   volatilityAsOf: string;
   volatilityLookbackDays: number;
+  dataStatus?: 'live' | 'fresh-cache' | 'stale-fallback';
+  dataAgeHours?: number;
   assumptions: string;
   forecastSources: AnalysisSource[];
   volatilitySources: AnalysisSource[];
@@ -30,6 +32,8 @@ export interface ForecastOptimizationDetails {
   expectedReturnPercent: number | null;
   riskProxyPercent: number | null;
   expectedGainEUR: number | null;
+  modeledValuePercent?: number;
+  unresolvedKeys?: string[];
 }
 
 const day = 86400000;
@@ -48,6 +52,8 @@ export function validReturnForecast(v: ReturnForecast, now = Date.now()): boolea
     && v.horizonMonths === 12 && positive(v.targetPrice) && v.targetPrice <= 1e12 && positive(v.referencePrice) && v.referencePrice <= 1e12
     && typeof v.currency === 'string' && /^[A-Z]{3}$/.test(v.currency)
     && positive(v.annualVolatilityPercent) && v.annualVolatilityPercent <= 500
+    && (v.dataStatus === undefined || ['live', 'fresh-cache', 'stale-fallback'].includes(v.dataStatus))
+    && (v.dataAgeHours === undefined || Number.isFinite(v.dataAgeHours) && v.dataAgeHours >= 0 && v.dataAgeHours <= 24 * 90)
     && Number.isInteger(v.volatilityLookbackDays) && v.volatilityLookbackDays >= 180 && v.volatilityLookbackDays <= 3650
     && [published, volatility].every(t => Number.isFinite(t) && t <= now && now - t <= 90 * day)
     && Number.isFinite(target) && target - now >= 330 * day && target - now <= 400 * day
@@ -65,6 +71,9 @@ export function validForecastOptimizationDetails(v: ForecastOptimizationDetails)
     && new Set(v.forecasts.map(f => f.key)).size === v.forecasts.length
     && Array.isArray(v.inputs) && v.inputs.length <= 105 && v.inputs.every(i => i && typeof i.key === 'string'
       && finite(i.expectedReturnPercent) && finite(i.annualVolatilityPercent) && i.annualVolatilityPercent > 0)
+    && (v.modeledValuePercent === undefined || finite(v.modeledValuePercent) && v.modeledValuePercent >= 0 && v.modeledValuePercent <= 100 + 1e-8)
+    && (v.unresolvedKeys === undefined || Array.isArray(v.unresolvedKeys) && v.unresolvedKeys.length <= 105
+      && v.unresolvedKeys.every(key => typeof key === 'string' && key.length > 0))
     && [v.expectedReturnPercent, v.riskProxyPercent, v.expectedGainEUR].every(n => n === null || finite(n));
 }
 
@@ -95,7 +104,7 @@ export function forecastInputSchema(sourceCount: number) {
 }
 
 export const forecastResearchInstructions = ' Für eine mathematische 12-Monats-Optimierung suche pro Asset veröffentlichte erwartete Kursziele (nicht bloß Bull-Case oder historische Höchstkurse), mit Urheber, Veröffentlichungsdatum, explizitem Zieltermin, Kurswährung und Preiseinheit. Zusätzlich eine belegte annualisierte historische Volatilität mit Datenstichtag und mindestens 180 Tagen Beobachtungsfenster suchen. Keine erwarteten Renditen, Risikozahlen, Wahrscheinlichkeiten oder Korrelationen erfinden. Fehlen veröffentlichte numerische Erwartungen oder Risikodaten, explizit fehlend lassen. Unterschiedliche Horizonte nicht interpolieren oder extrapolieren. Prognosen sind keine sicheren Preise. Für neue Kandidaten aktuellen Referenzkurs mit Währung und Kursdatum belegen.';
-export const forecastAnalysisInstructions = ' Die lokale Berechnung verwendet jetzt 12-Monats-Erwartungen und Risiko, keine festen Kategorie-Zielgewichte. Liefere optimizationInputs nur aus der Recherche: key ist die gehaltene Asset-ID als String, für neue Kandidaten new: plus ISIN (sonst Ticker, sonst Name), getrimmt und großgeschrieben. publishedAt/targetDate sowie Volatilitätsstichtag und Beobachtungsfenster müssen belegt sein. targetPrice muss ein veröffentlichtes erwartetes 12-Monats-Kursziel in derselben Währung und Preiseinheit wie der aktuelle Originalkurs sein; keine Umrechnung ohne Daten, keine optimistischen Szenarioziele als Erwartungswert. annualVolatilityPercent ist belegte annualisierte historische Volatilität in Prozent, keine eigene Risikoeinstufung. forecastSourceIndexes/volatilitySourceIndexes verweisen auf die jeweiligen Belege. Fehlt eine benötigte Zahl, dieses Asset in optimizationInputs weglassen und die konkrete Lücke erklären. Die Zahlen werden aus Quellen extrahiert, nicht von dir geschätzt. Prognose- und Risikodaten werden lokal geprüft; bei fehlenden vollständigen Eingaben gibt es keinen optimierten Handelsbetrag. Quellen und Eingaben bei correction beibehalten; eine fehlende Grundlage niemals passend zur gewünschten Aktion erfinden. correction.allocationPlan enthält die anschließend lokal optimierten Gewichte/Beträge, an die Aktionen und Begründungen anzupassen sind. Halten/Prüfen darf einen Trade nur wegen konkret belegter Markt-, Steuer-, Kosten- oder Handelshindernisse zurückstellen, nicht weil die erste Antwort noch keinen Plan hatte.';
+export const forecastAnalysisInstructions = ' Die lokale Berechnung verwendet jetzt 12-Monats-Erwartungen und Risiko, keine festen Kategorie-Zielgewichte. marketForecasts sind von FinPal aus einem strukturierten Analystenkonsens und belegten adjustierten Tageskursen erzeugte, bereits validierte Eingaben; übernimm sie unverändert und erfinde keine Ersatzwerte. Liefere zusätzliche optimizationInputs nur aus der Recherche: key ist die gehaltene Asset-ID als String, für neue Kandidaten new: plus ISIN (sonst Ticker, sonst Name), getrimmt und großgeschrieben. publishedAt/targetDate sowie Volatilitätsstichtag und Beobachtungsfenster müssen belegt sein. targetPrice muss ein veröffentlichtes erwartetes 12-Monats-Kursziel in derselben Währung und Preiseinheit wie der aktuelle Originalkurs sein; keine Umrechnung ohne Daten, keine optimistischen Szenarioziele als Erwartungswert. annualVolatilityPercent ist belegte annualisierte historische Volatilität in Prozent, keine eigene Risikoeinstufung. forecastSourceIndexes/volatilitySourceIndexes verweisen auf die jeweiligen Belege. Fehlt eine benötigte Zahl, dieses Asset in optimizationInputs weglassen und die konkrete Lücke erklären. Die Zahlen werden aus Quellen extrahiert, nicht von dir geschätzt. Prognose- und Risikodaten werden lokal geprüft. Positionen ohne vollständige Eingaben werden unverändert eingefroren und erhalten keinen Handelsbetrag; vollständig belegte Positionen dürfen gemeinsam als strenges Teilportfolio optimiert werden. Ohne mindestens eine vollständig belegte Position bleibt der gesamte Plan blockiert. Quellen und Eingaben bei correction beibehalten; eine fehlende Grundlage niemals passend zur gewünschten Aktion erfinden. correction.allocationPlan enthält die anschließend lokal optimierten Gewichte/Beträge, an die Aktionen und Begründungen anzupassen sind. Halten/Prüfen darf einen Trade nur wegen konkret belegter Markt-, Steuer-, Kosten- oder Handelshindernisse zurückstellen, nicht weil die erste Antwort noch keinen Plan hatte.';
 
 /** Euclidean projection onto box bounds, a total investment budget and a crypto group cap. */
 function project(v: number[], lower: number[], upper: number[], budget: number, crypto: number[], cryptoCap: number): number[] {
@@ -133,12 +142,12 @@ export function buildForecastAllocation(request: PortfolioAnalysisRequest, forec
     assumptions: [
       '12-Monats-Ziel: erwartete Preisrendite minus λ/2 × Risikoproxy². Keine automatische Fortschreibung auf die langfristige Anlagedauer.',
       `Risikoaversion λ = ${lambda}; Profilannahme, keine aus Marktdaten geschätzte Kennzahl.`,
-      'Risiko: veröffentlichte annualisierte historische Volatilitäten; gemeinsame Korrelation +1 als konservative Modellannahme. Keine empirische Korrelationsmatrix und kein berechneter Diversifikationsvorteil.',
+      'Risiko: veröffentlichte annualisierte historische Volatilitäten oder lokal aus belegten adjustierten Tageskursen berechnete Volatilität; gemeinsame Korrelation +1 als konservative Modellannahme. Keine empirische Korrelationsmatrix und kein berechneter Diversifikationsvorteil.',
       'Cashrendite = 0 als vorsichtige Vergleichsannahme. Dividenden, Zinsen, Steuern und Spreads fehlen in der Preisrendite; kein Total-Return-Optimum.',
       'Kursziele müssen zum Originalkurs passen. Für die EUR-Bewertung werden konstante Wechselkurse unterstellt; künftige FX-Renditen und FX-Volatilität sind nicht modelliert. Zieltermine müssen 330–400 Tage in der Zukunft liegen; keine Extrapolation anderer Horizonte.',
       'Long-only, ohne Kredit und Leerverkäufe. Profilgrenzen und Cashreserve sind Nebenbedingungen; bestätigte persönliche Bandbreiten haben Vorrang.',
       'Numerische kontinuierliche Optimierung mit konservativer Reserve aller möglichen Ordergebühren. Tatsächliche EUR-Beträge werden danach mit Gebühren und Cent-Rundung berechnet; kein garantiert globales Optimum für diskrete Orders.',
-      'ELTIFs und Cash Equivalents werden ohne bestätigte kurzfristige Handelbarkeit nicht umgeschichtet. Fehlende vollständige Prognose- oder Risikodaten blockieren die Optimierung.',
+      'ELTIFs und Cash Equivalents werden ohne bestätigte kurzfristige Handelbarkeit nicht umgeschichtet. Positionen mit fehlenden vollständigen Prognose- oder Risikodaten werden in einer Teilportfolio-Optimierung unverändert eingefroren; ohne mindestens eine vollständig belegte Position bleibt die Optimierung blockiert.',
     ], warnings: ['Veröffentlichte Kursziele und historische Volatilität können falsch oder überholt sein. Das Ergebnis ist nur unter den angegebenen Annahmen optimal.'] };
   const block = (reason: string): PortfolioAllocation => {
     plan.status = 'blocked'; plan.warnings.push(reason); plan.feesEUR = 0; plan.projectedCashEUR = request.profile.buyBudget;
@@ -159,10 +168,24 @@ export function buildForecastAllocation(request: PortfolioAnalysisRequest, forec
   }
   for (const f of forecasts) if (validReturnForecast(f)) merged.set(f.key, f);
   info.forecasts = [...merged.values()].filter(f => base.positions.some(p => p.key === f.key));
-  const mu: number[] = [], sigma: number[] = [];
+  for (const f of info.forecasts.filter(item => item.dataStatus === 'stale-fallback')) {
+    const name = base.positions.find(position => position.key === f.key)?.name ?? f.key;
+    plan.warnings.push(`${name}: Der Forecast-Anbieter war nicht erreichbar oder lieferte unvollständige Daten. Verwendet wird der letzte gültige Cache (${(f.dataAgeHours ?? 0).toFixed(1)} Stunden alt).`);
+  }
+  const mu: number[] = [], sigma: number[] = [], unresolvedReasons: Array<string | null> = [];
+  const unresolved = (index: number, reason: string) => {
+    unresolvedReasons[index] = reason;
+    mu[index] = 0; sigma[index] = 0;
+    plan.warnings.push(`${base.positions[index].name}: ${reason} Die Position bleibt unverändert und ist nicht Teil der berechneten Umschichtung.`);
+  };
   for (const [i, p] of base.positions.entries()) {
     const f = merged.get(p.key), asset = inputs[i];
-    if (!f) return block(`${p.name}: Veröffentlichte 12-Monats-Erwartung oder belegte annualisierte Volatilität fehlt.`);
+    if (!f) {
+      unresolved(i, asset.type === 'Bond'
+        ? 'Eine belegte 12-Monats-Gesamtrendite einschließlich Kupon fehlt; ein reines Kursziel würde nicht ausreichen.'
+        : 'Mindestens eine erforderliche Optimierungseingabe fehlt. Benötigt werden sowohl eine veröffentlichte 12-Monats-Erwartung als auch eine belegte annualisierte historische Volatilität.');
+      continue;
+    }
     const held = i < request.positions.length ? request.positions[i] : null;
     const current = held ? held.quote?.originalPrice ?? held.price : f.referencePrice;
     const currency = held ? held.quote?.originalCurrency ?? held.currency : f.currency;
@@ -170,16 +193,31 @@ export function buildForecastAllocation(request: PortfolioAnalysisRequest, forec
     if (!positive(current) || currency !== f.currency || !asOf || !Number.isFinite(Date.parse(asOf))
       || Date.parse(asOf) > Date.now() || Date.now() - Date.parse(asOf) > 7 * day || held?.quote?.tradedInPercent
       || held?.quote?.unitFactor && held.quote.unitFactor !== 1) {
-      return block(`${p.name}: Vergleichbarer aktueller Kurs mit Währung, Preiseinheit und Kurszeitpunkt fehlt; keine Ableitung aus einem unpassenden Kursziel.`);
+      unresolved(i, 'Ein vergleichbarer aktueller Kurs mit Währung, Preiseinheit und Kurszeitpunkt fehlt; aus dem unpassenden Kursziel wird keine Rendite abgeleitet.');
+      continue;
     }
-    if (asset.type === 'Bond') return block(`${p.name}: Anleiheoptimierung benötigt eine belegte 12-Monats-Gesamtrendite einschließlich Kupon; reine Kursziele reichen nicht.`);
-    if (!Number.isFinite(f.targetPrice / current - 1) || f.targetPrice / current > 1001) return block(`${p.name}: Die Kursrendite ist numerisch nicht belastbar; Kursziel und Preiseinheit prüfen.`);
-    mu.push(f.targetPrice / current - 1); sigma.push(f.annualVolatilityPercent / 100);
+    if (asset.type === 'Bond') {
+      unresolved(i, 'Die vorhandene Prognose enthält keine belegte 12-Monats-Gesamtrendite einschließlich Kupon.');
+      continue;
+    }
+    if (!Number.isFinite(f.targetPrice / current - 1) || f.targetPrice / current > 1001) {
+      unresolved(i, 'Kursziel und Preiseinheit ergeben keine numerisch belastbare Kursrendite.');
+      continue;
+    }
+    unresolvedReasons[i] = null;
+    mu[i] = f.targetPrice / current - 1; sigma[i] = f.annualVolatilityPercent / 100;
     info.inputs.push({ key: p.key, expectedReturnPercent: mu[i] * 100, annualVolatilityPercent: f.annualVolatilityPercent });
   }
+  info.unresolvedKeys = base.positions.filter((_position, index) => !!unresolvedReasons[index]).map(position => position.key);
+  if (!info.inputs.length || request.targetAssetId !== undefined
+    && unresolvedReasons[base.positions.findIndex(position => position.assetId === request.targetAssetId)]) {
+    return block('Für die ausgewählte Optimierung ist keine Position mit vollständig belegter und vergleichbarer 12-Monats-Erwartung und Volatilität verfügbar.');
+  }
+  if (info.unresolvedKeys.length) plan.assumptions.push('Strenge Teilportfolio-Optimierung: Positionen ohne vollständige und vergleichbare Eingaben werden zu ihrem aktuellen Wert eingefroren. Für sie werden weder Rendite noch Risiko geschätzt und keine Umschichtung berechnet.');
   const total = base.totalValueEUR;
   const current = base.positions.map(p => p.currentValueEUR! / total);
   const frozen = inputs.map((p, i) => isEltif(p) || p.type === 'CashEquivalent'
+    || !!unresolvedReasons[i]
     || request.targetAssetId !== undefined && base.positions[i].assetId !== request.targetAssetId);
   const feeReserve = base.positions.reduce((sum, p, i) => sum + (!frozen[i]
     || request.targetAssetId !== undefined && p.amountEUR !== null ? p.feeEUR ?? 0 : 0), 0) / total;
@@ -218,7 +256,9 @@ export function buildForecastAllocation(request: PortfolioAnalysisRequest, forec
   const optimizedTargets = new Map(base.positions.map((p, i) => [p.key, {
     percent: x[i] / net * 100, minPercent: x[i] / net * 100, maxPercent: x[i] / net * 100,
   }]));
-  const executionDecisions = request.positions.map((p, i) => frozen[i] && request.targetAssetId === undefined
+  const executionDecisions = request.positions.map((p, i) => unresolvedReasons[i]
+    ? { assetId: p.id, action: 'Prüfen' as const, rationale: '', risk: '', sourceIndexes: [] }
+    : frozen[i] && request.targetAssetId === undefined
     ? { assetId: p.id, action: 'Halten' as const, rationale: '', risk: '', sourceIndexes: [] }
     : decisions?.find(r => r.assetId === p.id)).filter((p): p is AssetRecommendation => !!p);
   const executed = buildPortfolioAllocation(request, candidates, previous, executionDecisions, optimizedTargets);
@@ -233,8 +273,16 @@ export function buildForecastAllocation(request: PortfolioAnalysisRequest, forec
   info.expectedReturnPercent = (after.reduce((s, n, i) => s + n * mu[i], 0) - executed.feesEUR / total) * 100;
   info.riskProxyPercent = risk(after) * 100;
   info.expectedGainEUR = total * info.expectedReturnPercent / 100;
+  if (info.unresolvedKeys.length) info.modeledValuePercent = after.reduce((sum, weight, index) => sum + (unresolvedReasons[index] ? 0 : weight), 0) * 100;
   executed.positions.forEach((p, i) => {
     p.source = targets[i] ? 'user-confirmed' : 'forecast-optimization';
+    if (unresolvedReasons[i]) {
+      p.source = 'forecast-optimization';
+      p.action = 'Prüfen'; p.amountEUR = null; p.targetValueEUR = p.currentValueEUR;
+      p.projectedWeightPercent = p.targetWeight?.percent ?? p.currentWeightPercent;
+      p.reason = `${unresolvedReasons[i]} Position in der Teilportfolio-Optimierung unverändert eingefroren.`;
+      return;
+    }
     if (targets[i]) p.targetWeight = { percent: p.targetWeight!.percent, minPercent: targets[i]!.minPercent, maxPercent: targets[i]!.maxPercent };
     p.reason = p.amountEUR ? 'Aus numerisch optimiertem 12-Monats-Zielgewicht und aktuellem Marktwert; gemeinsame Liquidität und Ordergebühren berücksichtigt.'
       : p.action === 'Prüfen' ? p.reason : frozen[i] ? 'Bestehende Position oder Einzelanalyse-Szenario bleibt unverändert.'

@@ -12,6 +12,8 @@ import AnalysisRoute from '../AnalysisRoute';
 import { MARKET_PRICE_UPDATED_AT_KEY, MARKET_PRICE_UPDATED_EVENT } from '../../../../utils/syncTimestamps';
 import { tradeDecisionFixture } from '../../../../../testing/fixtures/tradeDecision';
 import { buildInvestorContext, readInvestorFacts, saveInvestorFacts } from '../../../../utils/investorFacts';
+import { buildForecastAllocation } from '../../../../utils/portfolioForecastOptimization';
+import { returnForecastFixture } from '../../../../../testing/fixtures/returnForecast';
 
 const assets = [
   { ID: 1, name: 'Stock Asset', type: 'Stock', current_shares: 2, price: 50 },
@@ -26,6 +28,7 @@ beforeEach(() => {
     sendToYahooFinanceAPI: jest.fn().mockResolvedValue(null),
     getPortfolioAIStatus: jest.fn().mockResolvedValue({ hasApiKey: false, secureStorageAvailable: true, model: 'api-model', chatGpt }),
     getPortfolioChatGptModels: jest.fn().mockResolvedValue([{ slug: 'account-model', displayName: 'Available model' }]),
+    refreshPortfolioForecast: jest.fn(),
     analyzePortfolio: jest.fn().mockResolvedValue({ summary: 'Diversifikation prüfen', warnings: ['Risiken berücksichtigen'], sources: [{ title: 'Report', url: 'https://example.com/report' }], generatedAt: '2026-10-02T10:00:00Z', priceUpdatedAt: null, model: 'account-model', recommendations: [
       { assetId: 1, action: 'Halten', rationale: 'Begründung', risk: 'Risiko', sourceIndexes: [0], tradeCheck: {
         costs: '100 EUR Marktwert, 1 EUR Gebühren entsprechen 1 %.', taxes: 'Verlusttöpfe unbekannt.', conclusion: 'Kein Verkauf zur Bereinigung.',
@@ -96,6 +99,23 @@ it('restores the detailed sale decision and links scenario evidence outside the 
   expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
 });
 
+it('shows forecast, target weighting and AI result in one asset card', async () => {
+  const savedReport = await window.API.analyzePortfolio({} as never);
+  const request = { provider: 'api' as const, priceUpdatedAt: new Date(Date.now()).toISOString(),
+    profile: { goal: 'growth' as const, risk: 'high' as const, horizonYears: 10, buyBudget: 1000 },
+    positions: buildAnalysisPositions(assets.map(asset => ({ ...asset, currencySymbol: '€' }))),
+  };
+  savedReport.allocationPlan = buildForecastAllocation(request, [returnForecastFixture('1', { targetPrice: 60, referencePrice: 50 })]);
+  window.API.getLastPortfolioAnalysis = jest.fn().mockResolvedValue({ report: savedReport, snapshot: '', provider: 'chatgpt' });
+  await act(async () => { render(<PortfolioAnalysis standalone priceUpdatedAt={null} />, { preloadedState: { assets } }); });
+  const details = screen.getByRole('region', { name: 'Prognose und Zielgewichtung Stock Asset' });
+  const article = details.closest('article')!;
+  expect(details).toHaveTextContent('Kursziel: 60 EUR');
+  expect(details).toHaveTextContent('Modellaktion:');
+  expect(within(article).getByText('Begründung')).toBeInTheDocument();
+  expect(screen.queryByRole('article', { name: 'Zielgewicht Stock Asset' })).not.toBeInTheDocument();
+});
+
 it('displays sourced new assets outside the local asset list and keeps them after a route remount', async () => {
   const response = await window.API.analyzePortfolio({} as never);
   jest.mocked(window.API.analyzePortfolio).mockClear();
@@ -134,6 +154,37 @@ function fillProfile() {
   fireEvent.change(screen.getByLabelText('Risikobereitschaft'), { target: { value: 'medium' } });
   fireEvent.change(screen.getByLabelText('Anlagedauer (Jahre)'), { target: { value: '10' } });
 }
+
+it('refreshes all forecasts without starting another AI analysis', async () => {
+  const response = await window.API.analyzePortfolio({} as never);
+  jest.mocked(window.API.analyzePortfolio).mockClear();
+  jest.mocked(window.API.refreshPortfolioForecast).mockResolvedValue(response);
+  render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
+  await open(); fillProfile();
+  expect(screen.getByRole('button', { name: 'Alle Forecasts neu laden' })).toBeDisabled();
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
+  jest.mocked(window.API.analyzePortfolio).mockClear();
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Alle Forecasts neu laden' })); });
+  await waitFor(() => expect(window.API.refreshPortfolioForecast).toHaveBeenCalledWith(
+    expect.not.objectContaining({ targetAssetId: expect.anything() }), undefined, expect.any(String)));
+  expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
+  expect(screen.getByRole('status')).toHaveTextContent('Alle Forecasts wurden aktualisiert');
+});
+
+it('refreshes one asset forecast without starting a new AI asset analysis', async () => {
+  const response = await window.API.analyzePortfolio({} as never);
+  jest.mocked(window.API.analyzePortfolio).mockClear();
+  jest.mocked(window.API.refreshPortfolioForecast).mockResolvedValue(response);
+  render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
+  await open(); fillProfile();
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
+  jest.mocked(window.API.analyzePortfolio).mockClear();
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Forecast für Asset 1 neu laden' })); });
+  await waitFor(() => expect(window.API.refreshPortfolioForecast).toHaveBeenCalledWith(
+    expect.not.objectContaining({ targetAssetId: expect.anything() }), 1, expect.any(String)));
+  expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
+  expect(screen.getByRole('status')).toHaveTextContent('bestehende KI-Einzelanalyse wurde beibehalten');
+});
 
 it('displays the shared financing check and its unresolved deductions', async () => {
   const response = await window.API.analyzePortfolio({} as never);
@@ -439,8 +490,9 @@ it('opens ChatGPT usage management through the external browser bridge', async (
 it('shows warnings first and opens informational messages only through their tab', async () => {
   const response = await window.API.analyzePortfolio({} as never);
   const quoteNote = 'Die Kurse aller Positionen besitzen einen quoteAsOf-Zeitpunkt; ein fehlender Kurszeitpunkt liegt nicht vor. Die US-Schlusskurse mit Status market-closed werden nicht allein wegen Börsenschluss oder Vorbörse beanstandet.';
+  const marketClosedInfo = 'Assets 6, 11, 25, 33, 34: Letzter Schlusskurs – regulärer US-Markt noch geschlossen. Der ältere Kurs ist durch die Handelspause erklärbar.';
   jest.mocked(window.API.analyzePortfolio).mockResolvedValue({ ...response,
-    infos: ['Regulärer Schlusskurs'], warnings: [quoteNote, 'Bei einer Position fehlt quoteAsOf.'],
+    infos: ['Regulärer Schlusskurs'], warnings: [quoteNote, marketClosedInfo, 'Bei einer Position fehlt quoteAsOf.'],
     recommendations: response.recommendations.map(rec => ({ ...rec, infos: ['Einzelanalyse abgeschlossen'], warnings: ['Kursdaten prüfen'] })),
   });
   render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
@@ -453,6 +505,7 @@ it('shows warnings first and opens informational messages only through their tab
   expect(within(document.getElementById(warningTabs[0].getAttribute('aria-controls')!)!).getByText('Bei einer Position fehlt quoteAsOf.')).toBeInTheDocument();
   expect(within(document.getElementById(warningTabs[1].getAttribute('aria-controls')!)!).getByText('Kursdaten prüfen')).toBeInTheDocument();
   expect(screen.queryByText(quoteNote)).not.toBeInTheDocument();
+  expect(screen.queryByText(marketClosedInfo)).not.toBeInTheDocument();
   expect(screen.queryByText('Regulärer Schlusskurs')).not.toBeInTheDocument();
   expect(screen.queryByText('Einzelanalyse abgeschlossen')).not.toBeInTheDocument();
 
@@ -460,6 +513,7 @@ it('shows warnings first and opens informational messages only through their tab
   expect(infoTabs[0]).toHaveAttribute('aria-selected', 'true');
   const summaryInfoPanel = document.getElementById(infoTabs[0].getAttribute('aria-controls')!)!;
   expect(within(summaryInfoPanel).getByText(quoteNote)).toBeInTheDocument();
+  expect(within(summaryInfoPanel).getByText(marketClosedInfo)).toBeInTheDocument();
   expect(within(summaryInfoPanel).getByText('Regulärer Schlusskurs')).toBeInTheDocument();
   expect(within(summaryInfoPanel).queryByText('Bei einer Position fehlt quoteAsOf.')).not.toBeInTheDocument();
 

@@ -1,4 +1,4 @@
-import { assessQuoteFreshness, quoteFreshnessWarnings } from './quoteFreshness';
+import { assessQuoteFreshness, quoteFreshnessInfos, quoteFreshnessWarnings } from './quoteFreshness';
 import { buildAnalysisPositions } from './portfolioAnalysis';
 import type { QuoteMetadata } from './quoteMetadata';
 
@@ -13,13 +13,23 @@ it.each(['2026-10-03T12:00:00Z', '2026-10-04T12:00:00Z', '2026-10-05T08:50:03Z',
   'recognizes the Friday closing quote during the weekend or before US opening (%s)', now => {
     const result = assessQuoteFreshness({ ...position, quote }, Date.parse(now));
     expect(result).toMatchObject({ status: 'market-closed', marketBasis: 'inferred' });
-    expect(quoteFreshnessWarnings([result]).join(' ')).toContain('Letzter Schlusskurs');
-    expect(quoteFreshnessWarnings([result]).join(' ')).not.toContain('älter als 48 Stunden');
+    expect(quoteFreshnessInfos([result]).join(' ')).toContain('Letzter Schlusskurs');
+    expect(quoteFreshnessWarnings([result])).toEqual([]);
   },
 );
 
 it('warns again when the next regular trading session has started', () => {
   expect(assessQuoteFreshness({ ...position, quote }, Date.parse('2026-10-05T13:30:00Z')).status).toBe('stale');
+});
+
+it('groups regular US market closures for multiple assets as information', () => {
+  const freshness = [6, 11, 25, 33, 34].map(assetId => ({
+    assetId, status: 'market-closed' as const, marketBasis: 'exchange' as const, quoteAsOf: quote.quoteAsOf, fetchedAt: quote.fetchedAt,
+  }));
+  expect(quoteFreshnessInfos(freshness)).toEqual([
+    'Assets 6, 11, 25, 33, 34: Letzter Schlusskurs – regulärer US-Markt noch geschlossen. Der ältere Kurs ist durch die Handelspause erklärbar.',
+  ]);
+  expect(quoteFreshnessWarnings(freshness)).toEqual([]);
 });
 
 it('uses New York daylight saving time when Europe and the US change on different dates', () => {

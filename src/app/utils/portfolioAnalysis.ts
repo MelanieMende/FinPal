@@ -33,6 +33,7 @@ export interface AnalysisPosition {
 export interface PortfolioAnalysisRequest {
   investorContext?: InvestorContext;
   targetAssetId?: number;
+  refreshMarketForecasts?: boolean;
   provider: 'chatgpt' | 'api';
   model?: string;
   positions: AnalysisPosition[];
@@ -109,6 +110,7 @@ export function buildAnalysisPositions(assets: Asset[]): AnalysisPosition[] {
 
 export function validateAnalysisRequest(request: PortfolioAnalysisRequest): void {
   if (!request || !['chatgpt', 'api'].includes(request.provider)) throw new Error('Bitte einen KI-Zugang auswählen.');
+  if (request.refreshMarketForecasts !== undefined && typeof request.refreshMarketForecasts !== 'boolean') throw new Error('Die Forecast-Aktualisierung ist ungültig.');
   if (request.investorContext !== undefined && !validInvestorContext(request.investorContext)) throw new Error('Die dauerhaften Analyseangaben oder Anschaffungsdaten sind ungültig.');
   const p = request?.profile;
   if (!p || !['growth', 'income', 'preservation'].includes(p.goal) || !['low', 'medium', 'high'].includes(p.risk)
@@ -161,7 +163,7 @@ export function validateAnalysisRequest(request: PortfolioAnalysisRequest): void
 }
 
 export interface PortfolioAnalysisProgress {
-  stage: 'prices' | 'preparing' | 'research' | 'analysis' | 'validating' | 'correcting' | 'retrying';
+  stage: 'prices' | 'forecast' | 'preparing' | 'research' | 'analysis' | 'validating' | 'correcting' | 'retrying';
   lastActivityAt: number;
   researchCompleted?: number;
   researchTotal?: number;

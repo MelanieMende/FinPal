@@ -73,6 +73,21 @@ it('blocks unsupported, missing, stale, wrong-horizon or currency-mismatched for
   expect(buildForecastAllocation({ ...r, priceUpdatedAt: null }, [returnForecastFixture()]).status).toBe('blocked');
 });
 
+it('strictly optimizes the evidenced sleeve while freezing positions with missing forecasts', () => {
+  const r = request();
+  r.positions.push({ ...r.positions[0], id: 2, name: 'Unsupported holding', symbol: 'NONE' });
+  const plan = buildForecastAllocation(r, [returnForecastFixture('1')]);
+  expect(plan.status).toBe('calculated');
+  expect(plan.optimization).toMatchObject({ status: 'converged', unresolvedKeys: ['2'] });
+  expect(plan.optimization.modeledValuePercent).toBeGreaterThan(0);
+  expect(plan.optimization.expectedReturnPercent).not.toBeNull();
+  expect(plan.positions[1]).toMatchObject({ action: 'Prüfen', amountEUR: null, targetValueEUR: 1000 });
+  expect(plan.positions[1].projectedWeightPercent).toBeCloseTo(plan.positions[1].targetWeight.percent, 8);
+  expect(plan.positions[1].reason).toContain('unverändert eingefroren');
+  expect(plan.warnings.join(' ')).toContain('Unsupported holding');
+  expect(validPortfolioAllocation(plan)).toBe(true);
+});
+
 it('respects confirmed weight bands as hard constraints instead of maximizing a bullish forecast without limits', () => {
   const r = request();
   r.investorContext = { assets: [{ assetId: 1, confirmedAt: '2026-10-12T10:00:00Z',

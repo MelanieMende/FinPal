@@ -12,6 +12,8 @@ import { PortfolioAnalysisService } from './app/utils/portfolioAnalysisService';
 import type { PortfolioAnalysisRequest } from './app/utils/portfolioAnalysis';
 import { DivvyDiaryService } from './app/utils/divvyDiaryService';
 import { fetchEuroExchangeRates } from './app/utils/euroExchangeRates';
+import YahooFinance from 'yahoo-finance2';
+import { createYahooMarketForecastProvider } from './app/utils/marketForecastProvider';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -39,7 +41,9 @@ const trading = new TradeRepublicTradingService(dataPath, async () => tradingPro
 let mainRendererId: number | undefined;
 let mainRendererURL: string | undefined;
 const chatGptAuth = new ChatGptAuth(dataPath);
-const portfolioAnalysis = new PortfolioAnalysisService(dataPath, fetch, chatGptAuth);
+const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
+const portfolioAnalysis = new PortfolioAnalysisService(dataPath, fetch, chatGptAuth,
+  createYahooMarketForecastProvider(yahooFinance, { cacheFile: path.join(dataPath, 'portfolio-market-forecast-cache.json') }));
 
 let appState: {
   dataPath: string;
@@ -264,6 +268,8 @@ ipcMain.handle('portfolio-ai:forget-result', () => { portfolioAnalysis.forgetLas
 ipcMain.handle('portfolio-ai:analyze', (event, request: PortfolioAnalysisRequest, snapshot?: string) => portfolioAnalysis.analyze(request, progress => {
   if (!event.sender.isDestroyed()) event.sender.send('portfolio-ai:progress', progress);
 }, snapshot));
+ipcMain.handle('portfolio-ai:refresh-forecast', (_event, request: PortfolioAnalysisRequest, assetId?: number, snapshot?: string) =>
+  portfolioAnalysis.refreshMarketForecast(request, assetId, snapshot));
 ipcMain.handle('portfolio-ai:open-source', (_event, value: string) => {
   const url = new URL(value);
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error('Ungültiger Quellenlink.');
@@ -320,11 +326,7 @@ ipcMain.on('async-db-message', (event, arg) => {
   database.close()
 });
 
-import YahooFinance from 'yahoo-finance2';
-
 ipcMain.handle('yahoo-finance-api-message', async (_event, args: { symbol: string; isin?: string; type?: string }) => {
-  const yf = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
-
   if (args.type === 'Bond' && args.isin) {
 		try {
 			const response = await fetch(`https://api.boerse-frankfurt.de/v1/data/price_information/single?isin=${encodeURIComponent(args.isin)}`);
@@ -348,7 +350,7 @@ ipcMain.handle('yahoo-finance-api-message', async (_event, args: { symbol: strin
 	}
 
 	try {
-		const result = await yf.quoteSummary(args.symbol);
+		const result = await yahooFinance.quoteSummary(args.symbol);
 		return result;
 	} catch (reason) {
 		console.log('ERROR: yahoo-finance-api-message: ', reason);

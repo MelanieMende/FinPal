@@ -68,6 +68,38 @@ export const analyzePortfolio = createAsyncThunk<
   } finally { unsubscribe?.(); }
 }, { condition: (_args, { getState }) => !getState().portfolioAnalysis.progress });
 
+export const refreshPortfolioForecast = createAsyncThunk<
+  { report: PortfolioAnalysisResult; snapshot: string },
+  { request: PortfolioAnalysisRequest; snapshot: string; assetId?: number },
+  { state: { portfolioAnalysis: AnalysisState; assets: Asset[]; transactions: Transaction[] }; dispatch: ThunkDispatch<{ portfolioAnalysis: AnalysisState; assets: Asset[]; transactions: Transaction[] }, unknown, UnknownAction>; rejectValue: string }
+>('portfolioAnalysis/refreshForecast', async ({ request, snapshot, assetId }, { dispatch, getState, requestId, rejectWithValue }) => {
+  const transactionIds = getState().transactions.map(transaction => transaction.ID);
+  try {
+    await dispatch(loadPricesAndDividends({ assetIDs: assetId === undefined ? request.positions.map(position => position.id) : [assetId], preferTradeRepublicPrice: false, includeDividends: false })).unwrap();
+    const refreshedRequest = { ...request, positions: buildAnalysisPositions(getState().assets),
+      priceUpdatedAt: localStorage.getItem(MARKET_PRICE_UPDATED_AT_KEY) ?? request.priceUpdatedAt };
+    delete refreshedRequest.targetAssetId;
+    delete refreshedRequest.refreshMarketForecasts;
+    if (request.investorContext) refreshedRequest.investorContext = {
+      ...request.investorContext,
+      assets: request.investorContext.assets.map(facts => {
+        const asset = getState().assets.find(a => a.ID === facts.assetId);
+        return asset ? { ...facts, resolvedTaxContext: resolveTaxContext(asset, facts, request.investorContext!.depotTaxContexts), acquisitionHistory: resolveAcquisitionHistory(asset, getState().transactions, facts, request.investorContext!.depotHistories) } : facts;
+      }),
+    };
+    let profileSnapshot: unknown = request.profile;
+    try { profileSnapshot = JSON.parse(snapshot).profile ?? profileSnapshot; } catch { /* Legacy caller without a JSON snapshot. */ }
+    const refreshedSnapshot = JSON.stringify({ positions: refreshedRequest.positions, profile: profileSnapshot, priceUpdatedAt: refreshedRequest.priceUpdatedAt,
+      ...(refreshedRequest.investorContext ? { investorContext: refreshedRequest.investorContext } : {}), transactionIds });
+    dispatch(analysisProgressReceived({ progress: { stage: 'forecast', lastActivityAt: Date.now() }, requestId }));
+    if (!window.API.refreshPortfolioForecast) throw new Error('Bitte FinPal neu starten, um Forecasts einzeln zu aktualisieren.');
+    const report = await window.API.refreshPortfolioForecast(refreshedRequest, assetId, refreshedSnapshot);
+    return { report, snapshot: refreshedSnapshot };
+  } catch (error) {
+    return rejectWithValue(error instanceof Error ? error.message : 'Der Forecast konnte nicht aktualisiert werden.');
+  }
+}, { condition: (_args, { getState }) => !getState().portfolioAnalysis.progress });
+
 const slice = createSlice({
   name: 'portfolioAnalysis', initialState,
   reducers: {
@@ -109,6 +141,26 @@ const slice = createSlice({
       state.targetAssetId = null;
       state.progress = null; state.requestId = null;
       state.error = action.payload ?? action.error.message ?? 'Die KI-Anfrage ist fehlgeschlagen.';
+    })
+    .addCase(refreshPortfolioForecast.pending, (state, action) => {
+      state.targetAssetId = action.meta.arg.assetId ?? null;
+      state.restoreBlocked = true;
+      state.startedAt = Date.now();
+      state.progress = { stage: 'prices', lastActivityAt: state.startedAt };
+      state.requestId = action.meta.requestId;
+      state.error = null;
+    })
+    .addCase(refreshPortfolioForecast.fulfilled, (state, action) => {
+      state.targetAssetId = null;
+      state.progress = null; state.requestId = null;
+      state.lastResult = action.payload.report;
+      state.result = action.payload.report;
+      state.resultSnapshot = action.payload.snapshot;
+    })
+    .addCase(refreshPortfolioForecast.rejected, (state, action) => {
+      state.targetAssetId = null;
+      state.progress = null; state.requestId = null;
+      state.error = action.payload ?? action.error.message ?? 'Der Forecast konnte nicht aktualisiert werden.';
     }),
 });
 export const { setAnalysisOpen, clearAnalysisResult, analysisProgressReceived } = slice.actions;

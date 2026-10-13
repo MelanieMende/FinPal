@@ -215,9 +215,10 @@ export function buildPortfolioAllocation(request: PortfolioAnalysisRequest, cand
 /** Return a correction instead of changing AI amounts behind a contradictory explanation. */
 export function allocationMismatch(plan: PortfolioAllocation, recommendations: AssetRecommendation[], candidates: NewAssetRecommendation[] = []): string | null {
   for (const rec of [...recommendations, ...candidates]) {
-    if (rec.action !== 'Kaufen' && rec.action !== 'Verkaufen') continue;
     const key = 'assetId' in rec ? String(rec.assetId) : allocationCandidateKey(rec);
     const target = plan.positions.find(p => p.key === key);
+    if (plan.status === 'calculated' && target?.action === 'Prüfen' && rec.action !== 'Prüfen') return `${key}: Die Position ist wegen fehlender Optimierungseingaben unverändert eingefroren. Prüfen wählen und die konkrete Datenlücke nennen.`;
+    if (rec.action !== 'Kaufen' && rec.action !== 'Verkaufen') continue;
     if (!target || target.action !== rec.action || target.amountEUR === null) return `${key}: Kein berechneter ${rec.action === 'Kaufen' ? 'Kauf' : 'Verkauf'} möglich. Halten oder Prüfen wählen und den konkreten Modell-/Datengrund nennen.`;
     if (typeof rec.plannedAmountEUR !== 'number' || cents(rec.plannedAmountEUR) !== cents(target.amountEUR)) return `${key}: plannedAmountEUR muss dem lokal berechneten Betrag ${target.amountEUR.toFixed(2)} EUR entsprechen. Begründung, amountRationale und Kostenprüfung an Ziel und Gewichtung vorher/nachher anpassen.`;
   }

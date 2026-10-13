@@ -64,8 +64,17 @@ export function quoteFreshnessWarnings(freshness: QuoteFreshness[]): string[] {
   const warnings: string[] = [];
   const stale = freshness.filter(q => q.status === 'stale');
   if (stale.length) warnings.push('Assets ' + stale.map(q => q.assetId).join(', ') + ': Börsenkurs älter als 48 Stunden; keine bestätigte Erklärung durch eine reguläre Handelspause.');
-  const closed = freshness.filter(q => q.status === 'market-closed');
-  if (closed.length) warnings.push('Assets ' + closed.map(q => q.assetId).join(', ') + ': Letzter Schlusskurs – regulärer US-Markt noch geschlossen. Der ältere Kurs ist durch die Handelspause erklärbar.'
-    + (closed.some(q => q.marketBasis === 'inferred') ? ' Bei Kursen ohne Handelsplatzangabe ist die Zuordnung zum US-Regelhandel aus Quelle, Ticker und Kurszeit abgeleitet.' : ''));
   return warnings;
 }
+
+export function quoteFreshnessInfos(freshness: QuoteFreshness[]): string[] {
+  const infos: string[] = [];
+  const closed = freshness.filter(q => q.status === 'market-closed');
+  if (closed.length) infos.push('Assets ' + closed.map(q => q.assetId).join(', ') + ': Letzter Schlusskurs – regulärer US-Markt noch geschlossen. Der ältere Kurs ist durch die Handelspause erklärbar.'
+    + (closed.some(q => q.marketBasis === 'inferred') ? ' Bei Kursen ohne Handelsplatzangabe ist die Zuordnung zum US-Regelhandel aus Quelle, Ticker und Kurszeit abgeleitet.' : ''));
+  return infos;
+}
+
+export const isMarketClosedInfo = (message: string) => message.includes(
+  ': Letzter Schlusskurs – regulärer US-Markt noch geschlossen. Der ältere Kurs ist durch die Handelspause erklärbar.',
+);

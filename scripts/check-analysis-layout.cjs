@@ -49,6 +49,9 @@ async function checkInChromium(html, output) {
           if (allocation && allocation.scrollWidth > allocation.clientWidth + 1) errors.push('Allocation exceeds its container');
           const forecasts = root.querySelector('[aria-label="Prognosebasierte Optimierung"]');
           if (forecasts && forecasts.scrollWidth > forecasts.clientWidth + 1) errors.push('Forecast inputs exceed their container');
+          root.querySelectorAll('[aria-label^="Prognose und Zielgewichtung "]').forEach(assetAnalysis => {
+            if (assetAnalysis.scrollWidth > assetAnalysis.clientWidth + 1) errors.push('Combined asset analysis exceeds its container');
+          });
           root.querySelectorAll('[role="tablist"][aria-label="Analysehinweise"]').forEach(tablist => {
             const tabs = [...tablist.querySelectorAll('[role="tab"]')];
             if (tabs.length !== 2) errors.push('Analysis messages do not have two tabs');
@@ -95,6 +98,9 @@ async function checkInChromium(html, output) {
           await scrollToSection('[aria-label="Berechnete Zielgewichtung"]');
           const allocationScreenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'allocation-900' + suffix + '.png'), allocationScreenshot.toPNG());
+          await scrollToSection('[aria-label^="Prognose und Zielgewichtung "]');
+          const assetAnalysisScreenshot = await window.webContents.capturePage();
+          fs.writeFileSync(path.join(output, 'asset-analysis-900' + suffix + '.png'), assetAnalysisScreenshot.toPNG());
           await scrollToSection('[aria-label="Steuerlicher Kontext je Depot"]');
           const depotScreenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'depot-tax-900' + suffix + '.png'), depotScreenshot.toPNG());
@@ -143,12 +149,17 @@ async function buildAndCheck() {
       facts.defaultCustody.provider = facts.assets[1].custody.provider;
       saveInvestorFacts('layout-fixture', facts);
       const state = setupStore().getState();
+      const allocationPositions = buildAnalysisPositions(assets.map(a => ({ ...a, currencySymbol: '€', price: 1000 })));
+      allocationPositions.push({ ...allocationPositions[0], id: 2, name: 'LongUnmodeledAssetName'.repeat(8), symbol: 'NO-FORECAST', type: 'Stock' });
       const allocationPlan = buildForecastAllocation({ provider: 'api', priceUpdatedAt: new Date(Date.now()).toISOString(),
-        positions: buildAnalysisPositions(assets.map(a => ({ ...a, currencySymbol: '€', price: 1000 }))),
+        positions: allocationPositions,
         profile: { goal: 'growth', risk: 'high', horizonYears: 10, buyBudget: 1000 } },
         [returnForecastFixture('1', { targetPrice: 1100, referencePrice: 1000,
           publisher: 'SyntheticPublisher'.repeat(20), assumptions: 'Synthetic assumptions for layout verification. '.repeat(15) })]);
-      const result = { summary: 'Layout fixture', infos: ['Zusätzliche Information für die Layoutprüfung.'], warnings: ['Warnung mit einem längeren Text für die Layoutprüfung.'], sources: [], recommendations: [], generatedAt: '2026-10-12T10:00:00Z',
+      const recommendations = allocationPositions.map(position => ({ assetId: position.id, action: 'Prüfen',
+        rationale: 'Ausführliche KI-Begründung für die zusammengeführte Asset-Kachel. '.repeat(5),
+        risk: 'Risikoangabe für die Layoutprüfung.', sourceIndexes: [] }));
+      const result = { summary: 'Layout fixture', infos: ['Zusätzliche Information für die Layoutprüfung.'], warnings: ['Warnung mit einem längeren Text für die Layoutprüfung.'], sources: [], recommendations, generatedAt: '2026-10-12T10:00:00Z',
         priceUpdatedAt: null, model: 'fixture', allocationPlan };
       const store = setupStore({ ...state, assets, transactions,
         appState: { ...state.appState, database: 'layout-fixture' },

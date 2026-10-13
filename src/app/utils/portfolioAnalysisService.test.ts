@@ -121,6 +121,61 @@ it('researches sourced outlooks and requests a profile-aware timing decision wit
   expect(result.allocationPlan.optimization.status).toBe('converged');
 });
 
+it('uses structured market forecasts in the local optimizer without requiring AI-generated optimization inputs', async () => {
+  const currentTime = new Date().toISOString();
+  const forecastRequest = { ...request, priceUpdatedAt: currentTime, refreshMarketForecasts: true, positions: [{ ...request.positions[0],
+    name: 'Munich Re', symbol: 'MUV2.DE', isin: 'DE0008430026', type: 'Stock' as const, currency: 'EUR',
+  }] };
+  const forecast = returnForecastFixture('1', { publisher: 'Yahoo Finance analyst consensus', referencePriceAsOf: currentTime });
+  const expectedPlan = buildForecastAllocation(forecastRequest, [forecast]);
+  const expectedPosition = expectedPlan.positions[0];
+  const optimizedReport = { ...report, newAssetRecommendations: [] as typeof report.newAssetRecommendations,
+    recommendations: [{ ...report.recommendations[0], action: expectedPosition.action, plannedAmountEUR: expectedPosition.amountEUR,
+      ...(expectedPosition.action === 'Verkaufen' ? { tradeDecision: tradeDecisionFixture } : {}) }],
+  };
+  const marketProvider = jest.fn().mockResolvedValue(forecast);
+  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research)))
+    .mockResolvedValueOnce(structuredResponse(optimizedReport)).mockResolvedValueOnce(structuredResponse(optimizedReport));
+  const service = new PortfolioAnalysisService(dir, mockedFetch, undefined, marketProvider); service.saveKey('sk-testOnlyNotARealKey');
+  const result = await service.analyze(forecastRequest);
+  const analysisInput = JSON.parse(JSON.parse(mockedFetch.mock.calls[1][1].body).input[0].content);
+  expect(marketProvider).toHaveBeenCalledWith(forecastRequest.positions[0], { forceRefresh: true });
+  expect(analysisInput.marketForecasts).toEqual([forecast]);
+  expect(analysisInput.portfolio.refreshMarketForecasts).toBeUndefined();
+  expect(result.allocationPlan.optimization).toMatchObject({ status: 'converged', forecasts: [forecast] });
+  expect(result.sources).toEqual(expect.arrayContaining(forecast.forecastSources));
+});
+
+it('refreshes all persisted forecasts and allocation without calling the AI analysis', async () => {
+  const currentTime = new Date().toISOString();
+  const forecastRequest = { ...request, priceUpdatedAt: currentTime, positions: [{ ...request.positions[0],
+    name: 'Munich Re', symbol: 'MUV2.DE', isin: 'DE0008430026', type: 'Stock' as const, currency: 'EUR',
+  }] };
+  const initialForecast = returnForecastFixture('1', { targetPrice: 70, referencePriceAsOf: currentTime });
+  const initialPosition = buildForecastAllocation(forecastRequest, [initialForecast]).positions[0];
+  const optimizedReport = { ...report, newAssetRecommendations: [] as typeof report.newAssetRecommendations,
+    recommendations: [{ ...report.recommendations[0], action: initialPosition.action, plannedAmountEUR: initialPosition.amountEUR,
+      ...(initialPosition.action === 'Verkaufen' ? { tradeDecision: tradeDecisionFixture } : {}) }],
+  };
+  const refreshedForecast = returnForecastFixture('1', { targetPrice: 80, referencePriceAsOf: currentTime,
+    forecastSources: [{ title: 'Refreshed forecast', url: 'https://example.com/refreshed' }] });
+  const marketProvider = jest.fn().mockResolvedValueOnce(initialForecast);
+  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research)))
+    .mockResolvedValueOnce(structuredResponse(optimizedReport)).mockResolvedValueOnce(structuredResponse(optimizedReport));
+  const service = new PortfolioAnalysisService(dir, mockedFetch, undefined, marketProvider); service.saveKey('sk-testOnlyNotARealKey');
+  const initial = await service.analyze(forecastRequest, undefined, 'saved-snapshot');
+  const recommendation = initial.recommendations[0];
+  marketProvider.mockResolvedValueOnce(refreshedForecast);
+  mockedFetch.mockClear();
+  const refreshed = await service.refreshMarketForecast(forecastRequest, undefined, 'refreshed-snapshot');
+  expect(marketProvider).toHaveBeenLastCalledWith(forecastRequest.positions[0], { forceRefresh: true });
+  expect(mockedFetch).not.toHaveBeenCalled();
+  expect(refreshed.recommendations[0]).toEqual(recommendation);
+  expect(refreshed.allocationPlan?.optimization?.forecasts[0].targetPrice).toBe(80);
+  expect(refreshed.sources).toContainEqual(refreshedForecast.forecastSources[0]);
+  expect(service.getLastResult()?.snapshot).toBe('refreshed-snapshot');
+});
+
 it('ignores irrelevant hold and review allocations while retaining valid buy amounts', () => {
   const input = { ...report, recommendations: [{ ...report.recommendations[0], plannedAmountEUR: 100 }],
     newAssetRecommendations: [{ ...newAsset, action: 'Prüfen', plannedAmountEUR: 40 }],
@@ -443,7 +498,8 @@ it('passes market closure context to the model and replaces the blanket weekend 
     const body = JSON.parse(mockedFetch.mock.calls[1][1].body);
     expect(JSON.parse(body.input[0].content).quoteFreshness).toEqual([expect.objectContaining({ assetId: 1, status: 'market-closed' })]);
     expect(body.instructions).toContain('nicht allein wegen mehr als 48 Kalenderstunden veraltet');
-    expect(result.warnings.join(' ')).toContain('Letzter Schlusskurs');
+    expect(result.infos?.join(' ')).toContain('Letzter Schlusskurs');
+    expect(result.warnings.join(' ')).not.toContain('Letzter Schlusskurs');
     expect(result.warnings.join(' ')).not.toContain('älter als 48 Stunden');
   } finally { now.mockRestore(); }
 });

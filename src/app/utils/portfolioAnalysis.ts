@@ -5,7 +5,6 @@ export const DEFAULT_ANALYSIS_MODEL = 'gpt-5.4-mini';
 export const ANALYSIS_TIMEOUT_MS = 10 * 60 * 1000;
 export const RESEARCH_BATCH_SIZE = 6;
 export const RESEARCH_CONCURRENCY = 3;
-export const RESEARCH_CACHE_TTL_MS = 30 * 60 * 1000;
 
 export interface InvestmentProfile {
   goal: 'growth' | 'income' | 'preservation';
@@ -59,6 +58,7 @@ export interface AssetRecommendation {
   tradeCheck?: { costs: string; taxes: string; conclusion: string };
 }
 export interface PortfolioAnalysisResult {
+  allocationPlan?: import('./portfolioAllocation').PortfolioAllocation;
   fundingCheck?: import('./portfolioFunding').FundingCheck;
   summary: string;
   infos?: string[];

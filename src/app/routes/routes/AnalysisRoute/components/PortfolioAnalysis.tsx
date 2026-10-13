@@ -12,6 +12,7 @@ import { selectTotalLiquidity } from '../../../../store/cash/cash.selectors';
 import { selectRecommendationExecutions } from '../../../../utils/recommendationExecution';
 import { checkPortfolioFunding } from '../../../../utils/portfolioFunding';
 import TradeDecisionReview from './TradeDecisionReview';
+import AllocationReview from './AllocationReview';
 import InvestorFactsEditor from './InvestorFactsEditor';
 import { useInvestorFacts } from '../../../../utils/useInvestorFacts';
 import { buildInvestorContext } from '../../../../utils/investorFacts';
@@ -34,6 +35,8 @@ function duration(seconds: number) { return Math.floor(seconds / 60) + ':' + Str
 const euros = (amount: number) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(amount);
 const fundingLabels = { 'no-trades': 'Keine Käufe oder Verkäufe vorgeschlagen', unknown: 'Finanzierung ungeklärt', insufficient: 'Budget reicht nicht aus', conditional: 'Im Gebührenszenario gedeckt; Steuern und Spreads noch offen' };
 const emptyChatGpt: ChatGptStatus = { connected: false, accounts: [] };
+const actionOrder = { Prüfen: 0, Verkaufen: 1, Kaufen: 2, Halten: 3 };
+const compareRecommendations = (a: { action: keyof typeof actionOrder }, b: { action: keyof typeof actionOrder }) => actionOrder[a.action] - actionOrder[b.action];
 
 // Reclassify this known neutral message in older saved analyses; keep other warnings intact.
 const legacyQuoteInfo = 'Die Kurse aller Positionen besitzen einen quoteAsOf-Zeitpunkt; ein fehlender Kurszeitpunkt liegt nicht vor. Die US-Schlusskurse mit Status market-closed werden nicht allein wegen Börsenschluss oder Vorbörse beanstandet.';
@@ -332,6 +335,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
           {stale && <p role="status" className="text-amber-300 text-sm">Portfolio, Kurse oder Anlageprofil haben sich seit dieser Analyse geändert. Bitte neu analysieren.</p>}
           <p className="text-sm text-gray-200 whitespace-pre-wrap">{result.summary}</p>
           <AnalysisMessages infos={result.infos} warnings={result.warnings} />
+          <AllocationReview plan={result.allocationPlan} />
           {fundingCheck && <section aria-label="Finanzierungsprüfung" className="rounded-lg border border-indigo-400/20 p-4 text-sm text-gray-300">
             <H5 className="text-sm text-indigo-300">Finanzierungsprüfung</H5>
             {hasExecution && <p className="text-xs text-emerald-300">Aktuelle Barmittel und offene Restbeträge: Erfasste Trades werden nicht erneut eingeplant.</p>}
@@ -347,7 +351,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
             <AnalysisMessages warnings={fundingCheck.warnings} />
           </section>}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {result.recommendations.map(rec => <article key={rec.assetId} className="rounded-lg border border-white/10 p-4">
+            {result.recommendations.slice().sort(compareRecommendations).map(rec => <article key={rec.assetId} className="rounded-lg border border-white/10 p-4">
               <div className="flex justify-between items-start gap-3"><span className="font-bold text-sm text-white">{assets.find(a => a.ID === rec.assetId)?.name || `Asset ${rec.assetId}`}</span>
                 <span className={`text-xs font-bold ${rec.action === 'Kaufen' ? 'text-emerald-400' : rec.action === 'Verkaufen' ? 'text-red-400' : rec.action === 'Prüfen' ? 'text-amber-300' : 'text-indigo-300'}`}>{rec.action}</span>
               </div>
@@ -359,7 +363,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
               <p className="text-sm text-gray-300 whitespace-pre-wrap">{rec.rationale}</p>
               {rec.tradeDecision ? <TradeDecisionReview decision={rec.tradeDecision} />
                 : rec.action === 'Verkaufen' && <p className="text-xs text-sky-200">Diese gespeicherte Empfehlung enthält noch keine Abwägung von Halten und Reduzieren mit Kursszenarien. Über „Neu analysieren“ ergänzen.</p>}
-              {typeof rec.plannedAmountEUR === 'number' && <p className="text-xs text-gray-400">Geplanter {rec.action === 'Verkaufen' ? 'Brutto-Verkaufsbetrag' : 'Kaufbetrag'} im Szenario: {euros(rec.plannedAmountEUR)}</p>}
+              {typeof rec.plannedAmountEUR === 'number' && <p className="text-xs text-gray-400">{result.allocationPlan ? 'Berechneter' : 'Geplanter'} {rec.action === 'Verkaufen' ? 'Brutto-Verkaufsbetrag' : 'Kaufbetrag'} {result.allocationPlan ? 'zur Zielgewichtung' : 'im Szenario'}: {euros(rec.plannedAmountEUR)}</p>}
               <Button small disabled={busy || !positions.some(position => position.id === rec.assetId)} onClick={() => analyze(rec.assetId)} aria-label={`Asset ${rec.assetId} neu analysieren`}>Neu analysieren</Button>
               {rec.updatedAt && <p className="text-xs text-gray-400">Einzelanalyse vom {formatSyncTime(rec.updatedAt)} · {rec.model}. Portfolio-Zusammenfassung und übrige Empfehlungen stammen aus der Gesamtanalyse.</p>}
               <EltifValuation position={positions.find(position => position.id === rec.assetId)} evidence={rec.navEvidence} />
@@ -378,14 +382,14 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
             <p className="text-xs text-gray-400">Mögliche Ergänzungen zu deinem Portfolio, passend zu Anlageprofil und Kaufbudget.</p>
             {!result.newAssetRecommendations.length && <p className="text-sm text-gray-400">Keine passenden neuen Assets mit ausreichenden Belegen gefunden.</p>}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-              {result.newAssetRecommendations.map((rec, i) => <article key={i} className="rounded-lg border border-white/10 p-4">
+              {result.newAssetRecommendations.slice().sort(compareRecommendations).map((rec, i) => <article key={i} className="rounded-lg border border-white/10 p-4">
                 <div className="flex justify-between items-start gap-3">
                   <span className="font-bold text-sm text-white">{rec.name}</span>
                   <span className={`text-xs font-bold ${rec.action === 'Kaufen' ? 'text-emerald-400' : 'text-amber-300'}`}>{rec.action}</span>
                 </div>
                 <p className="text-xs text-gray-400">{rec.type}{rec.isin && ` · ISIN: ${rec.isin}`}{rec.symbol && ` · Ticker: ${rec.symbol}`}</p>
                 <p className="text-sm text-gray-300 whitespace-pre-wrap">{rec.rationale}</p>
-                {typeof rec.plannedAmountEUR === 'number' && <p className="text-xs text-gray-400">Geplanter Kaufbetrag im Szenario: {euros(rec.plannedAmountEUR)}</p>}
+                {typeof rec.plannedAmountEUR === 'number' && <p className="text-xs text-gray-400">{result.allocationPlan ? 'Berechneter Kaufbetrag zur Zielgewichtung' : 'Geplanter Kaufbetrag im Szenario'}: {euros(rec.plannedAmountEUR)}</p>}
                 <p className="text-xs text-amber-200 whitespace-pre-wrap">Risiken: {rec.risk}</p>
                 <div className="flex flex-wrap gap-2 mt-2">{[...new Set(rec.sourceIndexes)].map(index => <a key={index} href={result.sources[index].url} onClick={e => openSource(e, result.sources[index].url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">[{index}] {result.sources[index].title}</a>)}</div>
               </article>)}

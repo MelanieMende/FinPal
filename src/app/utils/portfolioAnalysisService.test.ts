@@ -4,10 +4,12 @@ import os from 'node:os';
 import path from 'node:path';
 import { safeStorage } from 'electron';
 import { PortfolioAnalysisService, readAnalysisStream, validateAnalysisResult } from './portfolioAnalysisService';
-import { ANALYSIS_TIMEOUT_MS, RESEARCH_CACHE_TTL_MS, buildAnalysisPositions, type PortfolioAnalysisRequest } from './portfolioAnalysis';
+import { ANALYSIS_TIMEOUT_MS, buildAnalysisPositions, type PortfolioAnalysisRequest } from './portfolioAnalysis';
 import type { ChatGptAuth } from './chatGptAuth';
 import { tradeDecisionFixture } from '../../testing/fixtures/tradeDecision';
 import { buildInvestorContext, newInvestorFacts, seedInvestorFacts } from './investorFacts';
+import { buildForecastAllocation } from './portfolioForecastOptimization';
+import { returnForecastFixture, returnForecastInputFixture } from '../../testing/fixtures/returnForecast';
 
 jest.mock('electron', () => ({ safeStorage: {
   isEncryptionAvailable: jest.fn(() => true),
@@ -19,7 +21,7 @@ const request: PortfolioAnalysisRequest = {
   provider: 'api', profile: { goal: 'growth', risk: 'medium', horizonYears: 10, buyBudget: 100 }, priceUpdatedAt: null,
   positions: buildAnalysisPositions([{ ID: 1, name: 'Asset', current_shares: 2, price: 50, currencySymbol: '€' }] as Asset[]),
 };
-const newAsset = { name: 'New ETF', isin: 'IE00B4L5Y983', symbol: 'IWDA', type: 'ETF', action: 'Kaufen', rationale: 'Diversifikation [0]', risk: 'Marktrisiko', sourceIndexes: [0] };
+const newAsset = { name: 'New ETF', isin: 'IE00B4L5Y983', symbol: 'IWDA', type: 'ETF', action: 'Prüfen', rationale: 'Diversifikation [0]', risk: 'Marktrisiko', sourceIndexes: [0] };
 const report = { summary: 'Portfolio prüfen', warnings: ['Kurszeitpunkt fehlt'], recommendations: [{ assetId: 1, action: 'Halten', rationale: 'Begründung [0]', risk: 'Marktrisiko', sourceIndexes: [0], tradeCheck: { costs: '100 EUR Marktwert; 1 EUR Gebuehr entspricht 1 %.', taxes: 'Steuerdaten fehlen; keine Erstattung bestaetigt.', conclusion: 'Halten.' } }], newAssetRecommendations: [newAsset] };
 const research = { status: 'completed', output: [
   { type: 'web_search_call', status: 'completed' },
@@ -69,7 +71,7 @@ it('accepts zero allocations from the schema without retrying or failing the ent
   expect(mockedFetch).toHaveBeenCalledTimes(2);
   expect(result.recommendations[0].plannedAmountEUR).toBeNull();
   expect(result.newAssetRecommendations[0].plannedAmountEUR).toBeNull();
-  expect(result.fundingCheck.status).toBe('unknown');
+  expect(result.fundingCheck.status).toBe('no-trades');
   expect(service.getLastResult()?.report).toEqual(result);
   expect(zeroReport.recommendations[0].plannedAmountEUR).toBe(0);
 });
@@ -88,13 +90,15 @@ it('requires a sourced hold-versus-reduce decision for new sales while restoring
 });
 
 it('researches sourced outlooks and requests a profile-aware timing decision without exposing holdings to web research', async () => {
-  const sellReport = { ...report, newAssetRecommendations: [] as typeof report.newAssetRecommendations, recommendations: [{ ...report.recommendations[0],
-    action: 'Verkaufen', plannedAmountEUR: 50, tradeDecision: tradeDecisionFixture,
+  const saleRequest = { ...request, priceUpdatedAt: new Date(Date.now()).toISOString(), positions: [{ ...request.positions[0], shares: 20 }], profile: { ...request.profile, buyBudget: 1000 } };
+  const amount = buildForecastAllocation(saleRequest, [returnForecastFixture()]).positions[0].amountEUR;
+  const sellReport = { ...report, optimizationInputs: [returnForecastInputFixture()], newAssetRecommendations: [] as typeof report.newAssetRecommendations, recommendations: [{ ...report.recommendations[0],
+    action: 'Verkaufen', plannedAmountEUR: amount, tradeDecision: tradeDecisionFixture,
   }] };
   const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research)))
-    .mockResolvedValueOnce(structuredResponse(sellReport));
+    .mockResolvedValueOnce(structuredResponse(sellReport)).mockResolvedValueOnce(structuredResponse(sellReport));
   const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
-  const result = await service.analyze(request);
+  const result = await service.analyze(saleRequest);
   expect(result.recommendations[0].tradeDecision).toEqual(tradeDecisionFixture);
   expect(service.getLastResult()?.report.recommendations[0].tradeDecision).toEqual(tradeDecisionFixture);
   const researchBody = JSON.parse(mockedFetch.mock.calls[0][1].body);
@@ -107,9 +111,14 @@ it('researches sourced outlooks and requests a profile-aware timing decision wit
   const schema = analysisBody.text.format.schema.properties.recommendations.items;
   expect(schema.required).toContain('tradeDecision');
   expect(schema.properties.tradeDecision.properties.scenarios.minItems).toBe(3);
-  expect(JSON.parse(analysisBody.input[0].content).decisionContext).toMatchObject({ heldValueEUR: 100,
-    totalValueEUR: 200, positions: [{ assetId: 1, shareIncludingCashPercent: 50 }],
+  expect(JSON.parse(analysisBody.input[0].content).decisionContext).toMatchObject({ heldValueEUR: 1000,
+    totalValueEUR: 2000, positions: [{ assetId: 1, shareIncludingCashPercent: 50 }],
   });
+  expect(result.allocationPlan.positions[0].amountEUR).toBe(amount);
+  expect(analysisBody.instructions).not.toContain('beispielhaften EUR-Betrag');
+  expect(analysisBody.instructions).toContain('12-Monats-Erwartungen');
+  expect(result.allocationPlan.method).toBe('forecast-mean-variance-v1');
+  expect(result.allocationPlan.optimization.status).toBe('converged');
 });
 
 it('ignores irrelevant hold and review allocations while retaining valid buy amounts', () => {
@@ -128,19 +137,27 @@ it.each([-1, '10 EUR', Infinity, 1e9 + 1])('continues rejecting invalid allocati
     [{ title: 'Source', url: 'https://example.com' }], true)).toThrow(/plannedAmountEUR muss null/);
 });
 
-it('corrects an unfunded combined plan and persists a locally calculated financing check', async () => {
-  const overBudget = { ...report, newAssetRecommendations: [{ ...newAsset, plannedAmountEUR: 100 }] };
-  const corrected = { ...overBudget, newAssetRecommendations: [{ ...newAsset, plannedAmountEUR: 99 }] };
+it('corrects arbitrary new-asset amounts to the joint local allocation and persists the funding check', async () => {
+  const fundingRequest = { ...request, priceUpdatedAt: new Date(Date.now()).toISOString(), profile: { ...request.profile, buyBudget: 1000 } };
+  const forecasts = [returnForecastFixture('1', { targetPrice: 100 }),
+    returnForecastFixture('new:IE00B4L5Y983', { targetPrice: 130, referencePrice: 100, annualVolatilityPercent: 20 })];
+  const amount = buildForecastAllocation(fundingRequest, forecasts, [{ ...newAsset, type: 'ETF', action: 'Kaufen' }]).positions[1].amountEUR;
+  const overBudget = { ...report, optimizationInputs: [returnForecastInputFixture('1', { targetPrice: 100 }),
+    returnForecastInputFixture('new:IE00B4L5Y983', { targetPrice: 130, referencePrice: 100, annualVolatilityPercent: 20 })],
+    newAssetRecommendations: [{ ...newAsset, action: 'Kaufen', plannedAmountEUR: 1000 }] };
+  const corrected = { ...overBudget, newAssetRecommendations: [{ ...overBudget.newAssetRecommendations[0], plannedAmountEUR: amount }] };
   const answer = (value: unknown) => new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(value) }] }] }));
   const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research)))
     .mockResolvedValueOnce(answer(overBudget)).mockResolvedValueOnce(answer(corrected));
   const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
-  const result = await service.analyze(request);
-  expect(result.fundingCheck).toMatchObject({ cashEUR: 100, buyAmountEUR: 99, feeScenarioEUR: 1,
-    balanceBeforeSpreadAndTaxEUR: 0, status: 'conditional' });
+  const result = await service.analyze(fundingRequest);
+  expect(amount).toBeGreaterThan(0);
+  expect(result.fundingCheck).toMatchObject({ cashEUR: 1000, buyAmountEUR: amount, feeScenarioEUR: 1,
+    balanceBeforeSpreadAndTaxEUR: Math.round((999 - amount) * 100) / 100, status: 'conditional' });
   expect(mockedFetch).toHaveBeenCalledTimes(3);
   const correction = JSON.parse(mockedFetch.mock.calls[2][1].body);
-  expect(correction.input[1].content).toContain('1.00 EUR');
+  expect(correction.input[1].content).toContain(amount.toFixed(2) + ' EUR');
+  expect(JSON.parse(correction.input[1].content).correction.allocationPlan.positions[1]).toMatchObject({ amountEUR: amount });
   expect(correction.instructions).toContain('ohne investorContext: 1 EUR je regulärer Trade-Republic-Order');
   expect(correction.instructions).toContain('gespeicherte Ordergebühr je Kauf- oder Verkaufsvorschlag');
   expect(correction.text.format.schema.properties.newAssetRecommendations.items.required).toContain('plannedAmountEUR');
@@ -153,6 +170,11 @@ it('corrects an unfunded combined plan and persists a locally calculated financi
   const restored = service.getLastResult();
   expect(restored?.report.fundingCheck).toEqual(result.fundingCheck);
   expect(restored?.report.generatedAt).toBe(result.generatedAt);
+  expect(restored?.report.allocationPlan).toEqual(result.allocationPlan);
+  legacySaved.report.allocationPlan = { ...result.allocationPlan, positions: 'corrupt' };
+  fs.writeFileSync(resultFile, JSON.stringify(legacySaved));
+  expect(service.getLastResult()?.report.allocationPlan).toBeUndefined();
+  expect(service.getLastResult()?.report.recommendations).toEqual(result.recommendations);
 });
 
 it('refreshes only the selected asset with fresh research, preserves the portfolio report and restores the merged sources', async () => {
@@ -223,7 +245,7 @@ it('reuses recent single-asset research while re-evaluating live holdings and pr
   expect(analysisInput.portfolio.positions[0]).toMatchObject({ shares: 3, price: 60 });
   expect(analysisInput.portfolio.profile.goal).toBe('income');
   expect(analysisInput.tradeEconomics[0].marketValueEUR).toBe(180);
-  const now = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + RESEARCH_CACHE_TTL_MS + 1);
+  const now = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 24 * 60 * 60 * 1000);
   try { await service.analyze(updated); } finally { now.mockRestore(); }
   expect(mockedFetch).toHaveBeenCalledTimes(7);
 });
@@ -594,7 +616,7 @@ it('reuses completed research after a failure, expires it and invalidates it whe
   await service.analyze({ ...request, positions: [{ ...request.positions[0], price: 55 }] });
   const researchCalls = () => mockedFetch.mock.calls.filter(([, options]) => JSON.parse(options.body).tools).length;
   expect(researchCalls()).toBe(1);
-  const now = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + RESEARCH_CACHE_TTL_MS + 1);
+  const now = jest.spyOn(Date, 'now').mockReturnValue(Date.now() + 24 * 60 * 60 * 1000);
   try {
     await service.analyze(request);
     expect(researchCalls()).toBe(2);
@@ -604,6 +626,47 @@ it('reuses completed research after a failure, expires it and invalidates it whe
     await service.analyze({ ...request, profile: { ...request.profile, risk: 'high' } });
     expect(researchCalls()).toBe(4);
   } finally { now.mockRestore(); }
+});
+
+it('persists successful research across restarts, refreshes at Berlin midnight and forgets it on deletion', async () => {
+  const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-12T08:00:00Z'));
+  const mockedFetch = jest.fn(async (_url, options) => JSON.parse(options.body).tools
+    ? new Response(JSON.stringify(research)) : structuredResponse(report));
+  const researchCalls = () => mockedFetch.mock.calls.filter(([, options]) => JSON.parse(options.body).tools).length;
+  try {
+    const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
+    await service.analyze(request);
+    clock.mockReturnValue(Date.parse('2026-10-12T21:59:59Z'));
+    const restarted = new PortfolioAnalysisService(dir, mockedFetch);
+    await restarted.analyze({ ...request, positions: [{ ...request.positions[0], price: 55 }] });
+    expect(researchCalls()).toBe(1);
+    expect(mockedFetch).toHaveBeenCalledTimes(3);
+    const input = JSON.parse(JSON.parse(mockedFetch.mock.calls[2][1].body).input[0].content);
+    expect(input.portfolio.positions[0].price).toBe(55);
+    expect(input.researchFetchedAt).toEqual(['2026-10-12T08:00:00.000Z']);
+    clock.mockReturnValue(Date.parse('2026-10-12T22:00:00Z'));
+    await new PortfolioAnalysisService(dir, mockedFetch).analyze(request);
+    expect(researchCalls()).toBe(2);
+    const nextRestart = new PortfolioAnalysisService(dir, mockedFetch);
+    await nextRestart.analyze(request);
+    expect(researchCalls()).toBe(2);
+    nextRestart.forgetLastResult();
+    await new PortfolioAnalysisService(dir, mockedFetch).analyze(request);
+    expect(researchCalls()).toBe(3);
+  } finally { clock.mockRestore(); }
+});
+
+it('retains completed research on disk when the subsequent analysis fails', async () => {
+  const failedFetch = jest.fn(async (_url, options) => {
+    if (JSON.parse(options.body).tools) return new Response(JSON.stringify(research));
+    throw new Error('Analysis unavailable');
+  });
+  const service = new PortfolioAnalysisService(dir, failedFetch); service.saveKey('sk-testOnlyNotARealKey');
+  await expect(service.analyze(request)).rejects.toThrow('Analysis unavailable');
+  const retryFetch = jest.fn(async (_url, _options) => structuredResponse(report));
+  await new PortfolioAnalysisService(dir, retryFetch).analyze(request);
+  expect(retryFetch).toHaveBeenCalledTimes(1);
+  expect(JSON.parse(retryFetch.mock.calls[0][1].body).tools).toBeUndefined();
 });
 
 it('allows work beyond four minutes and reports the research timeout without leaving the service busy', async () => {

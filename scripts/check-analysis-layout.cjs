@@ -12,6 +12,11 @@ async function checkInChromium(html, output) {
   app.disableHardwareAcceleration();
   await app.whenReady();
   const window = new BrowserWindow({ show: false, width: 1280, height: 1100 });
+  const scrollToSection = async selector => window.webContents.executeJavaScript(`(async () => {
+    document.querySelector(${JSON.stringify(selector)}).scrollIntoView({ behavior: 'instant', block: 'start' });
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await new Promise(resolve => setTimeout(resolve, 150));
+  })()`);
   try {
     await window.loadFile(html);
     for (const zoom of [1, 1.25]) {
@@ -23,7 +28,8 @@ async function checkInChromium(html, output) {
             await new Promise(resolve => setTimeout(resolve, 25));
           if (Math.abs(innerWidth - ${width / zoom}) > 2) throw new Error('Viewport resize did not settle');
           const main = document.querySelector('main');
-          main.style.width = (innerWidth >= 800 ? innerWidth - 240 : innerWidth) + 'px';
+          const availableWidth = document.documentElement.clientWidth;
+          main.style.width = (innerWidth >= 800 ? availableWidth - 240 : availableWidth) + 'px';
           document.querySelectorAll('details').forEach(el => el.open = true);
           document.querySelectorAll('select').forEach(el => {
             el.selectedIndex = [...el.options].reduce((longest, option, index) =>
@@ -37,6 +43,11 @@ async function checkInChromium(html, output) {
           if (main.getBoundingClientRect().right > innerWidth + 1) errors.push('Container exceeds viewport');
           if (root.getBoundingClientRect().right > main.getBoundingClientRect().right + 1) errors.push('Form exceeds parent');
           if (main.scrollWidth > main.clientWidth + 1) errors.push('Form exceeds its container');
+          if (document.documentElement.scrollWidth > document.documentElement.clientWidth + 1) errors.push('Page exceeds its container');
+          const allocation = root.querySelector('[aria-label="Berechnete Zielgewichtung"]');
+          if (allocation && allocation.scrollWidth > allocation.clientWidth + 1) errors.push('Allocation exceeds its container');
+          const forecasts = root.querySelector('[aria-label="Prognosebasierte Optimierung"]');
+          if (forecasts && forecasts.scrollWidth > forecasts.clientWidth + 1) errors.push('Forecast inputs exceed their container');
           const rects = fields.map(el => ({ el, rect: el.getBoundingClientRect() }));
           for (const { el, rect } of rects) {
             const parent = el.closest('label') || el.parentElement;
@@ -53,15 +64,19 @@ async function checkInChromium(html, output) {
         })()`);
         console.log(JSON.stringify({ width, zoom, ...result }));
         if (result.errors.length) throw new Error('Responsive analysis layout failed');
-        if (width === 900 && zoom === 1) {
+        if (width === 900) {
+          const suffix = zoom === 1 ? '' : '-125';
           const screenshot = await window.webContents.capturePage();
-          fs.writeFileSync(path.join(output, 'analysis-900.png'), screenshot.toPNG());
-          await window.webContents.executeJavaScript(`document.querySelector('[data-testid="investor-facts-1"]').scrollIntoView(); new Promise(resolve => requestAnimationFrame(resolve))`);
+          fs.writeFileSync(path.join(output, 'analysis-900' + suffix + '.png'), screenshot.toPNG());
+          await scrollToSection('[data-testid="investor-facts-1"]');
           const assetScreenshot = await window.webContents.capturePage();
-          fs.writeFileSync(path.join(output, 'asset-fields-900.png'), assetScreenshot.toPNG());
-          await window.webContents.executeJavaScript(`document.querySelector('[aria-label="Steuerlicher Kontext je Depot"]').scrollIntoView(); new Promise(resolve => requestAnimationFrame(resolve))`);
+          fs.writeFileSync(path.join(output, 'asset-fields-900' + suffix + '.png'), assetScreenshot.toPNG());
+          await scrollToSection('[aria-label="Berechnete Zielgewichtung"]');
+          const allocationScreenshot = await window.webContents.capturePage();
+          fs.writeFileSync(path.join(output, 'allocation-900' + suffix + '.png'), allocationScreenshot.toPNG());
+          await scrollToSection('[aria-label="Steuerlicher Kontext je Depot"]');
           const depotScreenshot = await window.webContents.capturePage();
-          fs.writeFileSync(path.join(output, 'depot-tax-900.png'), depotScreenshot.toPNG());
+          fs.writeFileSync(path.join(output, 'depot-tax-900' + suffix + '.png'), depotScreenshot.toPNG());
           await window.webContents.executeJavaScript('scrollTo(0, 0)');
         }
       }
@@ -86,6 +101,9 @@ async function buildAndCheck() {
     import { setupStore } from './src/app/store';
     import PortfolioAnalysis from './src/app/routes/routes/AnalysisRoute/components/PortfolioAnalysis';
     import { readInvestorFacts, saveInvestorFacts } from './src/app/utils/investorFacts';
+    import { buildForecastAllocation } from './src/app/utils/portfolioForecastOptimization';
+    import { returnForecastFixture } from './src/testing/fixtures/returnForecast';
+    import { buildAnalysisPositions } from './src/app/utils/portfolioAnalysis';
     export function render(provider) {
       const assets = [{ ID: 1, name: 'LongAssetName'.repeat(12), type: 'Crypto', symbol: 'BTC',
         isin: '', price: 100, current_shares: 1, currencySymbol: 'EUR' }];
@@ -95,9 +113,16 @@ async function buildAndCheck() {
       facts.defaultCustody.provider = facts.assets[1].custody.provider;
       saveInvestorFacts('layout-fixture', facts);
       const state = setupStore().getState();
+      const allocationPlan = buildForecastAllocation({ provider: 'api', priceUpdatedAt: new Date(Date.now()).toISOString(),
+        positions: buildAnalysisPositions(assets.map(a => ({ ...a, currencySymbol: '€', price: 1000 }))),
+        profile: { goal: 'growth', risk: 'high', horizonYears: 10, buyBudget: 1000 } },
+        [returnForecastFixture('1', { targetPrice: 1100, referencePrice: 1000,
+          publisher: 'SyntheticPublisher'.repeat(20), assumptions: 'Synthetic assumptions for layout verification. '.repeat(15) })]);
+      const result = { summary: 'Layout fixture', warnings: [], sources: [], recommendations: [], generatedAt: '2026-10-12T10:00:00Z',
+        priceUpdatedAt: null, model: 'fixture', allocationPlan };
       const store = setupStore({ ...state, assets, transactions,
         appState: { ...state.appState, database: 'layout-fixture' },
-        portfolioAnalysis: { ...state.portfolioAnalysis, provider } });
+        portfolioAnalysis: { ...state.portfolioAnalysis, provider, result } });
       return renderToStaticMarkup(<Provider store={store}><PortfolioAnalysis standalone priceUpdatedAt={null} /></Provider>);
     }
   `, resolveDir: root, loader: 'jsx' }, outfile: bundle, bundle: true, packages: 'external', platform: 'node', format: 'cjs' });

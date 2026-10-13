@@ -7,10 +7,11 @@ const percent = (n: number | null) => n === null ? 'Ungeklärt' : new Intl.Numbe
 type AssetOptimizationDetailsProps = {
   plan?: PortfolioAllocation;
   allocationKey: string;
+  assetType?: Asset['type'];
   onOpenSource?: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void;
 };
 
-export function AssetOptimizationDetails({ plan, allocationKey, onOpenSource }: AssetOptimizationDetailsProps) {
+export function AssetOptimizationDetails({ plan, allocationKey, assetType, onOpenSource }: AssetOptimizationDetailsProps) {
   const position = plan?.positions.find(p => p.key === allocationKey);
   if (!position) return null;
   const forecast = plan?.optimization?.forecasts.find(f => f.key === allocationKey);
@@ -34,6 +35,7 @@ export function AssetOptimizationDetails({ plan, allocationKey, onOpenSource }: 
           : `Datenquelle: letzter gültiger Cache nach Abruffehler · ${forecast.dataAgeHours?.toFixed(1) ?? '0,0'} Stunden alt`}
       </p>}
       <p className="m-0">Kursziel: {new Intl.NumberFormat('de-DE', { maximumFractionDigits: 4 }).format(forecast.targetPrice)} {forecast.currency} · Erwartete Kursrendite: {percent(input?.expectedReturnPercent ?? null)}</p>
+      {forecast.scenarioReturns && <p className="m-0">Historisches Bootstrap-Szenarioband: P10 {percent(forecast.scenarioReturns.p10)} · Median {percent(forecast.scenarioReturns.median)} · P90 {percent(forecast.scenarioReturns.p90)}</p>}
       <p className="m-0">Annualisierte historische Volatilität: {percent(forecast.annualVolatilityPercent)} · Stand {forecast.volatilityAsOf.slice(0, 10)} · Fenster {forecast.volatilityLookbackDays} Tage</p>
       <details><summary className="cursor-pointer text-gray-400">Quellen und Prognoseannahmen</summary>
         <div className="mt-2 min-w-0 space-y-1 break-words">
@@ -44,7 +46,9 @@ export function AssetOptimizationDetails({ plan, allocationKey, onOpenSource }: 
         </div>
       </details>
     </div>}
-    {!forecast && plan?.method === 'forecast-mean-variance-v1' && <p className="m-0 text-amber-200">Keine vollständige belegte 12-Monats-Prognose und Volatilität vorhanden.</p>}
+    {!forecast && plan?.method === 'forecast-mean-variance-v1' && <p className="m-0 text-amber-200">{assetType === 'Crypto'
+      ? 'Für das lokale Krypto-Modell fehlen mindestens drei Jahre vollständige tägliche Kurse oder eine passende Kurswährung. Ohne belastbare Modellrendite und Volatilität bleibt die Position eingefroren.'
+      : 'Keine vollständige belegte 12-Monats-Prognose und Volatilität vorhanden.'}</p>}
     <dl className="m-0 grid grid-cols-2 gap-2 sm:grid-cols-4">
       <div className="min-w-0"><dt>Vorher</dt><dd className="m-0 break-words">{percent(position.currentWeightPercent)}</dd></div>
       <div className="min-w-0"><dt>Ziel</dt><dd className="m-0 break-words">{percent(position.targetWeight?.percent ?? null)}</dd></div>

@@ -41,7 +41,7 @@ declare global {
       getLastPortfolioAnalysis?():Promise<import('./app/utils/portfolioAnalysis').SavedPortfolioAnalysis|null>,
       forgetLastPortfolioAnalysis?():Promise<boolean>,
       analyzePortfolio?(request:import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest,snapshot?:string):Promise<import('./app/utils/portfolioAnalysis').PortfolioAnalysisResult>,
-      refreshPortfolioForecast?(request:import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest,assetId?:number,snapshot?:string):Promise<import('./app/utils/portfolioAnalysis').PortfolioAnalysisResult>,
+      refreshPortfolioForecast?(request:import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest,assetId?:number,snapshot?:string):Promise<import('./app/utils/portfolioAnalysis').PortfolioForecastRefreshResult>,
       onPortfolioAnalysisProgress?(callback:(progress:import('./app/utils/portfolioAnalysis').PortfolioAnalysisProgress)=>void):()=>void,
       openPortfolioAnalysisSource?(url:string):Promise<void>,
       quit?():any

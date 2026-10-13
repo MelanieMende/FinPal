@@ -174,3 +174,9 @@ export interface SavedPortfolioAnalysis {
   snapshot: string;
   provider: PortfolioAnalysisRequest['provider'];
 }
+
+export interface PortfolioForecastRefreshResult {
+  report: PortfolioAnalysisResult;
+  refreshedAssetIds: number[];
+  unavailableAssetIds: number[];
+}

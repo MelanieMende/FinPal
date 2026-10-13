@@ -317,10 +317,13 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
       };
       validateAnalysisRequest(request);
       localStorage.setItem(ANALYSIS_PROFILE_KEY, JSON.stringify(profile));
-      await dispatch(refreshPortfolioForecast({ request, snapshot, assetId })).unwrap();
-      if (alive.current) setNotice(assetId === undefined
-        ? 'Alle Forecasts wurden aktualisiert. Die bestehende KI-Analyse wurde beibehalten.'
-        : 'Forecast aktualisiert. Die bestehende KI-Einzelanalyse wurde beibehalten.');
+      const refreshed = await dispatch(refreshPortfolioForecast({ request, snapshot, assetId })).unwrap();
+      if (alive.current) {
+        const unavailable = refreshed.unavailableAssetIds.map(id => assets.find(asset => asset.ID === id)?.name ?? `Asset ${id}`);
+        setNotice(assetId === undefined
+          ? `${refreshed.refreshedAssetIds.length} von ${positions.length} Forecasts aktualisiert.${unavailable.length ? ` Nicht verfügbar: ${unavailable.join(', ')}.` : ''} Die bestehende KI-Analyse wurde beibehalten.`
+          : 'Forecast aktualisiert. Die bestehende KI-Einzelanalyse wurde beibehalten.');
+      }
     });
   }
 
@@ -446,7 +449,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                 {executions[rec.assetId].status === 'done' ? 'Done' : 'Teilweise umgesetzt'} · {euros(executions[rec.assetId].amountEUR)} erfasst
                 {executions[rec.assetId].remainingEUR !== null && executions[rec.assetId].status !== 'done' && ` · ${euros(executions[rec.assetId].remainingEUR!)} offen`}
               </p>}
-              <AssetOptimizationDetails plan={result.allocationPlan} allocationKey={String(rec.assetId)} onOpenSource={openSource} />
+              <AssetOptimizationDetails plan={result.allocationPlan} allocationKey={String(rec.assetId)} assetType={assets.find(asset => asset.ID === rec.assetId)?.type} onOpenSource={openSource} />
               <p className="text-sm text-gray-300 whitespace-pre-wrap">{rec.rationale}</p>
               {rec.tradeDecision ? <TradeDecisionReview decision={rec.tradeDecision} />
                 : rec.action === 'Verkaufen' && <p className="text-xs text-sky-200">Diese gespeicherte Empfehlung enthält noch keine Abwägung von Halten und Reduzieren mit Kursszenarien. Über „Neu analysieren“ ergänzen.</p>}
@@ -478,7 +481,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                   <span className={`text-xs font-bold ${rec.action === 'Kaufen' ? 'text-emerald-400' : 'text-amber-300'}`}>{rec.action}</span>
                 </div>
                 <p className="text-xs text-gray-400">{rec.type}{rec.isin && ` · ISIN: ${rec.isin}`}{rec.symbol && ` · Ticker: ${rec.symbol}`}</p>
-                <AssetOptimizationDetails plan={result.allocationPlan} allocationKey={allocationCandidateKey(rec)} onOpenSource={openSource} />
+                <AssetOptimizationDetails plan={result.allocationPlan} allocationKey={allocationCandidateKey(rec)} assetType={rec.type} onOpenSource={openSource} />
                 <p className="text-sm text-gray-300 whitespace-pre-wrap">{rec.rationale}</p>
                 {typeof rec.plannedAmountEUR === 'number' && !result.allocationPlan?.positions.some(position => position.key === allocationCandidateKey(rec)) && <p className="text-xs text-gray-400">Geplanter Kaufbetrag im Szenario: {euros(rec.plannedAmountEUR)}</p>}
                 <p className="text-xs text-amber-200 whitespace-pre-wrap">Risiken: {rec.risk}</p>

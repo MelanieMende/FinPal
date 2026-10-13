@@ -41,11 +41,13 @@ it('keeps legacy reports renderable and labels the context of single-asset updat
 
 it('shows the optimization horizon, extracted forecast, current-price return and explicit risk assumptions', () => {
   const r = { ...request, priceUpdatedAt: new Date(Date.now()).toISOString(), positions: [{ ...request.positions[0], type: 'Stock' as const }] };
-  const plan = buildForecastAllocation(r, [returnForecastFixture('1', { targetPrice: 1200, referencePrice: 1000 })]);
+  const plan = buildForecastAllocation(r, [returnForecastFixture('1', { targetPrice: 1200, referencePrice: 1000,
+    scenarioReturns: { p10: -40, median: 20, p90: 120 } })]);
   render(<><AllocationReview plan={plan} /><AssetOptimizationDetails plan={plan} allocationKey="1" /></>);
   expect(screen.getByText(/Mathematische 12-Monats-Optimierung/)).toBeInTheDocument();
   const panel = within(screen.getByRole('region', { name: 'Prognose und Zielgewichtung Bitcoin' }));
   expect(panel.getByText(/Kursziel: 1.200 EUR.*20 %/)).toBeInTheDocument();
+  expect(panel.getByText('Historisches Bootstrap-Szenarioband: P10 -40 % · Median 20 % · P90 120 %')).toBeInTheDocument();
   expect(screen.getByText(/gemeinsamen Gleichlauf.*keine gemessenen Korrelationen/)).toBeInTheDocument();
   expect(panel.getAllByRole('link', { name: 'Synthetic source' })).toHaveLength(2);
 });
@@ -79,6 +81,13 @@ it('does not display an optimized return or amount when evidence is missing', ()
   expect(screen.getByText(/Keine vollständigen belegten Zahlen/)).toBeInTheDocument();
   expect(screen.getByText(/12-Monats-Optimierung: Datengrundlage/)).toBeInTheDocument();
   expect(screen.getByText('Modellaktion: Prüfen')).toBeInTheDocument();
+});
+
+it('explains why a strict crypto forecast remains unavailable after refreshing', () => {
+  const plan = buildForecastAllocation(request);
+  render(<AssetOptimizationDetails plan={plan} allocationKey="1" assetType="Crypto" />);
+  expect(screen.getByText(/mindestens drei Jahre vollständige tägliche Kurse/)).toBeInTheDocument();
+  expect(screen.getByText(/belastbare Modellrendite und Volatilität/)).toBeInTheDocument();
 });
 
 it('labels a calculated partial optimization and its frozen position coverage', () => {

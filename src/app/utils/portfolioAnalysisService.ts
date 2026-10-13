@@ -16,7 +16,7 @@ import { investorFactsAnalysisInstructions, historyCoverageAnalysisInstructions 
 import type { MarketForecastProvider } from './marketForecastProvider';
 import {
   DEFAULT_ANALYSIS_MODEL, ANALYSIS_TIMEOUT_MS, RESEARCH_BATCH_SIZE, RESEARCH_CONCURRENCY, validateAnalysisRequest,
-  type PortfolioAnalysisRequest, type PortfolioAnalysisResult, type AnalysisSource, type PortfolioAnalysisProgress, type SavedPortfolioAnalysis,
+  type PortfolioAnalysisRequest, type PortfolioAnalysisResult, type AnalysisSource, type PortfolioAnalysisProgress, type SavedPortfolioAnalysis, type PortfolioForecastRefreshResult,
 } from './portfolioAnalysis';
 
 function analysisSchema(request: PortfolioAnalysisRequest, sources: AnalysisSource[]) { return {
@@ -387,7 +387,7 @@ export class PortfolioAnalysisService {
     return body;
   }
 
-  async refreshMarketForecast(request: PortfolioAnalysisRequest, assetId?: number, snapshot = ''): Promise<PortfolioAnalysisResult> {
+  async refreshMarketForecast(request: PortfolioAnalysisRequest, assetId?: number, snapshot = ''): Promise<PortfolioForecastRefreshResult> {
     const cleanRequest = { ...request };
     delete cleanRequest.targetAssetId;
     delete cleanRequest.refreshMarketForecasts;
@@ -401,8 +401,10 @@ export class PortfolioAnalysisService {
     if (!previous) throw new Error('Für die Forecast-Aktualisierung ist zuerst eine gespeicherte Analyse erforderlich.');
     this.running = true;
     try {
-      const refreshedForecasts = (await Promise.all(positions.map(position => this.marketForecastProvider!(position, { forceRefresh: true })
-        .catch((): null => null)))).filter((forecast): forecast is ReturnForecast => !!forecast);
+      const attempts = await Promise.all(positions.map(async position => ({ assetId: position.id,
+        forecast: await this.marketForecastProvider!(position, { forceRefresh: true }).catch((): null => null),
+      })));
+      const refreshedForecasts = attempts.map(attempt => attempt.forecast).filter((forecast): forecast is ReturnForecast => !!forecast);
       if (!refreshedForecasts.length) throw new Error(assetId === undefined
         ? 'Für keine gehaltene Position konnte ein vollständiger Forecast geladen werden.'
         : `Für ${positions[0].name} konnte kein vollständiger Forecast geladen werden.`);
@@ -416,7 +418,8 @@ export class PortfolioAnalysisService {
       const report = { ...previous.report, allocationPlan, sources };
       report.fundingCheck = checkPortfolioFunding(cleanRequest, report);
       this.saveLastResult(report, cleanRequest, snapshot || previous.snapshot);
-      return report;
+      return { report, refreshedAssetIds: attempts.filter(attempt => !!attempt.forecast).map(attempt => attempt.assetId),
+        unavailableAssetIds: attempts.filter(attempt => !attempt.forecast).map(attempt => attempt.assetId) };
     } finally {
       this.running = false;
     }

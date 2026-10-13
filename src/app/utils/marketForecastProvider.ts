@@ -21,7 +21,8 @@ export type MarketForecastProvider = (position: AnalysisPosition, options?: Mark
 
 type ConsensusCache = { targetPrice: number; analystCount: number; referencePrice: number; currency: string; referenceTime: number; fetchedAt: number; targetDate: string };
 type VolatilityCache = NonNullable<ReturnType<typeof annualizedHistoricalVolatility>> & { fetchedAt: number; refreshAfter: number };
-type CacheEntry = { consensus?: ConsensusCache; volatility?: VolatilityCache };
+type CryptoModelCache = NonNullable<ReturnType<typeof cryptoHistoricalForecast>> & { currency: string; fetchedAt: number; refreshAfter: number; targetDate: string };
+type CacheEntry = { consensus?: ConsensusCache; volatility?: VolatilityCache; crypto?: CryptoModelCache };
 type ProviderConfig = { cacheFile?: string; now?: () => number };
 
 const day = 86400000;
@@ -40,6 +41,16 @@ const validVolatility = (value: VolatilityCache | undefined, now: number) => !!v
   && Number.isInteger(value.volatilityLookbackDays) && value.volatilityLookbackDays >= 180 && Number.isFinite(Date.parse(value.volatilityAsOf))
   && Number.isFinite(value.fetchedAt) && value.fetchedAt <= now && now - value.fetchedAt <= MARKET_FORECAST_FALLBACK_MAX_AGE_MS
   && Number.isFinite(value.refreshAfter);
+const validCrypto = (value: CryptoModelCache | undefined, now: number) => !!value && positive(value.targetPrice)
+  && positive(value.referencePrice) && /^[A-Z]{3}$/.test(value.currency) && Number.isFinite(value.referenceTime) && value.referenceTime <= now
+  && positive(value.annualVolatilityPercent) && value.volatilityLookbackDays >= 330
+  && Number.isFinite(value.expectedReturnPercent) && value.expectedReturnPercent >= -50 && value.expectedReturnPercent <= 100
+  && Number.isInteger(value.observations) && value.observations >= 1096 && value.bootstrapPaths === 2000
+  && [value.scenarioReturns.p10, value.scenarioReturns.median, value.scenarioReturns.p90].every(Number.isFinite)
+  && value.scenarioReturns.p10 > -100 && value.scenarioReturns.p10 <= value.scenarioReturns.median
+  && value.scenarioReturns.median <= value.scenarioReturns.p90
+  && Number.isFinite(value.fetchedAt) && value.fetchedAt <= now && now - value.fetchedAt <= MARKET_FORECAST_FALLBACK_MAX_AGE_MS
+  && Number.isFinite(value.refreshAfter) && Number.isFinite(Date.parse(value.targetDate));
 
 class MarketForecastCache {
   private readonly entries = new Map<string, CacheEntry>();
@@ -85,6 +96,46 @@ export function annualizedHistoricalVolatility(rows: YahooHistoryRow[]) {
     observations: prices.length, returnObservations: returns.length };
 }
 
+const percentile = (values: number[], probability: number) => {
+  const sorted = values.slice().sort((a, b) => a - b);
+  const index = (sorted.length - 1) * probability;
+  const lower = Math.floor(index), upper = Math.ceil(index), weight = index - lower;
+  return sorted[lower] * (1 - weight) + sorted[upper] * weight;
+};
+
+/** Reproducible 12-month crypto model: moving-block bootstrap plus strong shrinkage of the median return toward zero. */
+export function cryptoHistoricalForecast(rows: YahooHistoryRow[]) {
+  const prices = rows.map(row => ({ time: instant(row.date), price: positive(row.adjClose) ? row.adjClose : row.close }))
+    .filter(row => Number.isFinite(row.time) && positive(row.price)).sort((a, b) => a.time - b.time);
+  const unique = prices.filter((row, index) => !index || row.time > prices[index - 1].time);
+  if (unique.length < 1096 || unique[unique.length - 1].time - unique[0].time < 3 * 365 * day) return null;
+  const returns = unique.slice(1).map((row, index) => Math.log(row.price / unique[index].price));
+  const recent = returns.slice(-365);
+  if (recent.length < 365) return null;
+  const mean = recent.reduce((sum, value) => sum + value, 0) / recent.length;
+  const variance = recent.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (recent.length - 1);
+  const annualVolatilityPercent = Math.sqrt(variance) * Math.sqrt(365) * 100;
+  if (!positive(annualVolatilityPercent) || annualVolatilityPercent > 500) return null;
+  let seed = (returns.length * 2654435761) >>> 0;
+  const random = () => { seed = (1664525 * seed + 1013904223) >>> 0; return seed / 0x100000000; };
+  const block = 14, paths: number[] = [];
+  for (let pathIndex = 0; pathIndex < 2000; pathIndex++) {
+    let logReturn = 0, sampled = 0;
+    while (sampled < 365) {
+      const start = Math.floor(random() * Math.max(1, returns.length - block));
+      for (let offset = 0; offset < block && sampled < 365; offset++, sampled++) logReturn += returns[start + offset];
+    }
+    paths.push((Math.exp(logReturn) - 1) * 100);
+  }
+  const scenarioReturns = { p10: percentile(paths, .1), median: percentile(paths, .5), p90: percentile(paths, .9) };
+  const expectedReturnPercent = Math.max(-50, Math.min(100, scenarioReturns.median * .25));
+  const last = unique[unique.length - 1];
+  return { targetPrice: last.price * (1 + expectedReturnPercent / 100), referencePrice: last.price, referenceTime: last.time,
+    expectedReturnPercent, annualVolatilityPercent, volatilityAsOf: new Date(last.time).toISOString(),
+    volatilityLookbackDays: Math.floor((last.time - unique[unique.length - 366].time) / day), scenarioReturns,
+    observations: unique.length, bootstrapPaths: paths.length };
+}
+
 function nextPotentialMarketClose(now: number, regularEnd: number): number {
   let next = Number.isFinite(regularEnd) ? regularEnd + 30 * 60000 : now + 12 * 60 * 60000;
   if (next > now) return next;
@@ -100,7 +151,45 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
   const now = typeof config === 'function' ? config : config.now ?? Date.now;
   const cache = new MarketForecastCache(typeof config === 'function' ? undefined : config.cacheFile);
   return async (position, options = {}) => {
-    const symbol = position.symbol.trim().toUpperCase();
+    const rawSymbol = position.symbol.trim().toUpperCase();
+    const symbol = position.type === 'Crypto' && rawSymbol && !rawSymbol.includes('-') ? `${rawSymbol}-EUR` : rawSymbol;
+    if (position.type === 'Crypto' && symbol) {
+      const fetchedAt = now(), cached = cache.get(symbol);
+      let model = validCrypto(cached.crypto, fetchedAt) ? cached.crypto : undefined;
+      let refreshed = false, fallback = false;
+      if (options.forceRefresh || !model || fetchedAt >= model.refreshAfter) {
+        try {
+          const chart = await client.chart(symbol, { period1: new Date(fetchedAt - 5 * 365 * day), period2: new Date(fetchedAt), interval: '1d', events: 'history', return: 'array' });
+          const currentUtcDay = Date.UTC(new Date(fetchedAt).getUTCFullYear(), new Date(fetchedAt).getUTCMonth(), new Date(fetchedAt).getUTCDate());
+          const calculated = cryptoHistoricalForecast(chart.quotes.filter(quote => instant(quote.date) < currentUtcDay)
+            .map(quote => ({ date: quote.date, close: quote.close ?? NaN, adjClose: quote.adjclose ?? undefined })));
+          const currency = position.quote?.originalCurrency ?? position.currency;
+          if (!calculated || !/^[A-Z]{3}$/.test(currency)) throw new Error('Incomplete crypto history');
+          const nextUtcDay = Date.UTC(new Date(fetchedAt).getUTCFullYear(), new Date(fetchedAt).getUTCMonth(), new Date(fetchedAt).getUTCDate() + 1, 0, 15);
+          model = { ...calculated, currency, fetchedAt, refreshAfter: nextUtcDay,
+            targetDate: new Date(fetchedAt + 365 * day).toISOString() };
+          refreshed = true;
+        } catch { fallback = true; }
+      }
+      if (!validCrypto(model, fetchedAt)) return null;
+      if (refreshed) {
+        try { cache.set(symbol, { ...cached, crypto: model }); }
+        catch { /* A cache write failure must not discard a valid model. */ }
+      }
+      const ageHours = (fetchedAt - model.fetchedAt) / 3600000;
+      const dataStatus: NonNullable<ReturnForecast['dataStatus']> = fallback ? 'stale-fallback' : refreshed ? 'live' : 'fresh-cache';
+      const encoded = encodeURIComponent(symbol);
+      return { key: String(position.id), publisher: 'FinPal crypto history model', publishedAt: new Date(model.fetchedAt).toISOString(),
+        targetDate: model.targetDate, horizonMonths: 12, targetPrice: model.targetPrice, currency: model.currency,
+        referencePrice: model.referencePrice, referencePriceAsOf: new Date(model.referenceTime).toISOString(),
+        annualVolatilityPercent: model.annualVolatilityPercent, volatilityAsOf: model.volatilityAsOf,
+        volatilityLookbackDays: model.volatilityLookbackDays, dataStatus, dataAgeHours: ageHours,
+        scenarioReturns: model.scenarioReturns,
+        assumptions: `Lokale probabilistische Modellprognose aus ${model.observations} täglichen historischen Schlusskursen. 2.000 deterministische Moving-Block-Bootstrap-Pfade mit 14-Tage-Blöcken und 365 Tagen Horizont; die Medianrendite wird zu 75 % gegen 0 % geschrumpft und auf -50 % bis +100 % begrenzt. P10, Median und P90 zeigen die ungeschrumpfte historische Bootstrap-Verteilung. Volatilität aus den letzten 365 täglichen logarithmischen Renditen, mit sqrt(365) annualisiert. ${dataStatus === 'stale-fallback' ? `Letzter gültiger Cache nach Abruffehler (${ageHours.toFixed(1)} Stunden alt).` : dataStatus === 'fresh-cache' ? `Gültiger lokaler Cache (${ageHours.toFixed(1)} Stunden alt).` : 'Historische Marktdaten aktuell abgerufen.'}`,
+        forecastSources: [{ title: `Yahoo Finance historical prices for ${symbol}; FinPal local model`, url: `https://finance.yahoo.com/quote/${encoded}/history/` }],
+        volatilitySources: [{ title: `Yahoo Finance historical prices for ${symbol}`, url: `https://finance.yahoo.com/quote/${encoded}/history/` }],
+      };
+    }
     if (position.type !== 'Stock' || !symbol) return null;
     const fetchedAt = now();
     const cached = cache.get(symbol);

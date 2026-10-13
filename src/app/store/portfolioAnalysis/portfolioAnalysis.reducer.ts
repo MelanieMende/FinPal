@@ -69,7 +69,7 @@ export const analyzePortfolio = createAsyncThunk<
 }, { condition: (_args, { getState }) => !getState().portfolioAnalysis.progress });
 
 export const refreshPortfolioForecast = createAsyncThunk<
-  { report: PortfolioAnalysisResult; snapshot: string },
+  { report: PortfolioAnalysisResult; snapshot: string; refreshedAssetIds: number[]; unavailableAssetIds: number[] },
   { request: PortfolioAnalysisRequest; snapshot: string; assetId?: number },
   { state: { portfolioAnalysis: AnalysisState; assets: Asset[]; transactions: Transaction[] }; dispatch: ThunkDispatch<{ portfolioAnalysis: AnalysisState; assets: Asset[]; transactions: Transaction[] }, unknown, UnknownAction>; rejectValue: string }
 >('portfolioAnalysis/refreshForecast', async ({ request, snapshot, assetId }, { dispatch, getState, requestId, rejectWithValue }) => {
@@ -93,8 +93,8 @@ export const refreshPortfolioForecast = createAsyncThunk<
       ...(refreshedRequest.investorContext ? { investorContext: refreshedRequest.investorContext } : {}), transactionIds });
     dispatch(analysisProgressReceived({ progress: { stage: 'forecast', lastActivityAt: Date.now() }, requestId }));
     if (!window.API.refreshPortfolioForecast) throw new Error('Bitte FinPal neu starten, um Forecasts einzeln zu aktualisieren.');
-    const report = await window.API.refreshPortfolioForecast(refreshedRequest, assetId, refreshedSnapshot);
-    return { report, snapshot: refreshedSnapshot };
+    const refreshed = await window.API.refreshPortfolioForecast(refreshedRequest, assetId, refreshedSnapshot);
+    return { ...refreshed, snapshot: refreshedSnapshot };
   } catch (error) {
     return rejectWithValue(error instanceof Error ? error.message : 'Der Forecast konnte nicht aktualisiert werden.');
   }

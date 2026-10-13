@@ -158,7 +158,7 @@ function fillProfile() {
 it('refreshes all forecasts without starting another AI analysis', async () => {
   const response = await window.API.analyzePortfolio({} as never);
   jest.mocked(window.API.analyzePortfolio).mockClear();
-  jest.mocked(window.API.refreshPortfolioForecast).mockResolvedValue(response);
+  jest.mocked(window.API.refreshPortfolioForecast).mockResolvedValue({ report: response, refreshedAssetIds: [1], unavailableAssetIds: [2] });
   render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
   await open(); fillProfile();
   expect(screen.getByRole('button', { name: 'Alle Forecasts neu laden' })).toBeDisabled();
@@ -168,13 +168,13 @@ it('refreshes all forecasts without starting another AI analysis', async () => {
   await waitFor(() => expect(window.API.refreshPortfolioForecast).toHaveBeenCalledWith(
     expect.not.objectContaining({ targetAssetId: expect.anything() }), undefined, expect.any(String)));
   expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
-  expect(screen.getByRole('status')).toHaveTextContent('Alle Forecasts wurden aktualisiert');
+  expect(screen.getByRole('status')).toHaveTextContent('1 von 2 Forecasts aktualisiert. Nicht verfügbar: Crypto Asset.');
 });
 
 it('refreshes one asset forecast without starting a new AI asset analysis', async () => {
   const response = await window.API.analyzePortfolio({} as never);
   jest.mocked(window.API.analyzePortfolio).mockClear();
-  jest.mocked(window.API.refreshPortfolioForecast).mockResolvedValue(response);
+  jest.mocked(window.API.refreshPortfolioForecast).mockResolvedValue({ report: response, refreshedAssetIds: [1], unavailableAssetIds: [] });
   render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
   await open(); fillProfile();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });

@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { annualizedHistoricalVolatility, createYahooMarketForecastProvider, type YahooForecastClient } from './marketForecastProvider';
+import { annualizedHistoricalVolatility, createYahooMarketForecastProvider, cryptoHistoricalForecast, type YahooForecastClient } from './marketForecastProvider';
 import { validReturnForecast } from './portfolioForecastOptimization';
 import type { AnalysisPosition } from './portfolioAnalysis';
 
@@ -12,6 +12,11 @@ const history = Array.from({ length: 253 }, (_, index) => ({
   close: 500 * Math.exp(index * 0.0003 + Math.sin(index / 7) * 0.012),
   adjClose: 500 * Math.exp(index * 0.0003 + Math.sin(index / 7) * 0.012),
 }));
+const cryptoHistory = Array.from({ length: 5 * 365 + 1 }, (_, index) => ({
+  date: new Date(now - (5 * 365 - index) * day),
+  close: 20000 * Math.exp(index * 0.00025 + Math.sin(index / 19) * 0.035),
+  adjClose: 20000 * Math.exp(index * 0.00025 + Math.sin(index / 19) * 0.035),
+}));
 
 it('calculates annualized sample volatility from at least 180 daily adjusted closes', () => {
   const result = annualizedHistoricalVolatility(history)!;
@@ -19,6 +24,61 @@ it('calculates annualized sample volatility from at least 180 daily adjusted clo
   expect(result.volatilityLookbackDays).toBe(365);
   expect(result.annualVolatilityPercent).toBeGreaterThan(0);
   expect(annualizedHistoricalVolatility(history.slice(-180))).toBeNull();
+});
+
+it('builds a deterministic shrunk 12-month crypto forecast and scenario band from at least three years of daily prices', async () => {
+  const completedHistory = cryptoHistory.filter(row => row.date.getTime() < Date.UTC(2026, 9, 13));
+  const model = cryptoHistoricalForecast(completedHistory)!;
+  expect(model.bootstrapPaths).toBe(2000);
+  expect(model.volatilityLookbackDays).toBe(365);
+  expect(model.scenarioReturns.p10).toBeLessThanOrEqual(model.scenarioReturns.median);
+  expect(model.scenarioReturns.median).toBeLessThanOrEqual(model.scenarioReturns.p90);
+  expect(model.targetPrice / model.referencePrice - 1).toBeCloseTo(Math.max(-.5, Math.min(1, model.scenarioReturns.median * .25 / 100)), 10);
+  expect(cryptoHistoricalForecast(cryptoHistory.slice(-1095))).toBeNull();
+
+  const client: YahooForecastClient = {
+    quoteSummary: jest.fn(),
+    chart: jest.fn().mockResolvedValue({ quotes: cryptoHistory.map(row => ({ ...row, adjclose: row.adjClose })) }),
+  };
+  const provider = createYahooMarketForecastProvider(client, () => now);
+  const position: AnalysisPosition = { id: 31, name: 'Bitcoin', symbol: 'BTC', isin: '', type: 'Crypto',
+    shares: .01, price: model.referencePrice, currency: 'EUR', costBasis: 200, dividendsEarned: 0, realizedGainLoss: 0 };
+  const forecast = await provider(position);
+  expect(client.chart).toHaveBeenCalledWith('BTC-EUR', expect.objectContaining({ interval: '1d' }));
+  expect(client.quoteSummary).not.toHaveBeenCalled();
+  expect(forecast).toMatchObject({ key: '31', publisher: 'FinPal crypto history model', currency: 'EUR', scenarioReturns: model.scenarioReturns });
+  expect(forecast?.assumptions).toContain('75 % gegen 0 % geschrumpft');
+  expect(validReturnForecast(forecast! as never, now)).toBe(true);
+  expect((await provider(position))?.dataStatus).toBe('fresh-cache');
+  expect(client.chart).toHaveBeenCalledTimes(1);
+});
+
+it('persists the crypto model and uses it as a bounded stale fallback after a restart', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-crypto-forecast-cache-'));
+  const cacheFile = path.join(directory, 'forecast.json');
+  let clock = now;
+  const client: YahooForecastClient = {
+    quoteSummary: jest.fn(),
+    chart: jest.fn().mockResolvedValue({ quotes: cryptoHistory.map(row => ({ ...row, adjclose: row.adjClose })) }),
+  };
+  const position: AnalysisPosition = { id: 31, name: 'Bitcoin', symbol: 'BTC', isin: '', type: 'Crypto',
+    shares: .01, price: 32000, currency: 'EUR', costBasis: 200, dividendsEarned: 0, realizedGainLoss: 0 };
+  try {
+    const firstProvider = createYahooMarketForecastProvider(client, { cacheFile, now: () => clock });
+    const live = await firstProvider(position);
+    expect(live).toMatchObject({ dataStatus: 'live', publisher: 'FinPal crypto history model' });
+
+    clock += 25 * 60 * 60 * 1000;
+    const offlineClient: YahooForecastClient = {
+      quoteSummary: jest.fn(),
+      chart: jest.fn().mockRejectedValue(new Error('offline')),
+    };
+    const restartedProvider = createYahooMarketForecastProvider(offlineClient, { cacheFile, now: () => clock });
+    const fallback = await restartedProvider(position);
+    expect(fallback).toMatchObject({ dataStatus: 'stale-fallback', dataAgeHours: 25,
+      scenarioReturns: live?.scenarioReturns });
+    expect(fallback?.assumptions).toContain('Letzter gültiger Cache nach Abruffehler');
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
 it('combines a sourced analyst consensus and calculated volatility into a valid optimizer input', async () => {

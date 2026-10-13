@@ -170,9 +170,11 @@ it('refreshes all persisted forecasts and allocation without calling the AI anal
   const refreshed = await service.refreshMarketForecast(forecastRequest, undefined, 'refreshed-snapshot');
   expect(marketProvider).toHaveBeenLastCalledWith(forecastRequest.positions[0], { forceRefresh: true });
   expect(mockedFetch).not.toHaveBeenCalled();
-  expect(refreshed.recommendations[0]).toEqual(recommendation);
-  expect(refreshed.allocationPlan?.optimization?.forecasts[0].targetPrice).toBe(80);
-  expect(refreshed.sources).toContainEqual(refreshedForecast.forecastSources[0]);
+  expect(refreshed.refreshedAssetIds).toEqual([1]);
+  expect(refreshed.unavailableAssetIds).toEqual([]);
+  expect(refreshed.report.recommendations[0]).toEqual(recommendation);
+  expect(refreshed.report.allocationPlan?.optimization?.forecasts[0].targetPrice).toBe(80);
+  expect(refreshed.report.sources).toContainEqual(refreshedForecast.forecastSources[0]);
   expect(service.getLastResult()?.snapshot).toBe('refreshed-snapshot');
 });
 

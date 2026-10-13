@@ -155,6 +155,7 @@ async function buildAndCheck() {
         positions: allocationPositions,
         profile: { goal: 'growth', risk: 'high', horizonYears: 10, buyBudget: 1000 } },
         [returnForecastFixture('1', { targetPrice: 1100, referencePrice: 1000,
+          scenarioReturns: { p10: -45, median: 12, p90: 140 },
           publisher: 'SyntheticPublisher'.repeat(20), assumptions: 'Synthetic assumptions for layout verification. '.repeat(15) })]);
       const recommendations = allocationPositions.map(position => ({ assetId: position.id, action: 'Prüfen',
         rationale: 'Ausführliche KI-Begründung für die zusammengeführte Asset-Kachel. '.repeat(5),

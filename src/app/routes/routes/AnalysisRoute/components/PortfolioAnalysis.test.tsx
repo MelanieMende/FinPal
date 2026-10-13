@@ -436,7 +436,7 @@ it('opens ChatGPT usage management through the external browser bridge', async (
 });
 
 
-it('separates informational messages from actionable warnings, including the saved quote note', async () => {
+it('shows warnings first and opens informational messages only through their tab', async () => {
   const response = await window.API.analyzePortfolio({} as never);
   const quoteNote = 'Die Kurse aller Positionen besitzen einen quoteAsOf-Zeitpunkt; ein fehlender Kurszeitpunkt liegt nicht vor. Die US-Schlusskurse mit Status market-closed werden nicht allein wegen Börsenschluss oder Vorbörse beanstandet.';
   jest.mocked(window.API.analyzePortfolio).mockResolvedValue({ ...response,
@@ -446,17 +446,27 @@ it('separates informational messages from actionable warnings, including the sav
   render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
   await open(); fillProfile();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
-  const infos = screen.getAllByRole('region', { name: 'Infos' });
-  const warnings = screen.getAllByRole('region', { name: 'Warnungen' });
-  expect(infos[0]).toHaveClass('bg-sky-500/10');
-  expect(within(infos[0]).getByText(quoteNote)).toBeInTheDocument();
-  expect(within(infos[0]).getByText('Regulärer Schlusskurs')).toBeInTheDocument();
-  expect(within(infos[0]).queryByText('Bei einer Position fehlt quoteAsOf.')).not.toBeInTheDocument();
-  expect(warnings[0]).toHaveClass('bg-amber-500/10');
-  expect(within(warnings[0]).getByText('Bei einer Position fehlt quoteAsOf.')).toBeInTheDocument();
-  expect(within(warnings[0]).queryByText(quoteNote)).not.toBeInTheDocument();
-  expect(within(infos[1]).getByText('Einzelanalyse abgeschlossen')).toBeInTheDocument();
-  expect(within(warnings[1]).getByText('Kursdaten prüfen')).toBeInTheDocument();
+  const warningTabs = screen.getAllByRole('tab', { name: /Warnungen/ });
+  const infoTabs = screen.getAllByRole('tab', { name: /Infos/ });
+  expect(warningTabs[0]).toHaveAttribute('aria-selected', 'true');
+  expect(infoTabs[0]).toHaveAttribute('aria-selected', 'false');
+  expect(within(document.getElementById(warningTabs[0].getAttribute('aria-controls')!)!).getByText('Bei einer Position fehlt quoteAsOf.')).toBeInTheDocument();
+  expect(within(document.getElementById(warningTabs[1].getAttribute('aria-controls')!)!).getByText('Kursdaten prüfen')).toBeInTheDocument();
+  expect(screen.queryByText(quoteNote)).not.toBeInTheDocument();
+  expect(screen.queryByText('Regulärer Schlusskurs')).not.toBeInTheDocument();
+  expect(screen.queryByText('Einzelanalyse abgeschlossen')).not.toBeInTheDocument();
+
+  fireEvent.click(infoTabs[0]);
+  expect(infoTabs[0]).toHaveAttribute('aria-selected', 'true');
+  const summaryInfoPanel = document.getElementById(infoTabs[0].getAttribute('aria-controls')!)!;
+  expect(within(summaryInfoPanel).getByText(quoteNote)).toBeInTheDocument();
+  expect(within(summaryInfoPanel).getByText('Regulärer Schlusskurs')).toBeInTheDocument();
+  expect(within(summaryInfoPanel).queryByText('Bei einer Position fehlt quoteAsOf.')).not.toBeInTheDocument();
+
+  fireEvent.click(infoTabs[1]);
+  const recommendationInfoPanel = document.getElementById(infoTabs[1].getAttribute('aria-controls')!)!;
+  expect(within(recommendationInfoPanel).getByText('Einzelanalyse abgeschlossen')).toBeInTheDocument();
+  expect(within(recommendationInfoPanel).queryByText('Kursdaten prüfen')).not.toBeInTheDocument();
 });
 
 it('omits empty info and warning sections', async () => {
@@ -466,8 +476,7 @@ it('omits empty info and warning sections', async () => {
   await open(); fillProfile();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
   expect(screen.getByRole('region', { name: 'Analyseergebnis' })).toBeInTheDocument();
-  expect(screen.queryByRole('region', { name: 'Infos' })).not.toBeInTheDocument();
-  expect(screen.queryByRole('region', { name: 'Warnungen' })).not.toBeInTheDocument();
+  expect(screen.queryByRole('tablist', { name: 'Analysehinweise' })).not.toBeInTheDocument();
 });
 
 

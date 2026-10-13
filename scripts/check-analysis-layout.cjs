@@ -49,6 +49,13 @@ async function checkInChromium(html, output) {
           if (allocation && allocation.scrollWidth > allocation.clientWidth + 1) errors.push('Allocation exceeds its container');
           const forecasts = root.querySelector('[aria-label="Prognosebasierte Optimierung"]');
           if (forecasts && forecasts.scrollWidth > forecasts.clientWidth + 1) errors.push('Forecast inputs exceed their container');
+          root.querySelectorAll('[role="tablist"][aria-label="Analysehinweise"]').forEach(tablist => {
+            const tabs = [...tablist.querySelectorAll('[role="tab"]')];
+            if (tabs.length !== 2) errors.push('Analysis messages do not have two tabs');
+            if (tabs[0]?.textContent.includes('Warnungen') !== true || tabs[0]?.getAttribute('aria-selected') !== 'true')
+              errors.push('Warnings are not the initial analysis message tab');
+            if (tablist.scrollWidth > tablist.clientWidth + 1) errors.push('Analysis message tabs exceed their container');
+          });
           const profileFields = root.querySelector('[data-testid="analysis-profile-fields"]');
           if (profileFields) {
             const profileControls = [...profileFields.querySelectorAll('input,select')];
@@ -91,6 +98,9 @@ async function checkInChromium(html, output) {
           await scrollToSection('[aria-label="Steuerlicher Kontext je Depot"]');
           const depotScreenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'depot-tax-900' + suffix + '.png'), depotScreenshot.toPNG());
+          await scrollToSection('[aria-label="Analyseergebnis"]');
+          const messagesScreenshot = await window.webContents.capturePage();
+          fs.writeFileSync(path.join(output, 'analysis-messages-900' + suffix + '.png'), messagesScreenshot.toPNG());
           await window.webContents.executeJavaScript('scrollTo(0, 0)');
         }
         if (width === 900 && settingsFixture) {
@@ -138,7 +148,7 @@ async function buildAndCheck() {
         profile: { goal: 'growth', risk: 'high', horizonYears: 10, buyBudget: 1000 } },
         [returnForecastFixture('1', { targetPrice: 1100, referencePrice: 1000,
           publisher: 'SyntheticPublisher'.repeat(20), assumptions: 'Synthetic assumptions for layout verification. '.repeat(15) })]);
-      const result = { summary: 'Layout fixture', warnings: [], sources: [], recommendations: [], generatedAt: '2026-10-12T10:00:00Z',
+      const result = { summary: 'Layout fixture', infos: ['Zusätzliche Information für die Layoutprüfung.'], warnings: ['Warnung mit einem längeren Text für die Layoutprüfung.'], sources: [], recommendations: [], generatedAt: '2026-10-12T10:00:00Z',
         priceUpdatedAt: null, model: 'fixture', allocationPlan };
       const store = setupStore({ ...state, assets, transactions,
         appState: { ...state.appState, database: 'layout-fixture' },

@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { Button, Card, Dialog, H5, Icon, Intent, Spinner } from '@blueprintjs/core';
 import { useAppSelector, useAppDispatch } from '../../../../hooks';
 import { ANALYSIS_TIMEOUT_MS, buildAnalysisPositions, validateAnalysisRequest, type InvestmentProfile, type PortfolioAnalysisProgress } from '../../../../utils/portfolioAnalysis';
@@ -90,14 +90,42 @@ const legacyQuoteInfo = 'Die Kurse aller Positionen besitzen einen quoteAsOf-Zei
 function AnalysisMessages({ infos = [], warnings = [] }: { infos?: string[]; warnings?: string[] }) {
   const information = [...new Set([...infos, ...warnings.filter(message => message.trim() === legacyQuoteInfo)])];
   const alerts = warnings.filter(message => message.trim() !== legacyQuoteInfo);
-  return <div className="space-y-2">
-    {!!information.length && <section aria-label="Infos" className="rounded-lg border border-sky-400/30 bg-sky-500/10 p-3 text-xs text-sky-200">
-      <h6 className="m-0 mb-2 flex items-center gap-2 font-bold"><Icon icon="info-sign" aria-hidden="true" size={14} />Infos</h6>
-      <ul className="m-0 list-disc pl-5 space-y-1">{information.map((message, i) => <li key={i}>{message}</li>)}</ul>
-    </section>}
-    {!!alerts.length && <section aria-label="Warnungen" className="rounded-lg border border-amber-400/30 bg-amber-500/10 p-3 text-xs text-amber-200">
-      <h6 className="m-0 mb-2 flex items-center gap-2 font-bold"><Icon icon="warning-sign" aria-hidden="true" size={14} />Warnungen</h6>
-      <ul className="m-0 list-disc pl-5 space-y-1">{alerts.map((message, i) => <li key={i}>{message}</li>)}</ul>
+  const [activeTab, setActiveTab] = useState<'warnings' | 'infos'>('warnings');
+  const tabsId = useId().replace(/:/g, '');
+  const signature = `${alerts.join('\u0000')}\u0001${information.join('\u0000')}`;
+  useEffect(() => { setActiveTab('warnings'); }, [signature]);
+  if (!alerts.length && !information.length) return null;
+  const selectTab = (tab: 'warnings' | 'infos', focus = false) => {
+    setActiveTab(tab);
+    if (focus) requestAnimationFrame(() => document.getElementById(`${tabsId}-${tab}-tab`)?.focus());
+  };
+  const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    selectTab(event.key === 'ArrowLeft' || event.key === 'Home' ? 'warnings' : 'infos', true);
+  };
+  const tabClass = (tab: 'warnings' | 'infos') => `flex min-w-0 items-center justify-center gap-2 rounded-md px-3 py-2 text-xs font-bold transition-colors ${activeTab === tab
+    ? tab === 'warnings' ? 'bg-amber-500/15 text-amber-200' : 'bg-sky-500/15 text-sky-200'
+    : 'text-gray-400 hover:bg-white/5 hover:text-gray-200'}`;
+  return <div className="min-w-0 rounded-lg border border-white/10 bg-slate-950/20 p-1.5">
+    <div role="tablist" aria-label="Analysehinweise" className="grid min-w-0 grid-cols-2 gap-1">
+      <button id={`${tabsId}-warnings-tab`} type="button" role="tab" aria-selected={activeTab === 'warnings'} aria-controls={`${tabsId}-warnings-panel`}
+        tabIndex={activeTab === 'warnings' ? 0 : -1} className={tabClass('warnings')} onClick={() => selectTab('warnings')} onKeyDown={onTabKeyDown}>
+        <Icon icon="warning-sign" aria-hidden="true" size={14} /><span className="truncate">Warnungen</span><span className="rounded-full bg-black/20 px-1.5 py-0.5">{alerts.length}</span>
+      </button>
+      <button id={`${tabsId}-infos-tab`} type="button" role="tab" aria-selected={activeTab === 'infos'} aria-controls={`${tabsId}-infos-panel`}
+        tabIndex={activeTab === 'infos' ? 0 : -1} className={tabClass('infos')} onClick={() => selectTab('infos')} onKeyDown={onTabKeyDown}>
+        <Icon icon="info-sign" aria-hidden="true" size={14} /><span className="truncate">Infos</span><span className="rounded-full bg-black/20 px-1.5 py-0.5">{information.length}</span>
+      </button>
+    </div>
+    {activeTab === 'warnings' ? <section id={`${tabsId}-warnings-panel`} role="tabpanel" aria-labelledby={`${tabsId}-warnings-tab`}
+      className="mt-1 rounded-md border border-amber-400/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+      {alerts.length ? <ul className="m-0 list-disc space-y-1 pl-5">{alerts.map((message, i) => <li key={i}>{message}</li>)}</ul>
+        : <p className="m-0 text-gray-400">Keine Warnungen.</p>}
+    </section> : <section id={`${tabsId}-infos-panel`} role="tabpanel" aria-labelledby={`${tabsId}-infos-tab`}
+      className="mt-1 rounded-md border border-sky-400/30 bg-sky-500/10 p-3 text-xs text-sky-200">
+      {information.length ? <ul className="m-0 list-disc space-y-1 pl-5">{information.map((message, i) => <li key={i}>{message}</li>)}</ul>
+        : <p className="m-0 text-gray-400">Keine Infos.</p>}
     </section>}
   </div>;
 }

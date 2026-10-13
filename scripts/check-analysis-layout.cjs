@@ -5,7 +5,8 @@ const path = require('node:path');
 
 async function checkInChromium(html, output) {
   const { app, BrowserWindow } = require('electron');
-  const profile = path.join(output, 'profile');
+  const settingsFixture = html.includes('-settings.');
+  const profile = path.join(output, 'profile', `${process.pid}-${path.basename(html, '.html')}`);
   fs.mkdirSync(profile, { recursive: true });
   app.setPath('userData', profile);
   app.setPath('sessionData', profile);
@@ -37,7 +38,7 @@ async function checkInChromium(html, output) {
           });
           await document.fonts.ready;
           await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-          const root = document.querySelector('[data-testid="portfolio-analysis"]');
+          const root = document.querySelector('[data-testid="portfolio-analysis"]') || document.querySelector('[data-testid="ai-connection-settings"]');
           const fields = [...root.querySelectorAll('input,select,textarea,button')];
           const errors = [];
           if (main.getBoundingClientRect().right > innerWidth + 1) errors.push('Container exceeds viewport');
@@ -48,6 +49,19 @@ async function checkInChromium(html, output) {
           if (allocation && allocation.scrollWidth > allocation.clientWidth + 1) errors.push('Allocation exceeds its container');
           const forecasts = root.querySelector('[aria-label="Prognosebasierte Optimierung"]');
           if (forecasts && forecasts.scrollWidth > forecasts.clientWidth + 1) errors.push('Forecast inputs exceed their container');
+          const profileFields = root.querySelector('[data-testid="analysis-profile-fields"]');
+          if (profileFields) {
+            const profileControls = [...profileFields.querySelectorAll('input,select')];
+            const heights = profileControls.map(el => el.getBoundingClientRect().height);
+            if (Math.max(...heights) - Math.min(...heights) > 0.5) errors.push('Profile fields have inconsistent heights');
+            const profileSelect = profileFields.querySelector('select');
+            const profileInput = profileFields.querySelector('input');
+            const selectStyle = getComputedStyle(profileSelect);
+            const inputStyle = getComputedStyle(profileInput);
+            if (selectStyle.backgroundColor !== inputStyle.backgroundColor) errors.push('Select and input colors differ');
+            if (Number.parseFloat(selectStyle.paddingRight) < 36) errors.push('Select arrow has insufficient right padding');
+            if (selectStyle.appearance !== 'none') errors.push('Select still uses the native arrow');
+          }
           const rects = fields.map(el => ({ el, rect: el.getBoundingClientRect() }));
           for (const { el, rect } of rects) {
             const parent = el.closest('label') || el.parentElement;
@@ -64,7 +78,7 @@ async function checkInChromium(html, output) {
         })()`);
         console.log(JSON.stringify({ width, zoom, ...result }));
         if (result.errors.length) throw new Error('Responsive analysis layout failed');
-        if (width === 900) {
+        if (width === 900 && !settingsFixture) {
           const suffix = zoom === 1 ? '' : '-125';
           const screenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'analysis-900' + suffix + '.png'), screenshot.toPNG());
@@ -78,6 +92,11 @@ async function checkInChromium(html, output) {
           const depotScreenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'depot-tax-900' + suffix + '.png'), depotScreenshot.toPNG());
           await window.webContents.executeJavaScript('scrollTo(0, 0)');
+        }
+        if (width === 900 && settingsFixture) {
+          const suffix = zoom === 1 ? '' : '-125';
+          const screenshot = await window.webContents.capturePage();
+          fs.writeFileSync(path.join(output, 'ai-settings-900' + suffix + '.png'), screenshot.toPNG());
         }
       }
     }
@@ -100,6 +119,7 @@ async function buildAndCheck() {
     import { Provider } from 'react-redux';
     import { setupStore } from './src/app/store';
     import PortfolioAnalysis from './src/app/routes/routes/AnalysisRoute/components/PortfolioAnalysis';
+    import { AIConnectionSettings } from './src/app/routes/routes/AnalysisRoute/components/PortfolioAnalysis';
     import { readInvestorFacts, saveInvestorFacts } from './src/app/utils/investorFacts';
     import { buildForecastAllocation } from './src/app/utils/portfolioForecastOptimization';
     import { returnForecastFixture } from './src/testing/fixtures/returnForecast';
@@ -125,6 +145,15 @@ async function buildAndCheck() {
         portfolioAnalysis: { ...state.portfolioAnalysis, provider, result } });
       return renderToStaticMarkup(<Provider store={store}><PortfolioAnalysis standalone priceUpdatedAt={null} /></Provider>);
     }
+    export function renderSettings(provider) {
+      const chatGpt = { connected: true, activeClientId: 'layout-account', accounts: [{ clientId: 'layout-account', label: 'Very Long Connected Account Name For Layout Validation', connected: true }] };
+      return renderToStaticMarkup(<section style={{ width: 'min(560px, calc(100vw - 32px))' }}><AIConnectionSettings
+        provider={provider} setProvider={() => {}} busy={false} secureStorage={true} chatGpt={chatGpt}
+        models={[{ slug: 'layout-model', displayName: 'Very Long ChatGPT Model Display Name For Layout Validation' }]}
+        model="layout-model" selectModel={() => {}} signIn={() => {}} signingIn={true} signOut={() => {}}
+        cancelSignIn={() => {}} hasKey={true} apiKey="sk-layout-validation-placeholder" setApiKey={() => {}}
+        saveApiKey={() => {}} forgetApiKey={() => {}} openUsage={() => {}} /></section>);
+    }
   `, resolveDir: root, loader: 'jsx' }, outfile: bundle, bundle: true, packages: 'external', platform: 'node', format: 'cjs' });
   global.window = { API: {} };
   const storage = new Map();
@@ -140,6 +169,11 @@ async function buildAndCheck() {
     const run = spawnSync(require('electron'), [__filename, '--render', html, output], { encoding: 'utf8', windowsHide: true, env });
     process.stdout.write(run.stdout || '');
     if (run.status !== 0) throw new Error(run.stderr || `Layout process failed: ${run.status}`);
+    const settingsHtml = path.join(output, `${provider}-settings.html`);
+    fs.writeFileSync(settingsHtml, `<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body class="bp5-dark"><main style="padding:16px">${fixture.renderSettings(provider)}</main></body></html>`);
+    const settingsRun = spawnSync(require('electron'), [__filename, '--render', settingsHtml, output], { encoding: 'utf8', windowsHide: true, env });
+    process.stdout.write(settingsRun.stdout || '');
+    if (settingsRun.status !== 0) throw new Error(settingsRun.stderr || `Settings layout process failed: ${settingsRun.status}`);
   }
   if (process.argv.includes('--verify-guard')) {
     const html = path.join(output, 'unprotected.html');

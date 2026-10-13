@@ -39,6 +39,10 @@ async function open() {
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Portfolio analysieren' })); });
 }
 
+async function openAISettings() {
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'KI-Einstellungen' })); });
+}
+
 it('restores an executed 50 EUR sale as Done in both views and removes its proceeds from the remaining funding plan', async () => {
   const savedReport = await window.API.analyzePortfolio({} as never);
   savedReport.recommendations[0] = { ...savedReport.recommendations[0], action: 'Verkaufen', plannedAmountEUR: 50,
@@ -231,9 +235,23 @@ it('offers ChatGPT browser sign-in without asking for an API key', async () => {
   jest.mocked(window.API.getPortfolioAIStatus).mockResolvedValue({ hasApiKey: false, secureStorageAvailable: true, model: 'api-model', chatGpt: { connected: false, accounts: [] } });
   window.API.signInPortfolioChatGpt = jest.fn().mockResolvedValue(chatGpt);
   render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } }); await open();
+  expect(within(screen.getByRole('region', { name: 'KI-Zugang Status' })).getByText('Nicht verbunden')).toBeInTheDocument();
   expect(screen.queryByLabelText('OpenAI-API-Schlüssel')).not.toBeInTheDocument();
+  await openAISettings();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Continue with ChatGPT' })); });
   expect(window.API.signInPortfolioChatGpt).toHaveBeenCalled();
+});
+
+it('keeps the AI access compact until its settings dialog is opened', async () => {
+  render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
+  await open();
+  const status = within(screen.getByRole('region', { name: 'KI-Zugang Status' }));
+  await waitFor(() => expect(status.getByText('Verbunden')).toBeInTheDocument());
+  expect(status.getByText(/ChatGPT.*Test account/)).toBeInTheDocument();
+  expect(screen.queryByLabelText('ChatGPT-Modell')).not.toBeInTheDocument();
+  await openAISettings();
+  expect(screen.getByRole('dialog', { name: 'KI-Zugang einrichten' })).toBeInTheDocument();
+  expect(screen.getByLabelText('ChatGPT-Modell')).toHaveValue('account-model');
 });
 
 
@@ -314,12 +332,14 @@ it.each(['tab change', 'app restart'] as const)('remembers an explicitly selecte
   jest.mocked(window.API.getPortfolioChatGptModels).mockResolvedValue(available);
   const first = render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
   await open();
+  await openAISettings();
   fireEvent.change(screen.getByLabelText('ChatGPT-Modell'), { target: { value: 'chosen-model' } });
   expect(localStorage.getItem(ANALYSIS_MODEL_KEY)).toBe('chosen-model');
   expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
   first.unmount();
   const second = render(<PortfolioAnalysis priceUpdatedAt={null} />, mode === 'tab change' ? { store: first.store } : { preloadedState: { assets } });
   if (mode === 'app restart') await open();
+  await openAISettings();
   await waitFor(() => expect(screen.getByLabelText('ChatGPT-Modell')).toHaveValue('chosen-model'));
   fillProfile();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
@@ -331,6 +351,7 @@ it('keeps the saved preference when it is temporarily unavailable and restores i
   localStorage.setItem(ANALYSIS_MODEL_KEY, 'chosen-model');
   const first = render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
   await open();
+  await openAISettings();
   expect(screen.getByLabelText('ChatGPT-Modell')).toHaveValue('account-model');
   expect(localStorage.getItem(ANALYSIS_MODEL_KEY)).toBe('chosen-model');
   first.unmount();
@@ -339,6 +360,7 @@ it('keeps the saved preference when it is temporarily unavailable and restores i
     { slug: 'chosen-model', displayName: 'Chosen model' },
   ]);
   await act(async () => { render(<PortfolioAnalysis priceUpdatedAt={null} />, { store: first.store }); });
+  await openAISettings();
   expect(screen.getByLabelText('ChatGPT-Modell')).toHaveValue('chosen-model');
 });
 
@@ -358,6 +380,7 @@ it('restores the report and asset indicators on app startup without starting a n
   expect(screen.queryByLabelText('Laufende Analyse')).not.toBeInTheDocument();
   expect(screen.queryByText(/haben sich seit dieser Analyse/)).not.toBeInTheDocument();
   expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
+  await openAISettings();
   expect(screen.getByLabelText('ChatGPT-Modell')).toHaveValue('account-model');
 });
 
@@ -407,6 +430,7 @@ it('opens ChatGPT usage management through the external browser bridge', async (
   window.API.openPortfolioAnalysisSource = jest.fn().mockResolvedValue(undefined);
   render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
   await open();
+  await openAISettings();
   fireEvent.click(screen.getByRole('link', { name: 'ChatGPT-Nutzung verwalten' }));
   expect(window.API.openPortfolioAnalysisSource).toHaveBeenCalledWith('https://chatgpt.com/settings/usage');
 });

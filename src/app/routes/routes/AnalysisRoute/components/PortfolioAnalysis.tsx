@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Button, Card, H5, Icon, Intent, Spinner } from '@blueprintjs/core';
+import { Button, Card, Dialog, H5, Icon, Intent, Spinner } from '@blueprintjs/core';
 import { useAppSelector, useAppDispatch } from '../../../../hooks';
 import { ANALYSIS_TIMEOUT_MS, buildAnalysisPositions, validateAnalysisRequest, type InvestmentProfile, type PortfolioAnalysisProgress } from '../../../../utils/portfolioAnalysis';
 import type { ChatGptModel, ChatGptStatus } from '../../../../utils/chatGptAuth';
@@ -37,6 +37,53 @@ const fundingLabels = { 'no-trades': 'Keine Käufe oder Verkäufe vorgeschlagen'
 const emptyChatGpt: ChatGptStatus = { connected: false, accounts: [] };
 const actionOrder = { Prüfen: 0, Verkaufen: 1, Kaufen: 2, Halten: 3 };
 const compareRecommendations = (a: { action: keyof typeof actionOrder }, b: { action: keyof typeof actionOrder }) => actionOrder[a.action] - actionOrder[b.action];
+
+type AIConnectionSettingsProps = {
+  provider: 'chatgpt' | 'api'; setProvider: (provider: 'chatgpt' | 'api') => void;
+  busy: boolean; secureStorage: boolean; chatGpt: ChatGptStatus; models: ChatGptModel[]; model: string;
+  selectModel: (model: string) => void; signIn: (clientId?: string) => void; signingIn: boolean;
+  signOut: () => void; cancelSignIn: () => void; hasKey: boolean; apiKey: string; setApiKey: (value: string) => void;
+  saveApiKey: () => void; forgetApiKey: () => void; openUsage: (event: React.MouseEvent<HTMLAnchorElement>) => void;
+};
+
+export function AIConnectionSettings(props: AIConnectionSettingsProps) {
+  const { provider, setProvider, busy, secureStorage, chatGpt, models, model, selectModel, signIn, signingIn,
+    signOut, cancelSignIn, hasKey, apiKey, setApiKey, saveApiKey, forgetApiKey, openUsage } = props;
+  return <div data-testid="ai-connection-settings" className="min-w-0 space-y-4 p-4">
+    <label className="block text-xs text-gray-300">KI-Zugang
+      <select className={`${inputClass} mt-1`} style={{ colorScheme: 'dark' }} value={provider} disabled={busy} onChange={e => setProvider(e.target.value as 'chatgpt' | 'api')}>
+        <option value="chatgpt">ChatGPT Plus / Pro</option><option value="api">OpenAI API (separat kostenpflichtig)</option>
+      </select>
+    </label>
+    {provider === 'chatgpt' ? <div className="min-w-0 space-y-3">
+      <p className="text-xs text-gray-400 m-0">Die Analyse nutzt dein bestehendes ChatGPT-Kontingent. Anmeldung und Freigabe erfolgen im Browser. Webrecherche hängt von Modell und Kontofreigabe ab.</p>
+      <p className="text-xs text-gray-400 m-0">Für FinPal kann ein eigenes Nutzungslimit gelten. <a href="https://chatgpt.com/settings/usage" onClick={openUsage} target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline">ChatGPT-Nutzung verwalten</a></p>
+      {chatGpt.connected && <p className="m-0 text-sm text-emerald-300">Verbunden: {chatGpt.accounts.find(a => a.clientId === chatGpt.activeClientId)?.label}</p>}
+      <div className="flex flex-wrap gap-2">
+        <Button disabled={busy || !secureStorage} onClick={() => signIn()}>{chatGpt.connected ? 'Anderes ChatGPT-Konto hinzufügen' : 'Continue with ChatGPT'}</Button>
+        {chatGpt.accounts.map(account => <Button key={account.clientId} disabled={busy || !secureStorage} onClick={() => signIn(account.clientId)}>Anmelden: {account.label}</Button>)}
+        {chatGpt.connected && <Button disabled={busy} onClick={signOut}>ChatGPT abmelden</Button>}
+        {signingIn && <Button onClick={cancelSignIn}>Anmeldung abbrechen</Button>}
+      </div>
+      {chatGpt.connected && <label className="block text-xs text-gray-300">ChatGPT-Modell
+        <select className={`${inputClass} mt-1`} style={{ colorScheme: 'dark' }} value={model} disabled={busy} onChange={e => selectModel(e.target.value)}>
+          {!models.length && <option value="">Keine Modelle verfügbar</option>}
+          {models.map(m => <option key={m.slug} value={m.slug}>{m.displayName}</option>)}
+        </select>
+      </label>}
+    </div> : <div className="min-w-0 space-y-3">
+      <p className="text-xs text-gray-400 m-0">API-Nutzung und Webrecherche werden separat bei OpenAI abgerechnet. Der Schlüssel wird lokal verschlüsselt gespeichert.</p>
+      {hasKey && <p className="m-0 text-xs text-emerald-300">API-Schlüssel gespeichert.</p>}
+      <label className="block text-xs text-gray-300">OpenAI-API-Schlüssel
+        <input type="password" autoComplete="off" className={`${inputClass} mt-1`} value={apiKey} disabled={busy} onChange={e => setApiKey(e.target.value)} placeholder="sk-…" />
+      </label>
+      <div className="flex flex-wrap gap-2">
+        <Button disabled={busy || !secureStorage || !apiKey.trim()} onClick={saveApiKey}>Schlüssel speichern</Button>
+        {hasKey && <Button disabled={busy} onClick={forgetApiKey}>Schlüssel entfernen</Button>}
+      </div>
+    </div>}
+  </div>;
+}
 
 // Reclassify this known neutral message in older saved analyses; keep other warnings intact.
 const legacyQuoteInfo = 'Die Kurse aller Positionen besitzen einen quoteAsOf-Zeitpunkt; ein fehlender Kurszeitpunkt liegt nicht vor. Die US-Schlusskurse mit Status market-closed werden nicht allein wegen Börsenschluss oder Vorbörse beanstandet.';
@@ -111,6 +158,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
   const [models, setModels] = useState<ChatGptModel[]>([]);
   const [model, setModel] = useState(() => readModel() || analysisState.model);
   const [apiKey, setApiKey] = useState('');
+  const [connectionSettingsOpen, setConnectionSettingsOpen] = useState(false);
   const [hasKey, setHasKey] = useState(false);
   const [secureStorage, setSecureStorage] = useState(false);
   const [actionBusy, setBusy] = useState(false);
@@ -135,6 +183,9 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
     comparableSnapshot = JSON.stringify(saved);
   } catch { /* Legacy snapshots may not be JSON. */ }
   const stale = !!result && comparableSnapshot !== snapshot;
+  const aiConnected = provider === 'chatgpt' ? chatGpt.connected : hasKey;
+  const activeAccount = chatGpt.accounts.find(a => a.clientId === chatGpt.activeClientId)?.label;
+  const providerLabel = provider === 'chatgpt' ? 'ChatGPT' : 'OpenAI API';
   const hasExecution = result?.recommendations.some(rec => executions[rec.assetId]?.status !== 'open' && executions[rec.assetId]);
   const fundingCheck = result && hasExecution ? checkPortfolioFunding({
     investorContext,
@@ -248,46 +299,29 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
       </div>}
       {open && <div id="portfolio-analysis-content" className="mt-5 space-y-4">
         <p className="text-xs text-gray-400">Analysiert werden alle {positions.length} gehaltenen Positionen, unabhängig vom aktiven Asset-Type-Filter. Zusätzlich werden passende Assets außerhalb deines Portfolios recherchiert. Empfehlungen sind eine Entscheidungshilfe und führen keine Trades aus.</p>
-        <label className="block text-xs text-gray-300">KI-Zugang
-          <select className={`${inputClass} mt-1`} style={{ colorScheme: 'dark' }} value={provider} disabled={busy} onChange={e => setProvider(e.target.value as 'chatgpt' | 'api')}>
-            <option value="chatgpt">ChatGPT Plus / Pro</option><option value="api">OpenAI API (separat kostenpflichtig)</option>
-          </select>
-        </label>
-        {provider === 'chatgpt' ? <div className="rounded-lg border border-white/10 p-3 space-y-3">
-          <p className="text-xs text-gray-400 m-0">Die Analyse nutzt dein bestehendes ChatGPT-Kontingent. Anmeldung und Freigabe erfolgen im Browser. Webrecherche hängt von Modell und Kontofreigabe ab.</p>
-          <p className="text-xs text-gray-400 m-0">Für FinPal kann ein eigenes Nutzungslimit gelten. <a href="https://chatgpt.com/settings/usage" onClick={e => openSource(e, 'https://chatgpt.com/settings/usage')} target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline">ChatGPT-Nutzung verwalten</a></p>
-          {chatGpt.connected && <p className="text-sm text-emerald-300">Verbunden: {chatGpt.accounts.find(a => a.clientId === chatGpt.activeClientId)?.label}</p>}
-          <div className="flex flex-wrap gap-2">
-            <Button disabled={busy || !secureStorage} onClick={() => signIn()}>{chatGpt.connected ? 'Anderes ChatGPT-Konto hinzufügen' : 'Continue with ChatGPT'}</Button>
-            {chatGpt.accounts.map(account => <Button key={account.clientId} disabled={busy || !secureStorage} onClick={() => signIn(account.clientId)}>Anmelden: {account.label}</Button>)}
-            {chatGpt.connected && <Button disabled={busy} onClick={() => void run(async () => {
+        <section aria-label="KI-Zugang Status" className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-slate-950/30 px-3 py-2">
+          <div className="min-w-0">
+            <p className={`m-0 flex items-center gap-2 text-sm font-bold ${aiConnected ? 'text-emerald-300' : 'text-gray-300'}`}>
+              <span aria-hidden="true" className={`h-2.5 w-2.5 shrink-0 rounded-full ${aiConnected ? 'bg-emerald-400' : 'bg-gray-500'}`} />
+              {aiConnected ? 'Verbunden' : 'Nicht verbunden'}
+            </p>
+            <p className="m-0 ml-[18px] truncate text-xs text-gray-400">{providerLabel}{provider === 'chatgpt' && activeAccount ? ` · ${activeAccount}` : ''}</p>
+          </div>
+          <Button small icon="cog" onClick={() => setConnectionSettingsOpen(true)}>KI-Einstellungen</Button>
+        </section>
+        <Dialog isOpen={connectionSettingsOpen} onClose={() => setConnectionSettingsOpen(false)} title="KI-Zugang einrichten" className="bp5-dark" style={{ width: 'min(560px, calc(100vw - 32px))' }}>
+          <AIConnectionSettings provider={provider} setProvider={setProvider} busy={busy} secureStorage={secureStorage}
+            chatGpt={chatGpt} models={models} model={model} selectModel={selectModel} signIn={signIn} signingIn={signingIn}
+            signOut={() => void run(async () => {
               const logout = await window.API.signOutPortfolioChatGpt(); await refreshStatus();
-              await window.API.forgetLastPortfolioAnalysis?.();
-              dispatch(clearAnalysisResult());
+              await window.API.forgetLastPortfolioAnalysis?.(); dispatch(clearAnalysisResult());
               if (!logout.revoked) setNotice('Lokal abgemeldet. Der Widerruf bei OpenAI konnte nicht bestätigt werden; du kannst FinPal in den ChatGPT-Einstellungen trennen.');
-            })}>ChatGPT abmelden</Button>}
-            {signingIn && <Button onClick={() => { void window.API.cancelPortfolioChatGptSignIn(); }}>Anmeldung abbrechen</Button>}
-          </div>
-          {chatGpt.connected && <label className="block text-xs text-gray-300">ChatGPT-Modell
-            <select className={`${inputClass} mt-1`} style={{ colorScheme: 'dark' }} value={model} disabled={busy} onChange={e => selectModel(e.target.value)}>
-              {!models.length && <option value="">Keine Modelle verfügbar</option>}
-              {models.map(m => <option key={m.slug} value={m.slug}>{m.displayName}</option>)}
-            </select>
-          </label>}
-        </div> : <div className="rounded-lg border border-white/10 p-3 space-y-3">
-          <p className="text-xs text-gray-400 m-0">API-Nutzung und Webrecherche werden separat bei OpenAI abgerechnet. Der Schlüssel wird lokal verschlüsselt gespeichert.</p>
-          {hasKey && <p className="text-xs text-emerald-300">API-Schlüssel gespeichert.</p>}
-          <label className="block text-xs text-gray-300">OpenAI-API-Schlüssel
-            <input type="password" autoComplete="off" className={`${inputClass} mt-1`} value={apiKey} disabled={busy} onChange={e => setApiKey(e.target.value)} placeholder="sk-…" />
-          </label>
-          <div className="flex flex-wrap gap-2">
-            <Button disabled={busy || !secureStorage || !apiKey.trim()} onClick={() => void run(async () => {
-              await window.API.savePortfolioAIKey(apiKey); setApiKey(''); await refreshStatus();
-            })}>Schlüssel speichern</Button>
-            {hasKey && <Button disabled={busy} onClick={() => void run(async () => { await window.API.forgetPortfolioAIKey(); setApiKey(''); await refreshStatus(); })}>Schlüssel entfernen</Button>}
-          </div>
-        </div>}
-        <div className="analysis-fields">
+            })} cancelSignIn={() => { void window.API.cancelPortfolioChatGptSignIn(); }} hasKey={hasKey} apiKey={apiKey} setApiKey={setApiKey}
+            saveApiKey={() => void run(async () => { await window.API.savePortfolioAIKey(apiKey); setApiKey(''); await refreshStatus(); })}
+            forgetApiKey={() => void run(async () => { await window.API.forgetPortfolioAIKey(); setApiKey(''); await refreshStatus(); })}
+            openUsage={e => openSource(e, 'https://chatgpt.com/settings/usage')} />
+        </Dialog>
+        <div className="analysis-fields" data-testid="analysis-profile-fields">
           <label className="text-xs text-gray-300">Anlageziel
             <select className={`${inputClass} mt-1`} style={{ colorScheme: 'dark' }} value={profile.goal} disabled={busy} onChange={e => updateProfile('goal', e.target.value)}>
               <option value="">Bitte auswählen</option><option value="growth">Vermögensaufbau</option><option value="income">Laufende Erträge</option><option value="preservation">Kapitalerhalt</option>
@@ -308,7 +342,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
         <p className="text-xs text-gray-400">Beim Start werden Namen, ISINs, Bestände, Kurse, Einstandswerte, Gewinne und Dividenden sowie dein Anlageprofil, gespeicherte Verwahr- und Steuerangaben, Zielgewichte und abgeleitete Anschaffungsdaten an OpenAI übertragen. Kommentare und Zugangsdaten werden nicht übertragen. Kurse zuletzt aktualisiert: {formatSyncTime(priceUpdatedAt) ?? 'unbekannt'}.</p>
         <details className="text-xs text-gray-400">
           <summary className="cursor-pointer">Kurswährungen und EUR-Umrechnung</summary>
-          <p>Kurswährungen zeigen keine vollständige Währungsrisiko-Allokation. Für Fonds und ETFs fehlen Angaben zu den enthaltenen Anlagen und Absicherungen.</p>
+          <p>Kurswährungen zeigen keine vollständige Währungsrisiko-Allokation. Für Fonds und ETFs sind Angaben zu den enthaltenen Anlagen und Absicherungen erforderlich; die Analyse recherchiert diese gesondert.</p>
           <div className="overflow-x-auto"><table className="w-full text-left"><thead><tr><th>Position</th><th>Originalkurs</th><th>EUR je Währungseinheit</th><th>Quelle / Kurszeit</th><th>FX-Stand / Umrechnung</th></tr></thead>
             <tbody>{positions.map(position => <tr key={position.id} className="border-t border-white/10">
               <td className="py-2 pr-3">{position.name}</td>

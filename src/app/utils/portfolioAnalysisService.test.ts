@@ -475,6 +475,95 @@ it('passes Arbor filing discovery hints to research before analyzing the positio
   expect(mockedFetch).toHaveBeenCalledTimes(2);
 });
 
+it('researches the exact Treasury bond and retains its valuation evidence without forcing an action', async () => {
+  const bondRequest: PortfolioAnalysisRequest = { ...request, positions: [{ ...request.positions[0],
+    name: 'US Treasury', type: 'Bond', isin: 'US912810SQ22', symbol: 'A281P1', price: 46.555034558108765,
+    quote: { originalPrice: 57.95, originalCurrency: 'USD', valuationCurrency: 'EUR', source: 'boerse-frankfurt',
+      quoteAsOf: '2026-10-12T10:21:13.000Z', fetchedAt: '2026-10-12T10:40:43.499Z', exchange: 'XFRA', tradedInPercent: true,
+      unitFactor: 0.9, fxRateToEUR: 0.8926284068278931, fxSource: 'ExchangeRate-API', fxAsOf: '2026-10-12T00:02:32.000Z',
+      fxFetchedAt: '2026-10-12T10:39:55.718Z', convertedAt: '2026-10-12T10:40:43.499Z' },
+    bondHolding: { nominal: 180, currency: 'USD', source: 'user-confirmed', purchaseAccruedInterestEUR: -0.17,
+      transactions: [{ id: 112, date: '2025-11-03', nominal: 180, accruedInterestEUR: -0.17 }] },
+  }] };
+  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research)))
+    .mockResolvedValueOnce(new Response(JSON.stringify(structured)));
+  const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
+  const result = await service.analyze(bondRequest);
+  const researchBody = JSON.parse(mockedFetch.mock.calls[0][1].body);
+  const security = JSON.parse(researchBody.input[0].content).securities[0];
+  expect(security.discoveryHints.issuer).toContain('912810SQ2');
+  expect(security.discoveryHints.sourceUrls).toContain('https://api.boerse-frankfurt.de/v1/data/price_information/single?isin=US912810SQ22');
+  expect(security.discoveryHints.sourceUrls.some((url: string) => url.includes('boerse-stuttgart.de'))).toBe(true);
+  expect(security).not.toHaveProperty('bondHolding');
+  expect(security).not.toHaveProperty('price');
+  expect(security).not.toHaveProperty('shares');
+  expect(researchBody.instructions).toContain('nicht zu einem scheinbar aktuellen Datensatz kombinieren');
+  expect(researchBody.instructions).toContain('Absicherungsziel und verbleibende Risiken');
+  const analysisBody = JSON.parse(mockedFetch.mock.calls[1][1].body);
+  const position = JSON.parse(analysisBody.input[0].content).portfolio.positions[0];
+  expect(position.quote).toEqual(bondRequest.positions[0].quote);
+  expect(position.bondHolding.nominal).toBe(180);
+  expect(analysisBody.instructions).toContain('allein erzwingen kein Prüfen');
+  expect(analysisBody.instructions).toContain('widersprüchlichen Bestandseinheiten weiterhin Prüfen');
+  expect(analysisBody.instructions).toContain('nicht automatisch fehlende Webbelege');
+  expect(result.warnings).not.toContain('Die wirtschaftliche Währungsrisiko-Allokation ist nicht hinterlegt. Kurswährungen bilden insbesondere bei Fonds und ETFs keine belastbare Risiko-Allokation ab.');
+  expect(result.infos.some(info => info.includes('Lokale Währungsangaben'))).toBe(true);
+  expect(result.recommendations[0].action).toBe('Halten');
+});
+
+it('runs one targeted forecast recovery, merges citations and caches the completed research', async () => {
+  const first = { ...research, output: [research.output[0], { type: 'message', content: [{ type: 'output_text',
+    text: 'Kursziel gefunden; Volatilität fehlt.\nFORECAST_GAPS: [1, 99]',
+    annotations: [{ type: 'url_citation', title: 'Emittent', url: 'https://example.com/report' }] }] }] };
+  const recovery = { ...research, output: [research.output[0], { type: 'message', content: [{ type: 'output_text',
+    text: 'Belegte Risikodaten; Kursziel weiterhin ungeklärt.\nFORECAST_GAPS: [1]',
+    annotations: [{ type: 'url_citation', title: 'Risikodaten', url: 'https://example.com/risk' }] }] }] };
+  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(first)))
+    .mockResolvedValueOnce(new Response(JSON.stringify(recovery)))
+    .mockResolvedValueOnce(new Response(JSON.stringify(structured)))
+    .mockResolvedValueOnce(new Response(JSON.stringify(structured)));
+  const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
+  const result = await service.analyze(request);
+  expect(mockedFetch).toHaveBeenCalledTimes(3);
+  const recoveryBody = JSON.parse(mockedFetch.mock.calls[1][1].body);
+  const recoveryInput = JSON.parse(recoveryBody.input[0].content);
+  expect(recoveryInput.securities.map((s: { id: number }) => s.id)).toEqual([1]);
+  expect(recoveryInput).not.toHaveProperty('profile');
+  expect(recoveryInput.securities[0]).not.toHaveProperty('shares');
+  expect(recoveryInput.forecastRequirements.minimumVolatilityLookbackDays).toBe(180);
+  const analysisBody = JSON.parse(mockedFetch.mock.calls[2][1].body);
+  const input = JSON.parse(analysisBody.input[0].content);
+  expect(input.research).toContain('Belegte Risikodaten');
+  expect(input.sources).toEqual([{ index: 0, title: 'Emittent', url: 'https://example.com/report' },
+    { index: 1, title: 'Risikodaten', url: 'https://example.com/risk' }]);
+  expect(result.allocationPlan.status).toBe('blocked');
+  expect(result.allocationPlan.optimization.expectedGainEUR).toBeNull();
+  await service.analyze(request);
+  expect(mockedFetch).toHaveBeenCalledTimes(4);
+});
+
+it('ignores uncited forecast recovery and keeps the strict optimization blocked', async () => {
+  const first = { ...research, output: [research.output[0], { type: 'message', content: [{ type: 'output_text',
+    text: 'Recherche\nFORECAST_GAPS: [1]', annotations: [{ type: 'url_citation', title: 'Emittent', url: 'https://example.com/report' }] }] }] };
+  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(first)))
+    .mockResolvedValueOnce(structuredResponse({ ignored: 'Unbelegte Prognose' }))
+    .mockResolvedValueOnce(new Response(JSON.stringify(structured)))
+    .mockResolvedValueOnce(new Response(JSON.stringify(first)))
+    .mockRejectedValueOnce(new Error('Network unavailable'))
+    .mockResolvedValueOnce(new Response(JSON.stringify(structured)));
+  const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
+  const result = await service.analyze(request);
+  expect(result.allocationPlan.status).toBe('blocked');
+  expect(result.sources).toHaveLength(1);
+  const input = JSON.parse(JSON.parse(mockedFetch.mock.calls[2][1].body).input[0].content);
+  expect(input.research).not.toContain('Unbelegte Prognose');
+  const retried = await service.analyze(request);
+  expect(mockedFetch).toHaveBeenCalledTimes(6);
+  expect(retried.allocationPlan.status).toBe('blocked');
+  const retriedInput = JSON.parse(JSON.parse(mockedFetch.mock.calls[5][1].body).input[0].content);
+  expect(retriedInput.research).toContain('konnte nicht abgeschlossen werden');
+});
+
 it('reports activity when stream bytes arrive', async () => {
   const activity = jest.fn();
   await readAnalysisStream(sse(research), activity);

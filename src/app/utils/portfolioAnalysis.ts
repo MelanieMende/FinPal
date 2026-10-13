@@ -24,7 +24,7 @@ export interface AnalysisPosition {
   currency: string;
   quote?: QuoteMetadata;
   bondHolding?: import('./bondHoldings').BondHolding;
-  currencyExposure?: 'unknown';
+  currencyExposure?: 'unknown' | { kind: 'direct-nominal'; currency: string; source: 'user-confirmed' };
   costBasis: number | null;
   dividendsEarned: number;
   realizedGainLoss: number | null;
@@ -98,7 +98,10 @@ export function buildAnalysisPositions(assets: Asset[]): AnalysisPosition[] {
       price: asset.quote?.valuationCurrency === 'unknown' ? null : price !== null && price > 0 ? price : null,
       // Do not assume that every unlabelled quote is in EUR.
       currency: asset.quote?.valuationCurrency || (asset.currencySymbol === '€' ? 'EUR' : asset.currencySymbol || 'unknown'),
-      quote: asset.quote, ...(asset.bondHolding ? { bondHolding: asset.bondHolding } : {}), currencyExposure: 'unknown', costBasis: invest === null ? null : Math.abs(invest),
+      quote: asset.quote, ...(asset.bondHolding ? { bondHolding: asset.bondHolding } : {}),
+      currencyExposure: asset.type === 'Bond' && asset.bondHolding?.source === 'user-confirmed'
+        ? { kind: 'direct-nominal' as const, currency: asset.bondHolding.currency, source: 'user-confirmed' as const } : 'unknown',
+      costBasis: invest === null ? null : Math.abs(invest),
       dividendsEarned: dividends, realizedGainLoss: flow === null || invest === null ? null : flow - invest + dividends,
     };
   });
@@ -136,6 +139,11 @@ export function validateAnalysisRequest(request: PortfolioAnalysisRequest): void
         || !Number.isFinite(t.nominal) || !Number.isFinite(t.accruedInterestEUR))
       || Math.abs(holding.transactions.reduce((sum, t) => sum + t.nominal, 0) - holding.nominal) > 1e-8)) {
       throw new Error('Die bestätigten Anleihedaten sind ungültig.');
+    }
+    const exposure = position.currencyExposure;
+    if (exposure !== undefined && exposure !== 'unknown' && (!exposure || exposure.kind !== 'direct-nominal'
+      || exposure.source !== 'user-confirmed' || position.type !== 'Bond' || !holding || exposure.currency !== holding.currency)) {
+      throw new Error('Die Angaben zur direkten Nominalwährung sind ungültig.');
     }
     if (position.quote && (!validQuote(position.quote) || position.currency !== position.quote.valuationCurrency
       || (position.quote.valuationCurrency === 'unknown' && position.price !== null)

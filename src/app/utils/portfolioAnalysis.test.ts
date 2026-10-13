@@ -19,6 +19,26 @@ it('includes only held assets and keeps realized gains separate from their curre
   expect(positions[1]).toMatchObject({ price: null, costBasis: null, realizedGainLoss: null });
 });
 
+it('uses confirmed bond nominal currency without inferring exposure from listing currency or ISIN', () => {
+  const holding = { nominal: 180, currency: 'USD', source: 'user-confirmed' as const, purchaseAccruedInterestEUR: -0.17,
+    transactions: [{ id: 112, date: '2025-11-03', nominal: 180, accruedInterestEUR: -0.17 }] };
+  const positions = buildAnalysisPositions([
+    { ID: 30, name: 'Treasury', type: 'Bond', isin: 'US912810SQ22', current_shares: 2, price: 46.55, currencySymbol: '€', bondHolding: holding },
+    { ID: 31, name: 'ETF USD', type: 'ETF', isin: 'US0000000000', current_shares: 1, price: 50, currencySymbol: 'USD' },
+    { ID: 32, name: 'Stock', type: 'Stock', current_shares: 1, price: 50, currencySymbol: 'USD' },
+    { ID: 33, name: 'Bond without confirmation', type: 'Bond', current_shares: 1, price: 50, currencySymbol: 'USD' },
+  ] as Asset[]);
+  expect(positions[0].currencyExposure).toEqual({ kind: 'direct-nominal', currency: 'USD', source: 'user-confirmed' });
+  expect(positions.slice(1).map(p => p.currencyExposure)).toEqual(['unknown', 'unknown', 'unknown']);
+  const request: PortfolioAnalysisRequest = { provider: 'api', priceUpdatedAt: null, positions,
+    profile: { goal: 'growth', risk: 'medium', horizonYears: 10, buyBudget: 0 } };
+  expect(() => validateAnalysisRequest(request)).not.toThrow();
+  expect(() => validateAnalysisRequest({ ...request, positions: [{ ...positions[0],
+    currencyExposure: { kind: 'direct-nominal', currency: 'EUR', source: 'user-confirmed' } }] })).toThrow(/Nominalwährung/);
+  expect(() => validateAnalysisRequest({ ...request, positions: [{ ...positions[1],
+    currencyExposure: positions[0].currencyExposure }] })).toThrow(/Nominalwährung/);
+});
+
 it('rejects a missing risk profile, duplicate assets and invalid amounts before transmitting data', () => {
   const request: PortfolioAnalysisRequest = {
     provider: 'chatgpt', model: 'account-model', priceUpdatedAt: null,

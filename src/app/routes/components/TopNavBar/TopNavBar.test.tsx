@@ -9,6 +9,7 @@ import { Provider } from 'react-redux';
 import { prepareAutoBatched } from '@reduxjs/toolkit';
 
 describe('TopNavBar component', () => {
+  beforeEach(() => { window.innerWidth = 1280; });
 
   it('places Analyse between Dashboard and Assets and opens its dedicated route', async () => {
     window.API.saveSelectedTab = jest.fn().mockResolvedValue(undefined);
@@ -60,11 +61,28 @@ describe('TopNavBar component', () => {
     });
   });
 
-  it('quits on button click', async() => {
-    render(<TopNavBar />)
-    const spy = jest.spyOn(window.API, 'quit')
-    fireEvent.click(screen.getByTestId('quit-button'));
-		expect(spy).toHaveBeenCalled();
+  it('opens Import as a separate action and keeps Dashboard named Dashboard', async() => {
+    const store = setupStore({ appState: { selectedTab: 'dashboardTab' } });
+    await act(async () => { render(<TopNavBar />, { store }); });
+    expect(screen.getByRole('tab', { name: 'Dashboard' })).toBeInTheDocument();
+    expect(screen.getByRole('tab', { name: 'Bestand' })).toBeInTheDocument();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Import' })); });
+    expect(store.getState().appState.selectedTab).toBe('importTab');
+    expect(screen.getByRole('button', { name: 'Import' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.queryByTestId('quit-button')).not.toBeInTheDocument();
+  });
+
+  it('keeps the active overflow section visible and navigable after resizing', async () => {
+    const store = setupStore({ appState: { selectedTab: 'transactionsTab' } });
+    await act(async () => { render(<TopNavBar />, { store }); });
+    await act(async () => { window.innerWidth = 900; window.dispatchEvent(new Event('resize')); });
+    expect(screen.getAllByRole('tab')).toHaveLength(3);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Mehr: Transaktionen' })); });
+    await act(async () => { fireEvent.click(await screen.findByText('Cash')); });
+    expect(store.getState().appState.selectedTab).toBe('cashTab');
+    await act(async () => { window.innerWidth = 320; window.dispatchEvent(new Event('resize')); });
+    expect(screen.getByRole('button', { name: 'Bereich wählen: Cash' })).toBeInTheDocument();
+    expect(screen.queryAllByRole('tab')).toHaveLength(0);
 	});
 
   describe('handleTabChange', () => {
@@ -143,7 +161,6 @@ describe('TopNavBar component', () => {
       expect(store.getState().appState.selectedTab).toEqual("assetsTab");
 
       const dispatchSpy = jest.spyOn(store, 'dispatch');
-      const logSpy = jest.spyOn(console, 'log');
 
       act(() => {
         const tab = screen.getByTestId('assetsTab');
@@ -153,7 +170,6 @@ describe('TopNavBar component', () => {
 
       await waitFor(() => {
         expect(dispatchSpy).toHaveBeenCalledTimes(0);
-        expect(logSpy).toHaveBeenCalledWith("Current route is already \\assetsTab");
       });
     });
 

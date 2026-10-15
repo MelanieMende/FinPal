@@ -1,19 +1,57 @@
-
-#TopNavBarSettings, #quit {
-	background: none;
+﻿#TopNavBar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  min-height: 64px;
+  padding: 10px 20px;
+  background: #fff;
+  border-bottom: 1px solid #d8e1eb;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 5%);
 }
-
-#TopNavBar .finpal-quit-button {
-	margin-left: 12px;
-}
-
+#TopNavBar.bp5-dark { background: #182330; border-color: #334155; }
 #TopNavBar .finpal-wordmark {
-	display: block;
-	flex-shrink: 0;
-	width: 102px;
-	height: 34px;
-	margin: 0 8px;
-	mask: url('../../../assets/finpal-wordmark.svg') center / contain no-repeat;
-	-webkit-mask: url('../../../assets/finpal-wordmark.svg') center / contain no-repeat;
-	user-select: none;
+  display: block;
+  flex-shrink: 0;
+  width: 102px;
+  height: 34px;
+  mask: url('../../../assets/finpal-wordmark.svg') center / contain no-repeat;
+  -webkit-mask: url('../../../assets/finpal-wordmark.svg') center / contain no-repeat;
+  user-select: none;
+}
+#TopNavBar .finpal-nav-sections { display: flex; align-items: center; gap: 8px; min-width: 0; }
+#TopNavBar .bp5-tab-list { gap: 4px; }
+#TopNavBar .bp5-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 0 12px;
+  line-height: 40px;
+  border-radius: 8px;
+  color: #475569;
+  transition: background-color 120ms, color 120ms;
+}
+#TopNavBar .bp5-tab-indicator-wrapper { display: none; }
+/* Blueprint forces transparent tab backgrounds; override it only in this navigation. */
+#TopNavBar .bp5-tab:hover, #TopNavBar .finpal-nav-more:hover { background-color: #f1f5f9 !important; color: #1e293b; }
+#TopNavBar .bp5-tab[aria-selected="true"], #TopNavBar .finpal-nav-more.is-active,
+#TopNavBar .finpal-nav-import.bp5-active { background-color: #e0e7ff !important; color: #3730a3; font-weight: 600; box-shadow: none; }
+#TopNavBar.bp5-dark .bp5-tab { color: #cbd5e1; }
+#TopNavBar.bp5-dark .bp5-tab:hover, #TopNavBar.bp5-dark .finpal-nav-more:hover { background-color: #29384c !important; color: #fff; }
+#TopNavBar.bp5-dark .bp5-tab[aria-selected="true"], #TopNavBar.bp5-dark .finpal-nav-more.is-active,
+#TopNavBar.bp5-dark .finpal-nav-import.bp5-active { background-color: #343d66 !important; color: #e0e7ff; }
+#TopNavBar .finpal-nav-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
+#TopNavBar .bp5-button { min-height: 40px; border-radius: 8px; }
+#TopNavBar .bp5-tab:focus-visible, #TopNavBar .bp5-button:focus-visible { outline: 2px solid #818cf8; outline-offset: 2px; }
+#Title { height: 3px; padding: 0; }
+@media (max-width: 1099px) { #TopNavBar { gap: 16px; padding-inline: 16px; } }
+@media (max-width: 849px) {
+  #TopNavBar { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; padding: 10px 12px; }
+  #TopNavBar .finpal-nav-actions { grid-column: 2; grid-row: 1; }
+  #TopNavBar .finpal-nav-sections { grid-column: 1 / -1; grid-row: 2; }
+  #TopNavBar .finpal-nav-sections > .bp5-popover-target, #TopNavBar .finpal-nav-more { width: 100%; }
+  #TopNavBar .finpal-nav-more { justify-content: space-between; }
 }

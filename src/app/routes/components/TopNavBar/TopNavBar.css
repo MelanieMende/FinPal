@@ -45,6 +45,13 @@
 #TopNavBar.bp5-dark .finpal-nav-import.bp5-active { background-color: #343d66 !important; color: #e0e7ff; }
 #TopNavBar .finpal-nav-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
 #TopNavBar .bp5-button { min-height: 40px; border-radius: 8px; }
+#TopNavBar [data-testid="TopNavBarSettings"] {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  padding: 0;
+  flex-shrink: 0;
+}
 #TopNavBar .bp5-tab:focus-visible, #TopNavBar .bp5-button:focus-visible { outline: 2px solid #818cf8; outline-offset: 2px; }
 #Title { height: 3px; padding: 0; }
 @media (max-width: 1099px) { #TopNavBar { gap: 16px; padding-inline: 16px; } }

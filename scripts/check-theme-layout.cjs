@@ -16,10 +16,10 @@ async function render() {
       if(!window.fixtureReady) throw new Error('Fixture did not initialize');
     })()`);
     await win.webContents.insertCSS('* { transition: none !important; animation: none !important; }');
-    for (const zoom of [1,1.25]) for (const width of [900,1280]) {
+    for (const zoom of [1,1.25]) for (const width of [900,1280,1600]) {
       win.webContents.setZoomFactor(zoom);
       win.setContentSize(width,1000);
-      for (const route of ['dashboard','assets','transactions','dividends','cash','import','analysis']) {
+      for (const route of (width === 1600 ? ['import'] : ['dashboard','assets','transactions','dividends','cash','import','analysis'])) {
         await win.webContents.executeJavaScript(`window.themeStore.dispatch({type:'appState/setSelectedTab',payload:'${route}Tab'})`);
         await new Promise(resolve => setTimeout(resolve,route === 'dashboard' || route === 'dividends' ? 1800 : 350));
         const result = await win.webContents.executeJavaScript(`(() => {
@@ -31,11 +31,47 @@ async function render() {
           if(Math.abs(settings.width-settings.height)>0.5) errors.push('Settings is not square');
           if(getComputedStyle(content).backgroundColor !== 'rgb(17, 28, 41)') errors.push('Page does not use blue slate palette');
           if(document.documentElement.scrollWidth > document.documentElement.clientWidth + 1) errors.push('Shell overflows viewport');
+          if(document.querySelector('#ImportRoute')) {
+            const table = document.querySelector('.import-table');
+            if(!table) errors.push('Import fixture has no rows');
+            for(const row of table?.querySelectorAll('tbody tr') ?? []) {
+              const controls = [...row.querySelectorAll('select,button')].map(el => el.getBoundingClientRect());
+              const heights = controls.map(r => r.height);
+              if(Math.max(...heights) - Math.min(...heights) > 0.5) errors.push('Import control heights differ');
+              const centers = controls.map(r => r.top + r.height / 2);
+              if(Math.max(...centers) - Math.min(...centers) > 0.5) errors.push('Import controls are not aligned');
+              for(let i=0;i<controls.length;i++) for(let j=i+1;j<controls.length;j++) {
+                const a=controls[i], b=controls[j];
+                if(Math.min(a.right,b.right)-Math.max(a.left,b.left)>1 && Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top)>1) errors.push('Import controls overlap');
+              }
+              for(const field of row.querySelectorAll('select,button')) {
+                const r=field.getBoundingClientRect(), cell=field.closest('td').getBoundingClientRect();
+                if(r.left<cell.left || r.right>cell.right+1 || r.top<cell.top || r.bottom>cell.bottom+1) errors.push('Import control exceeds its cell');
+              }
+            }
+            const luminance = color => {
+              const channels = color.match(/[\\d.]+/g).slice(0,3).map(v => {const s=Number(v)/255;return s<=0.04045?s/12.92:((s+0.055)/1.055)**2.4;});
+              return channels[0]*0.2126+channels[1]*0.7152+channels[2]*0.0722;
+            };
+            for(const button of document.querySelectorAll('#ImportRoute .bp5-button.bp5-intent-success:not(:disabled)')) {
+              const style=getComputedStyle(button), text=luminance(style.color), background=luminance(style.backgroundColor);
+              if((Math.max(text,background)+0.05)/(Math.min(text,background)+0.05)<4.5) errors.push('Success button text contrast is too low: '+style.color+' on '+style.backgroundColor);
+            }
+          }
           return {errors};
         })()`);
         console.log(JSON.stringify({route,width,zoom,...result}));
         if(result.errors.length) throw new Error('Application theme check failed');
         fs.writeFileSync(path.join(output,`${route}-${width}-${zoom}.png`),(await win.webContents.capturePage()).toPNG());
+        if(route === 'import') {
+          await win.webContents.executeJavaScript(`(async () => {
+            const table=document.querySelector('.import-table-scroll');
+            table.scrollLeft=10000;
+            table.scrollIntoView({block:'center',behavior:'instant'});
+            await new Promise(resolve=>setTimeout(resolve,100));
+          })()`);
+          fs.writeFileSync(path.join(output,`${route}-actions-${width}-${zoom}.png`),(await win.webContents.capturePage()).toPNG());
+        }
       }
     }
     app.exit(0);
@@ -63,7 +99,11 @@ async function build() {
     const transactions=[{ID:1,date:'2026-01-15',type:'Buy',asset_ID:1,depot:'Trade Republic',rank:1,amount:25,shares_cumulated:25,price_per_share:100,fee:1,solidarity_surcharge:0,invest_cumulated:2500,in_out:-2501}];
     window.themeStore=setupStore({appState:{...setupStore().getState().appState,selectedTab:'dashboardTab',theme:'bp5-dark'},assets,transactions,
       dividends:[{ID:1,asset_ID:1,date:'2026-09-01',income:25,tax:0,fee:0}],
-      cash:[{ID:1,date:'2026-01-01',type:'Deposit',amount:5000,fee:0,description:'Beispieldaten'}]});
+      cash:[{ID:1,date:'2026-01-01',type:'Deposit',amount:5000,fee:0,description:'Beispieldaten'}],
+      import:{isLoading:false,error:null,pendingRecords:[
+        {date:'2026-10-14',type:'Dividend',assetName:'Global Equity ETF',isin:'IE00B4L5Y983',shares:0.755515,pricePerShare:0,totalAmount:0.30,fee:0,tax:0.05},
+        {date:'2026-10-14',type:'Buy',assetName:'Langer Wertpapiername ohne bestehende Zuordnung',isin:'DE0000000002',shares:1,pricePerShare:125,totalAmount:125,fee:1,tax:0}
+      ]}});
     Icons.loadAll().then(()=>{createRoot(document.getElementById('root')).render(<Provider store={window.themeStore}><RootRoute/></Provider>);window.fixtureReady=true;});
   `);
   const {build}=await import('vite');

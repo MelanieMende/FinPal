@@ -14,7 +14,9 @@ import { normalizePendingRecord } from '../../../utils/normalizePendingRecord';
 import { selectAssetsSortedByName } from '../../../store/assets/assets.selectors';
 import { getImportTransactionValues } from '../../../utils/getImportTransactionValues';
 import { formatSyncTime } from '../../../utils/syncTimestamps';
+import { recordImportActivity } from '../../../utils/importActivity';
 import { importTradeRepublicCash } from '../../../utils/importTradeRepublicCash';
+import './ImportRoute.css';
 
 export default function ImportRoute() {
     const pendingImportStorageKey = 'finpal.pendingTradeRepublicImport.v1';
@@ -176,6 +178,7 @@ export default function ImportRoute() {
 			}
             const cashImport = await importTradeRepublicCash(cashRecords, sql => Promise.resolve(window.API.sendToDB(sql)));
             if (cashImport.imported > 0) await dispatch(cashReducer.loadCash());
+            recordImportActivity();
             setTrPin('');
             setTrStatus({ runnerAvailable: true, hasSavedCredentials: rememberTr || !!trStatus?.hasSavedCredentials, lastSyncAt: result.lastSyncAt });
 			const quoteMessage = result.quoteError
@@ -229,6 +232,7 @@ export default function ImportRoute() {
         setImportingRecordIndex(index);
         try {
             await importRecord(record, assetID);
+            recordImportActivity();
             await reloadPortfolioData();
 
             dispatch(setPendingRecords(pendingRecords.filter((_pendingRecord, oldIndex) => oldIndex !== index)));
@@ -256,6 +260,7 @@ export default function ImportRoute() {
 
                 await importRecord(record, assetID);
                 importedIndices.add(i);
+                recordImportActivity();
             }
 
             await reloadPortfolioData();
@@ -292,7 +297,7 @@ export default function ImportRoute() {
                     <p className="text-blue-200">Release to start parsing Trade Republic documents</p>
                 </div>
             )}
-            <div className="mb-8 flex justify-between items-center">
+            <div className="import-header mb-8 flex justify-between items-center gap-4 flex-wrap">
                 <div>
                     <H3 className="text-3xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-indigo-500">
                         Import Data
@@ -326,7 +331,7 @@ export default function ImportRoute() {
 
             <Card className="glass-card mb-6 p-5">
                 <div className="flex flex-wrap justify-between gap-4">
-                    <div className="min-w-64 flex-1">
+                    <div className="import-sync-description flex-1">
                         <H3 className="m-0 mb-1 text-lg">Trade Republic automatisch synchronisieren</H3>
                         <p className="text-xs text-gray-400" data-testid="trade-republic-last-sync">Letzter erfolgreicher Sync: {formatSyncTime(trStatus?.lastSyncAt) ?? 'noch nicht'}</p>
                         <p className="text-gray-400 mb-4">FinPal lädt die strukturierten Umsatzdaten direkt über den lokalen pytr-Client. Gutschriften, Zinsen und Steuererstattungen werden automatisch im Cash Management ergänzt. PDFs sind nicht erforderlich.</p>
@@ -345,7 +350,7 @@ export default function ImportRoute() {
                                 </label>
                             </>
                         )}
-                        <div className="flex gap-2 justify-end">
+                        <div className="flex gap-2 justify-end flex-wrap">
                             {trStatus?.hasSavedCredentials && <Button minimal intent={Intent.DANGER} onClick={forgetTradeRepublicCredentials}>Zugangsdaten löschen</Button>}
                             <Button icon="refresh" intent={Intent.SUCCESS} loading={syncingTr} disabled={syncingTr} onClick={handleTradeRepublicSync}>
                                 Jetzt synchronisieren
@@ -374,7 +379,7 @@ export default function ImportRoute() {
                     {error && <Callout intent={Intent.DANGER} icon="error" title="Error">{error}</Callout>}
                     
                     <Card className="glass-card p-0 overflow-hidden">
-                        <div className="p-4 border-b border-white/5 bg-white/5 flex items-center justify-between gap-3">
+                        <div className="p-4 border-b border-white/5 bg-white/5 flex items-center justify-between gap-3 flex-wrap">
                             <H3 className="m-0 text-sm font-bold uppercase tracking-wider text-gray-300">Review Transactions</H3>
                             <Button
                                 small
@@ -387,7 +392,8 @@ export default function ImportRoute() {
                                 {showDuplicates ? `Bereits importierte ausblenden (${duplicateCount})` : `Bereits importierte einblenden (${duplicateCount})`}
                             </Button>
                         </div>
-                        <HTMLTable interactive striped className="w-full text-left">
+                        <div className="import-table-scroll" tabIndex={0} role="region" aria-label="Importierte Transaktionen prüfen">
+                        <HTMLTable interactive striped className="import-table w-full text-left">
                             <thead>
                                 <tr>
                                     <th>Date</th>
@@ -498,7 +504,7 @@ export default function ImportRoute() {
                                                             disabled={importing || importingRecordIndex !== null || !assetID}
                                                             onClick={() => handleImportOne(index)}
                                                             className={assetID
-                                                                ? 'w-36 justify-center font-semibold !text-white'
+                                                                ? 'w-36 justify-center font-semibold'
                                                                 : 'w-36 justify-center font-semibold !bg-gray-700 !text-gray-400 !border-gray-600 disabled:opacity-70'
                                                             }
                                                         />
@@ -517,6 +523,7 @@ export default function ImportRoute() {
                                 })}
                             </tbody>
                         </HTMLTable>
+                        </div>
                     </Card>
                 </div>
             )}

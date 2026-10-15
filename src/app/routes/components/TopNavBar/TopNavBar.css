@@ -41,11 +41,33 @@
 #TopNavBar .bp5-tab[aria-selected="true"], #TopNavBar .finpal-nav-more.is-active,
 #TopNavBar .finpal-nav-import.bp5-active { background-color: #e0e7ff !important; color: #3730a3; font-weight: 600; box-shadow: none; }
 #TopNavBar.bp5-dark .bp5-tab { color: var(--text-secondary); }
-#TopNavBar.bp5-dark .bp5-tab:hover, #TopNavBar.bp5-dark .finpal-nav-more:hover { background-color: var(--surface-hover) !important; color: #fff; }
+#TopNavBar.bp5-dark .bp5-tab:hover, #TopNavBar.bp5-dark .finpal-nav-more:hover { background-color: var(--surface-hover) !important; color: var(--text-primary); }
 #TopNavBar.bp5-dark .bp5-tab[aria-selected="true"], #TopNavBar.bp5-dark .finpal-nav-more.is-active,
 #TopNavBar.bp5-dark .finpal-nav-import.bp5-active { background-color: var(--surface-selected) !important; color: var(--text-selected); }
 #TopNavBar .finpal-nav-actions { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-shrink: 0; }
 #TopNavBar .bp5-button { min-height: 40px; border-radius: 8px; }
+#TopNavBar .finpal-nav-import { position: relative; }
+#TopNavBar .finpal-nav-import-bubble {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #f97316;
+  box-shadow: 0 0 0 2px #fff;
+  pointer-events: none;
+}
+#TopNavBar.bp5-dark .finpal-nav-import-bubble { box-shadow: 0 0 0 2px var(--surface-card); }
+#TopNavBar .finpal-nav-import-description {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 #TopNavBar [data-testid="TopNavBarSettings"] {
   width: 40px;
   height: 40px;
@@ -57,9 +79,13 @@
 #Title { height: 3px; padding: 0; flex-shrink: 0; }
 @media (max-width: 1099px) { #TopNavBar { gap: 16px; padding-inline: 16px; } }
 @media (max-width: 849px) {
-  #TopNavBar { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; padding: 10px 12px; }
+  #TopNavBar { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 12px; padding: 10px 12px; }
   #TopNavBar .finpal-nav-actions { grid-column: 2; grid-row: 1; }
   #TopNavBar .finpal-nav-sections { grid-column: 1 / -1; grid-row: 2; }
   #TopNavBar .finpal-nav-sections > .bp5-popover-target, #TopNavBar .finpal-nav-more { width: 100%; }
   #TopNavBar .finpal-nav-more { justify-content: space-between; }
+}
+@media (max-width: 360px) {
+  #TopNavBar { column-gap: 8px; }
+  #TopNavBar .finpal-wordmark { width: 80px; }
 }

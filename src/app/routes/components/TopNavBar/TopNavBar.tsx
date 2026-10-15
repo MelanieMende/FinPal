@@ -3,6 +3,7 @@ import { Button, Icon, Menu, MenuItem, Popover, Position, Tab, Tabs } from '@blu
 import { useAppSelector, useAppDispatch } from '../../../hooks';
 import { changeSelectedTab } from '../../../store/appState/appState.reducer';
 import Settings from './components/Settings';
+import { IMPORT_ACTIVITY_EVENT, IMPORT_ACTIVITY_KEY, wasImportedToday } from '../../../utils/importActivity';
 import './TopNavBar.css';
 
 const sections = [
@@ -19,6 +20,35 @@ export default function TopNavBar() {
   const route = useAppSelector(state => state.appState.selectedTab);
   const dispatch = useAppDispatch();
   const [width, setWidth] = useState(() => window.innerWidth);
+  const [importDue, setImportDue] = useState(false);
+  useEffect(() => {
+    let lastSyncAt: string | undefined;
+    let disposed = false;
+    let midnightTimer: ReturnType<typeof setTimeout>;
+    const refresh = () => {
+      if (disposed) return;
+      const now = new Date();
+      setImportDue(!wasImportedToday(localStorage.getItem(IMPORT_ACTIVITY_KEY), now) && !wasImportedToday(lastSyncAt, now));
+      clearTimeout(midnightTimer);
+      const midnight = new Date(now);
+      midnight.setHours(24, 0, 0, 0);
+      midnightTimer = setTimeout(refresh, midnight.getTime() - now.getTime());
+    };
+    // Load the persisted broker sync before showing a reminder after an app restart.
+    if (window.API.getTradeRepublicStatus) {
+      window.API.getTradeRepublicStatus().then(status => { lastSyncAt = status.lastSyncAt; }).catch(() => {}).finally(refresh);
+    } else refresh();
+    window.addEventListener(IMPORT_ACTIVITY_EVENT, refresh);
+    window.addEventListener('storage', refresh);
+    window.addEventListener('focus', refresh);
+    return () => {
+      disposed = true;
+      clearTimeout(midnightTimer);
+      window.removeEventListener(IMPORT_ACTIVITY_EVENT, refresh);
+      window.removeEventListener('storage', refresh);
+      window.removeEventListener('focus', refresh);
+    };
+  }, []);
   useEffect(() => {
     const resize = () => setWidth(window.innerWidth);
     window.addEventListener('resize', resize);
@@ -52,7 +82,13 @@ export default function TopNavBar() {
       </div>
       <div className="finpal-nav-actions">
         <Button data-testid="importTab" className="finpal-nav-import" icon="import" text="Import" minimal
-          active={route === 'importTab'} aria-current={route === 'importTab' ? 'page' : undefined} onClick={() => select('importTab')} />
+          title={importDue ? 'Heute noch kein Import durchgeführt' : undefined}
+          aria-describedby={importDue ? 'import-todo-description' : undefined}
+          active={route === 'importTab'} aria-current={route === 'importTab' ? 'page' : undefined} onClick={() => select('importTab')}>
+          {importDue && <span id="import-todo-description" className="finpal-nav-import-bubble" aria-hidden="true" data-testid="import-todo-bubble">
+            <span className="finpal-nav-import-description">Heute noch kein Import durchgeführt</span>
+          </span>}
+        </Button>
         <Popover content={<Settings />} position={Position.BOTTOM_RIGHT}>
           <Button data-testid="TopNavBarSettings" aria-label="Einstellungen" minimal icon="settings" />
         </Popover>

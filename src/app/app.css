@@ -45,7 +45,7 @@ button:focus, .bp5-tab:focus {
 	background-color: var(--bg-color-darker);
 	border: 1px solid var(--glass-border);
 	border-radius: 6px;
-	color: white;
+	color: var(--text-primary);
 	line-height: 1.25rem;
 	transition: border-color 0.2s, background-color 0.2s, box-shadow 0.2s;
 }
@@ -56,7 +56,7 @@ textarea:not(.glass-input-minimal) {
 	background-color: var(--bg-color-darker);
 	border: 1px solid var(--glass-border);
 	border-radius: 6px;
-	color: white;
+	color: var(--text-primary);
 	line-height: 1.35;
 	transition: border-color 0.2s, background-color 0.2s, box-shadow 0.2s;
 }
@@ -79,7 +79,7 @@ select.glass-input-minimal:not(.appearance-none) {
 
 select option {
 	background-color: var(--bg-color-darker);
-	color: white;
+	color: var(--text-primary);
 }
 
 :where(input, select, textarea):focus {
@@ -185,6 +185,17 @@ textarea::placeholder {
 	color: var(--color-h2-dark);
 }
 
+/* Keep bright utility text and Blueprint defaults on the shared softer palette. */
+.bp5-dark :is(.text-white, [class~="!text-white"], [class~="text-white!"]),
+.bp5-dark .hover\:text-white:hover {
+	color: var(--text-primary) !important;
+}
+.bp5-dark :is(.bp5-heading, .bp5-html-table th, .bp5-html-table td, .bp5-label, .bp5-menu-item),
+.bp5-dark .bp5-button:not([class*="bp5-intent-"]) {
+	color: var(--text-primary);
+}
+.bp5-dark .bp5-html-table tbody tr td { color: var(--text-primary); }
+
 .bp5-dark .bp5-card {
 	background: var(--glass-bg);
 	backdrop-filter: blur(8px);
@@ -225,17 +236,18 @@ table.bp5-dark {
 }
 
 .bp5-button.bp5-intent-success {
-	color: white;
+	color: var(--text-on-success);
 	background-color: var(--bg-color-button-success) !important;
-	font-family: 'Outfit', sans-serif;
-	font-size: 1.1em;
 	font-weight: 600;
 	border-radius: 8px;
 }
 
+.bp5-button.bp5-intent-success .bp5-icon { color: inherit; }
+
 .bp5-button.bp5-intent-success:hover {
 	background-color: var(--bg-color-button-success-hover) !important;
 }
+.bp5-button.bp5-intent-success:is(:hover, :active, .bp5-active) { color: var(--text-on-success); }
 
 .bp5-dark .bp5-button:not([class*=bp5-intent-]).bp5-active {
 	background-color: var(--surface-selected);
@@ -262,7 +274,7 @@ table.bp5-dark {
 	backdrop-filter: blur(4px);
 	border: 1px solid var(--border-subtle) !important;
 	border-radius: 8px !important;
-	color: white !important;
+	color: var(--text-primary) !important;
 	box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.06);
 }
 

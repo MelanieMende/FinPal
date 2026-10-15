@@ -36,7 +36,7 @@ export default function AssetAllocationChart({ data }: AssetAllocationChartProps
 							borderRadius: '8px',
 							color: 'var(--text-primary)'
 						}}
-						itemStyle={{ color: '#fff' }}
+					itemStyle={{ color: 'var(--text-primary)' }}
 						formatter={(value: number) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(value)}
 					/>
 					<Legend verticalAlign="bottom" height={36} iconType="circle" />

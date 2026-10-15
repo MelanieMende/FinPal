@@ -8,18 +8,19 @@
   --surface-selected: #343d66;
   --border-subtle: #2c3d52;
   --border-strong: #415572;
-  --text-primary: #e2e8f0;
-  --text-secondary: #cbd5e1;
+  --text-primary: #c3cedc;
+  --text-secondary: #abb9cb;
   --text-muted: #94a3b8;
-  --text-selected: #e0e7ff;
+  --text-selected: #cbd2eb;
   --focus-ring: #818cf8;
-  --color-h2-dark: #cbd5e1;
+  --color-h2-dark: var(--text-primary);
   --bg-color-dark: var(--surface-page);
   --bg-color-darker: var(--surface-inset);
   --bg-color-button-hover: var(--surface-raised);
   --bg-color-button-pressed: var(--surface-selected);
-  --bg-color-button-success: #10b981; /* Tailwind emerald-500 equivalent */
-  --bg-color-button-success-hover: #059669;
+  --bg-color-button-success: #225b4b;
+  --bg-color-button-success-hover: #2b6a58;
+  --text-on-success: #d3e9df;
 
   --glass-bg: var(--surface-card);
   --glass-border: var(--border-subtle);

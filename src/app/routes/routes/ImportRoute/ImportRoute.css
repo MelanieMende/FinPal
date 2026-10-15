@@ -1,0 +1,19 @@
+#ImportRoute .import-sync-description { min-width: min(16rem, 100%); }
+#ImportRoute .import-header > * { min-width: 0; }
+#ImportRoute .import-header > div:last-child { flex-wrap: wrap; }
+#ImportRoute .import-table-scroll { max-width: 100%; overflow-x: auto; }
+#ImportRoute .import-table { min-width: 76rem; }
+#ImportRoute .import-table td { vertical-align: middle; }
+#ImportRoute .import-table td > .flex { align-items: center; }
+#ImportRoute .import-table :is(select, .bp5-button) {
+  height: 2.5rem;
+  min-height: 2.5rem;
+  margin-block: 0;
+  font-size: 0.875rem;
+}
+#ImportRoute .import-table select { width: 20rem; min-width: 0; }
+#ImportRoute .import-table .bp5-button { flex-shrink: 0; }
+#ImportRoute .import-table .bp5-button.bp5-minimal:has(.bp5-icon-trash) {
+  width: 2.5rem;
+  padding: 0;
+}

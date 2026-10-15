@@ -7,9 +7,33 @@ import RootRoute, { Content } from '../../RootRoute';
 import { setupStore } from './../../../store';
 import { Provider } from 'react-redux';
 import { prepareAutoBatched } from '@reduxjs/toolkit';
+import { IMPORT_ACTIVITY_KEY, recordImportActivity } from '../../../utils/importActivity';
 
 describe('TopNavBar component', () => {
   beforeEach(() => { window.innerWidth = 1280; });
+
+  it('shows the daily reminder until an import completes and restores it the next day', async () => {
+    localStorage.removeItem(IMPORT_ACTIVITY_KEY);
+    window.API.getTradeRepublicStatus = jest.fn().mockResolvedValue({ runnerAvailable: true, hasSavedCredentials: true });
+    await act(async () => { render(<TopNavBar />); });
+    expect(screen.getByTestId('import-todo-bubble')).toBeInTheDocument();
+    await act(async () => { fireEvent.click(screen.getByTestId('importTab')); });
+    expect(screen.getByTestId('import-todo-bubble')).toBeInTheDocument();
+    act(() => { recordImportActivity(); });
+    expect(screen.queryByTestId('import-todo-bubble')).not.toBeInTheDocument();
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    localStorage.setItem(IMPORT_ACTIVITY_KEY, yesterday.toISOString());
+    act(() => { window.dispatchEvent(new Event('focus')); });
+    expect(screen.getByTestId('import-todo-bubble')).toBeInTheDocument();
+    localStorage.removeItem(IMPORT_ACTIVITY_KEY);
+  });
+
+  it('recognizes a successful sync today after restarting the renderer', async () => {
+    window.API.getTradeRepublicStatus = jest.fn().mockResolvedValue({ runnerAvailable: true, hasSavedCredentials: true, lastSyncAt: new Date().toISOString() });
+    await act(async () => { render(<TopNavBar />); });
+    expect(screen.queryByTestId('import-todo-bubble')).not.toBeInTheDocument();
+  });
 
   it('places Analyse between Dashboard and Assets and opens its dedicated route', async () => {
     window.API.saveSelectedTab = jest.fn().mockResolvedValue(undefined);

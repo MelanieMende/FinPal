@@ -11,6 +11,7 @@ import { assessQuoteFreshness, isMarketClosedInfo, quoteFreshnessInfos, quoteFre
 import { buildTradeEconomics, tradeCheckResearchInstructions } from './tradeEconomics';
 import { isEltif, assessNavFreshness } from './eltifValuation';
 import { checkPortfolioFunding } from './portfolioFunding';
+import { isDescriptiveRiskInfo, riskMessageInstructions, separateAnalysisMessages } from './analysisMessages';
 import { allocationCandidateKey, allocationMismatch, validPortfolioAllocation } from './portfolioAllocation';
 import { tradeDecisionSchema, validTradeDecision, buildTradeDecisionContext, tradeDecisionResearchInstructions, tradeDecisionAnalysisInstructions } from './tradeDecision';
 import { investorFactsAnalysisInstructions, historyCoverageAnalysisInstructions } from './investorFacts';
@@ -284,11 +285,15 @@ export function validateAnalysisResult(value: unknown, request: PortfolioAnalysi
     }
     return { ...rec, plannedAmountEUR: rec.plannedAmountEUR === 0 ? null : rec.plannedAmountEUR };
   };
-  return { summary: result.summary, infos: result.infos ?? [], warnings, recommendations: result.recommendations.map(normalizeAmount), newAssetRecommendations: candidates.map(candidate => {
+  const recommendations = result.recommendations.map(rec => ({ ...normalizeAmount(rec),
+    ...(rec.warnings?.some(isDescriptiveRiskInfo) ? separateAnalysisMessages(rec.infos, rec.warnings) : {}),
+  }));
+  const newAssetRecommendations = candidates.map(candidate => {
     // Structured model output is never a trusted locally fetched quote.
     const { marketQuote: _untrustedQuote, ...fields } = candidate;
     return normalizeAmount(fields);
-  }) };
+  });
+  return { summary: result.summary, ...separateAnalysisMessages(result.infos, warnings), recommendations, newAssetRecommendations };
 }
 
 export class PortfolioAnalysisService {
@@ -338,6 +343,10 @@ export class PortfolioAnalysisService {
       }) || !Number.isFinite(Date.parse(report.generatedAt)) || typeof report.model !== 'string'
         || (report.priceUpdatedAt !== null && !Number.isFinite(Date.parse(report.priceUpdatedAt)))) return null;
       validateAnalysisResult(report, saved.request, report.sources);
+      Object.assign(report, separateAnalysisMessages(report.infos, report.warnings));
+      report.recommendations.forEach(rec => {
+        if (rec.warnings?.some(isDescriptiveRiskInfo)) Object.assign(rec, separateAnalysisMessages(rec.infos, rec.warnings));
+      });
       for (const candidate of report.newAssetRecommendations ?? []) {
         if (candidate.marketQuote && !validCandidateMarketQuote(candidate.marketQuote, candidate.isin.trim().toUpperCase())) delete candidate.marketQuote;
       }
@@ -607,6 +616,7 @@ export class PortfolioAnalysisService {
       analysisInput.instructions += ' Antworte kompakt und vollständig: Zusammenfassung maximal 200 Worte, pro Empfehlung höchstens zwei Sätze Begründung und ein Satz Risiko; alle Assets und erforderlichen Quellenverweise beibehalten. researchFetchedAt ist der Abrufzeitpunkt der Recherchegruppen, kein Veröffentlichungs- oder Kursdatum.';
       if (request.positions.some(position => position.type === 'Bond')) analysisInput.instructions += bondAnalysisInstructions;
       analysisInput.instructions += currencyExposureAnalysisInstructions;
+      analysisInput.instructions += riskMessageInstructions;
       analysisInput.instructions += tradeDecisionAnalysisInstructions;
       analysisInput.instructions += investorFactsAnalysisInstructions + historyCoverageAnalysisInstructions;
       analysisInput.instructions += ' Bei Trade-Republic-Kursen ist quoteAsOf der Zeitpunkt des vom Broker gelieferten letzten Preisticks. Bei Fonds ist dies kein offizieller NAV-Stichtag. Prüfe den offiziellen NAV samt Bewertungsstichtag und Aktualität anhand des belegten Bewertungszyklus aus der Recherche. Ein belegter aktueller NAV kann einen fehlenden Broker-Kurszeitpunkt für die NAV-Prüfung ersetzen, sein Wert darf aber nicht ungeprüft mit dem Broker-Preis gleichgesetzt werden. Bei Anleihen sind Kursquelle, Handelsplatz und Kursdatum gemeinsam zu prüfen; der Zeitpunkt einer anderen Kursquelle darf nicht auf den verwendeten Preis übertragen werden.';

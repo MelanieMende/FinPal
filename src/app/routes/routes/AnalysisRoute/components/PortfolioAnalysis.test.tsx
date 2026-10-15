@@ -530,8 +530,9 @@ it('shows warnings first and opens informational messages only through their tab
   const response = await window.API.analyzePortfolio({} as never);
   const quoteNote = 'Die Kurse aller Positionen besitzen einen quoteAsOf-Zeitpunkt; ein fehlender Kurszeitpunkt liegt nicht vor. Die US-Schlusskurse mit Status market-closed werden nicht allein wegen Börsenschluss oder Vorbörse beanstandet.';
   const marketClosedInfo = 'Assets 6, 11, 25, 33, 34: Letzter Schlusskurs – regulärer US-Markt noch geschlossen. Der ältere Kurs ist durch die Handelspause erklärbar.';
+  const concentrationInfo = 'Bitcoin stellt 27,50 % der Anlagen beziehungsweise 23,27 % einschließlich Cash und damit die größte Einzelrisikokonzentration dar; das lokale Modell weist 43,35 % annualisierte Volatilität und ein sehr breites historisches Bootstrap-Band aus [82].';
   jest.mocked(window.API.analyzePortfolio).mockResolvedValue({ ...response,
-    infos: ['Regulärer Schlusskurs'], warnings: [quoteNote, marketClosedInfo, 'Bei einer Position fehlt quoteAsOf.'],
+    infos: ['Regulärer Schlusskurs'], warnings: [quoteNote, marketClosedInfo, concentrationInfo, 'Bei einer Position fehlt quoteAsOf.'],
     recommendations: response.recommendations.map(rec => ({ ...rec, infos: ['Einzelanalyse abgeschlossen'], warnings: ['Kursdaten prüfen'] })),
   });
   render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
@@ -545,6 +546,7 @@ it('shows warnings first and opens informational messages only through their tab
   expect(within(document.getElementById(warningTabs[1].getAttribute('aria-controls')!)!).getByText('Kursdaten prüfen')).toBeInTheDocument();
   expect(screen.queryByText(quoteNote)).not.toBeInTheDocument();
   expect(screen.queryByText(marketClosedInfo)).not.toBeInTheDocument();
+  expect(screen.queryByText(concentrationInfo)).not.toBeInTheDocument();
   expect(screen.queryByText('Regulärer Schlusskurs')).not.toBeInTheDocument();
   expect(screen.queryByText('Einzelanalyse abgeschlossen')).not.toBeInTheDocument();
 
@@ -553,6 +555,7 @@ it('shows warnings first and opens informational messages only through their tab
   const summaryInfoPanel = document.getElementById(infoTabs[0].getAttribute('aria-controls')!)!;
   expect(within(summaryInfoPanel).getByText(quoteNote)).toBeInTheDocument();
   expect(within(summaryInfoPanel).getByText(marketClosedInfo)).toBeInTheDocument();
+  expect(within(summaryInfoPanel).getByText(concentrationInfo)).toBeInTheDocument();
   expect(within(summaryInfoPanel).getByText('Regulärer Schlusskurs')).toBeInTheDocument();
   expect(within(summaryInfoPanel).queryByText('Bei einer Position fehlt quoteAsOf.')).not.toBeInTheDocument();
 

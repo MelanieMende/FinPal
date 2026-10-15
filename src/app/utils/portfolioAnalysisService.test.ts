@@ -1069,6 +1069,28 @@ it('retains separate infos through validation and accepts older reports without 
   expect(validateAnalysisResult(report, request, sources).infos).toEqual([]);
 });
 
+it('moves descriptive concentration metrics to infos while retaining actionable warnings', () => {
+  const note = 'Bitcoin stellt 27,50 % der Anlagen beziehungsweise 23,27 % einschließlich Cash und damit die größte Einzelrisikokonzentration dar; das lokale Modell weist 43,35 % annualisierte Volatilität und ein sehr breites historisches Bootstrap-Band aus [82].';
+  const actionable = note + ' Die festgelegte Konzentrationsgrenze ist überschritten; Position reduzieren.';
+  const result = validateAnalysisResult({ ...report, infos: [note], warnings: [note, actionable, 'Kurszeitpunkt fehlt'],
+    recommendations: report.recommendations.map(rec => ({ ...rec, warnings: [note, actionable] })),
+  }, request, [{ title: 'Source', url: 'https://example.com' }]);
+  expect(result.infos).toEqual([note]);
+  expect(result.warnings).toEqual([actionable, 'Kurszeitpunkt fehlt']);
+  expect(result.recommendations[0].infos).toEqual([note]);
+  expect(result.recommendations[0].warnings).toEqual([actionable]);
+  fs.writeFileSync(path.join(dir, 'portfolio-ai-last-analysis.json'), JSON.stringify({ version: 1, request, snapshot: 'legacy', report: {
+    ...result, infos: [], warnings: [note, actionable], sources: [{ title: 'Source', url: 'https://example.com' }],
+    generatedAt: '2026-10-15T10:00:00Z', priceUpdatedAt: null, model: 'test',
+    recommendations: result.recommendations.map(rec => ({ ...rec, infos: [] as string[], warnings: [note, actionable] })),
+  } }));
+  const restored = new PortfolioAnalysisService(dir, jest.fn()).getLastResult();
+  expect(restored?.report.infos).toEqual([note]);
+  expect(restored?.report.warnings).toEqual([actionable]);
+  expect(restored?.report.recommendations[0].infos).toEqual([note]);
+  expect(restored?.report.recommendations[0].warnings).toEqual([actionable]);
+});
+
 it.each(['not an array', [42], [''], Array(101).fill('Info')])('rejects malformed infos %j', infos => {
   expect(() => validateAnalysisResult({ ...report, infos }, request, [{ title: 'Source', url: 'https://example.com' }])).toThrow('Die Infos haben ein ungültiges Format.');
 });

@@ -6,6 +6,7 @@ import type { ChatGptModel, ChatGptStatus } from '../../../../utils/chatGptAuth'
 import { analyzePortfolio, refreshPortfolioForecast, setAnalysisOpen, clearAnalysisResult } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
 import { formatSyncTime } from '../../../../utils/syncTimestamps';
 import { assessQuoteFreshness, isMarketClosedInfo } from '../../../../utils/quoteFreshness';
+import { isDescriptiveRiskInfo } from '../../../../utils/analysisMessages';
 import { isEltif, assessNavFreshness, type NavEvidence } from '../../../../utils/eltifValuation';
 import type { AnalysisPosition, AssetResearchStatus } from '../../../../utils/portfolioAnalysis';
 import { selectTotalLiquidity } from '../../../../store/cash/cash.selectors';
@@ -101,7 +102,7 @@ export function AIConnectionSettings(props: AIConnectionSettingsProps) {
 // Reclassify this known neutral message in older saved analyses; keep other warnings intact.
 const legacyQuoteInfo = 'Die Kurse aller Positionen besitzen einen quoteAsOf-Zeitpunkt; ein fehlender Kurszeitpunkt liegt nicht vor. Die US-Schlusskurse mit Status market-closed werden nicht allein wegen Börsenschluss oder Vorbörse beanstandet.';
 function AnalysisMessages({ infos = [], warnings = [] }: { infos?: string[]; warnings?: string[] }) {
-  const neutralInfo = (message: string) => message.trim() === legacyQuoteInfo || isMarketClosedInfo(message);
+  const neutralInfo = (message: string) => message.trim() === legacyQuoteInfo || isMarketClosedInfo(message) || isDescriptiveRiskInfo(message);
   const information = [...new Set([...infos, ...warnings.filter(neutralInfo)])];
   const alerts = warnings.filter(message => !neutralInfo(message));
   const [activeTab, setActiveTab] = useState<'warnings' | 'infos'>('warnings');

@@ -112,7 +112,7 @@ export default function AssetFilter(props: {filter:number[], onChange:any}) {
 					className={`rounded-full shadow-lg transition-all transform group-hover:scale-105 ${activeCount > 0 ? 'bg-blue-600' : 'bg-gray-700/50 backdrop-blur-md border border-white/10'}`}
 				/>
 				{activeCount > 0 && (
-					<span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full border-2 border-[#121418] shadow-lg animate-in zoom-in grow-0">
+					<span className="absolute -top-1 -right-1 bg-red-500 text-white text-[9px] font-bold px-1.5 py-0.5 rounded-full border-2 border-[var(--surface-page)] shadow-lg animate-in zoom-in grow-0">
 						{activeCount}
 					</span>
 				)}

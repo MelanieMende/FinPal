@@ -1,17 +1,30 @@
 :root {
-  --color-h2-dark: #b1c6d8;
-  --bg-color-dark: #121417; /* Deeper dark background */
-  --bg-color-darker: #1b1f24;
-  --bg-color-button-hover: #2d333b;
-  --bg-color-button-pressed: #22272e;
+  /* Shared blue slate palette, anchored to the navigation surface. */
+  --surface-page: #111c29;
+  --surface-card: #182330;
+  --surface-inset: #14202e;
+  --surface-raised: #223247;
+  --surface-hover: #29384c;
+  --surface-selected: #343d66;
+  --border-subtle: #2c3d52;
+  --border-strong: #415572;
+  --text-primary: #e2e8f0;
+  --text-secondary: #cbd5e1;
+  --text-muted: #94a3b8;
+  --text-selected: #e0e7ff;
+  --focus-ring: #818cf8;
+  --color-h2-dark: #cbd5e1;
+  --bg-color-dark: var(--surface-page);
+  --bg-color-darker: var(--surface-inset);
+  --bg-color-button-hover: var(--surface-raised);
+  --bg-color-button-pressed: var(--surface-selected);
   --bg-color-button-success: #10b981; /* Tailwind emerald-500 equivalent */
   --bg-color-button-success-hover: #059669;
 
-  /* Modern Glassmorphism & Accent Colors */
-  --glass-bg: rgba(255, 255, 255, 0.05);
-  --glass-border: rgba(255, 255, 255, 0.1);
-  --accent-primary: #3b82f6; /* Blue 500 */
-  --accent-secondary: #8b5cf6; /* Violet 500 */
+  --glass-bg: var(--surface-card);
+  --glass-border: var(--border-subtle);
+  --accent-primary: #6366f1;
+  --accent-secondary: #818cf8;
   --accent-success: #10b981;
   --accent-danger: #ef4444;
 }

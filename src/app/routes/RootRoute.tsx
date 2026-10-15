@@ -80,7 +80,7 @@ export default function RootRoute() {
 	}, []);
 	
 	return (
-		<div id="RootRoute" className="h-screen">
+		<div id="RootRoute" className="h-screen flex flex-col overflow-hidden">
 			<MarketPriceRefresh />
  			<TopNavBar />
 			<div id="Title" className={`flex items-center p-2 bg-linear-to-l from-indigo-500 from-10% via-sky-500 via-30% to-emerald-500 to-90%`}></div>
@@ -242,7 +242,7 @@ export function Content() {
 	
 
 	return(
-		<div id="rootContent" className={"absolute flex flex-col w-full top-[66px] bottom-0 p-[15px] overflow-auto "  + theme}>
+		<div id="rootContent" className={"flex flex-col flex-1 min-h-0 w-full p-[15px] overflow-auto "  + theme}>
 			{mainContent}
 		</div>
 	)

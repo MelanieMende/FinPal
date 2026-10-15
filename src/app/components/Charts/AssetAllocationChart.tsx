@@ -31,10 +31,10 @@ export default function AssetAllocationChart({ data }: AssetAllocationChartProps
 					</Pie>
 					<Tooltip 
 						contentStyle={{ 
-							backgroundColor: '#1b1f24', 
-							border: '1px solid rgba(255,255,255,0.1)',
+							backgroundColor: 'var(--surface-raised)',
+							border: '1px solid var(--border-strong)',
 							borderRadius: '8px',
-							color: '#fff'
+							color: 'var(--text-primary)'
 						}}
 						itemStyle={{ color: '#fff' }}
 						formatter={(value: number) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(value)}

@@ -34,10 +34,10 @@ export default function DividendBarChart({ data }: DividendBarChartProps) {
 					<Tooltip
 						cursor={{ fill: 'rgba(255,255,255,0.05)' }}
 						contentStyle={{ 
-							backgroundColor: '#1b1f24', 
-							border: '1px solid rgba(255,255,255,0.1)',
+							backgroundColor: 'var(--surface-raised)',
+							border: '1px solid var(--border-strong)',
 							borderRadius: '12px',
-							color: '#fff',
+							color: 'var(--text-primary)',
 							fontSize: '14px'
 						}}
 						itemStyle={{ color: '#fff' }}

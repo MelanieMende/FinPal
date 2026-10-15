@@ -2,15 +2,21 @@
 @import url("./assets/styles/colors.css");
 @import "./../../node_modules/@blueprintjs/core/lib/css/blueprint.css";
 @import "tailwindcss";
+@source "./";
 
 @theme {
   --color-custom-red: #eb13476e;
+  --color-gray-900: #14202e;
+  --color-gray-800: #223247;
+  --color-gray-700: #334155;
+  --color-slate-900: #14202e;
+  --color-slate-950: #101a27;
 }
 
 body {
 	font-family: 'Inter', system-ui, -apple-system, sans-serif;
 	background-color: var(--bg-color-dark);
-	color: #e5e7eb; /* tailwind gray-200 */
+	color: var(--text-primary);
 	-webkit-font-smoothing: antialiased;
 }
 
@@ -171,7 +177,7 @@ textarea::placeholder {
 }
 
 .bp5-dark {
-	color: #f5f8fa;
+	color: var(--text-primary);
 	background-color: var(--bg-color-dark);
 }
 
@@ -192,7 +198,7 @@ table.bp5-dark {
 }
 
 .bp5-navbar.bp5-dark, .bp5-dark .bp5-navbar {
-	background-color: rgba(18, 20, 23, 0.8) !important;
+	background-color: var(--surface-card) !important;
 	backdrop-filter: blur(10px);
 	border-bottom: 1px solid var(--glass-border);
 }
@@ -208,8 +214,8 @@ table.bp5-dark {
 }
 
 .bp5-dark .bp5-button:not([class*=bp5-intent-]):hover {
-	background-color: var(--accent-primary);
-	color: white;
+	background-color: var(--surface-hover);
+	color: var(--text-primary);
 }
 
 .bp5-button {
@@ -232,13 +238,13 @@ table.bp5-dark {
 }
 
 .bp5-dark .bp5-button:not([class*=bp5-intent-]).bp5-active {
-	background-color: var(--accent-primary);
-	color: white;
+	background-color: var(--surface-selected);
+	color: var(--text-selected);
 	cursor: default;
 }
 
 .bp5-button.bp5-minimal:active, .bp5-button.bp5-minimal.bp5-active {
-  	background: rgba(59, 130, 246, 0.2) !important;
+	background: var(--surface-selected) !important;
 }
 
 /* Animations */
@@ -252,9 +258,9 @@ table.bp5-dark {
 }
 
 .glass-input input {
-	background: rgba(255, 255, 255, 0.05) !important;
+	background: var(--surface-inset) !important;
 	backdrop-filter: blur(4px);
-	border: 1px solid rgba(255, 255, 255, 0.1) !important;
+	border: 1px solid var(--border-subtle) !important;
 	border-radius: 8px !important;
 	color: white !important;
 	box-shadow: inset 0 2px 4px 0 rgba(0, 0, 0, 0.06);
@@ -262,12 +268,12 @@ table.bp5-dark {
 
 .glass-input input:focus {
 	border-color: var(--accent-primary) !important;
-	background: rgba(255, 255, 255, 0.08) !important;
+	background: var(--surface-raised) !important;
 }
 
 .glass-segmented-control {
-	background: rgba(255, 255, 255, 0.03) !important;
-	border: 1px solid rgba(255, 255, 255, 0.1) !important;
+	background: var(--surface-inset) !important;
+	border: 1px solid var(--border-subtle) !important;
 	border-radius: 10px !important;
 	padding: 4px !important;
 }
@@ -280,9 +286,9 @@ table.bp5-dark {
 }
 
 .glass-segmented-control .bp5-button.bp5-active {
-	background: var(--accent-primary) !important;
-	color: white !important;
-	box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3) !important;
+	background: var(--surface-selected) !important;
+	color: var(--text-selected) !important;
+	box-shadow: 0 2px 8px rgb(0 0 0 / 15%) !important;
 }
 
 /* Fix for white dialog footer */
@@ -290,4 +296,33 @@ table.bp5-dark {
 	background: transparent !important;
 	margin: 0 !important;
 	padding: 24px !important;
+}
+
+/* Portaled controls share the same surfaces as the main application. */
+.bp5-dark :is(.bp5-dialog, .bp5-drawer, .bp5-menu, .bp5-popover-content),
+:is(.bp5-dialog, .bp5-drawer, .bp5-menu).bp5-dark {
+	background-color: var(--surface-card);
+	color: var(--text-primary);
+}
+.bp5-dark :is(.bp5-dialog-header, .bp5-drawer-header) {
+	background: var(--surface-raised);
+	box-shadow: 0 1px 0 var(--border-subtle);
+}
+.bp5-dark .bp5-popover .bp5-popover-arrow-fill { fill: var(--surface-card); }
+.bp5-dark .bp5-menu-item:hover { background-color: var(--surface-hover); }
+.bp5-dark .bp5-menu-item.bp5-active {
+	background-color: var(--surface-selected);
+	color: var(--text-selected);
+}
+.bp5-dark .bp5-input { background-color: var(--surface-inset); color: var(--text-primary); }
+.bp5-dark :is(.bp5-tag, .bp5-callout):not([class*="bp5-intent-"]) {
+	background-color: var(--surface-raised);
+	color: var(--text-secondary);
+}
+.bp5-dark .bp5-button.bp5-intent-primary { background-color: var(--accent-primary); }
+.bp5-dark .bp5-button.bp5-intent-primary:hover { background-color: #4f46e5; }
+.bp5-dark .bp5-divider { border-color: var(--border-subtle); }
+button:focus-visible {
+	outline: 2px solid var(--focus-ring);
+	outline-offset: 2px;
 }

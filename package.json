@@ -7,6 +7,7 @@
   "scripts": {
     "check:layout": "node scripts/check-analysis-layout.cjs",
     "check:layout:navigation": "node scripts/check-navigation-layout.cjs",
+    "check:layout:theme": "node scripts/check-theme-layout.cjs",
     "start": "electron-forge start",
     "package": "electron-forge package",
     "make": "electron-forge make",

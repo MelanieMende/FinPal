@@ -85,6 +85,7 @@ contextBridge.exposeInMainWorld('API', {
   getEuroExchangeRates: () => ipcRenderer.invoke('market:eur-exchange-rates'),
   forgetTradeRepublicCredentials: () => ipcRenderer.invoke('trade-republic:forget'),
   getPortfolioAIStatus: () => ipcRenderer.invoke('portfolio-ai:status'),
+  getPortfolioResearchStatus: (assets: import('./app/utils/portfolioAnalysis').ResearchAsset[]) => ipcRenderer.invoke('portfolio-ai:research-status', assets),
   savePortfolioAIKey: (key: string) => ipcRenderer.invoke('portfolio-ai:save-key', key),
   forgetPortfolioAIKey: () => ipcRenderer.invoke('portfolio-ai:forget-key'),
   signInPortfolioChatGpt: (clientId?: string) => ipcRenderer.invoke('portfolio-ai:chatgpt-sign-in', clientId),

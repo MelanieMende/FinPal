@@ -7,7 +7,7 @@ import { setDividendsInternal } from '../../../../store/dividends/dividends.redu
 import { analyzePortfolio } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
 import AssetList from '../../AssetsRoute/components/AssetList/AssetList';
 import { buildAnalysisPositions } from '../../../../utils/portfolioAnalysis';
-import PortfolioAnalysis, { ANALYSIS_PROFILE_KEY, ANALYSIS_MODEL_KEY } from './PortfolioAnalysis';
+import PortfolioAnalysis, { ANALYSIS_PROFILE_KEY, ANALYSIS_MODEL_KEY, AssetResearchIndicator } from './PortfolioAnalysis';
 import AnalysisRoute from '../AnalysisRoute';
 import { MARKET_PRICE_UPDATED_AT_KEY, MARKET_PRICE_UPDATED_EVENT } from '../../../../utils/syncTimestamps';
 import { tradeDecisionFixture } from '../../../../../testing/fixtures/tradeDecision';
@@ -45,6 +45,39 @@ async function open() {
 async function openAISettings() {
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'KI-Einstellungen' })); });
 }
+
+it('shows actual per-asset research availability before analysis and in recommendation cards', async () => {
+  const loaded = new Date(Date.now() - 3600000).toISOString();
+  const expires = new Date(Date.parse(loaded) + 86400000).toISOString();
+  window.API.getPortfolioResearchStatus = jest.fn().mockResolvedValue([
+    { assetId: 1, fetchedAt: loaded, expiresAt: expires }, { assetId: 2, fetchedAt: null, expiresAt: null },
+  ]);
+  render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
+  await open();
+  const section = screen.getByRole('region', { name: 'Webrecherche je Asset' });
+  await waitFor(() => expect(within(section).getByText(/Erfolgreich geladen am/)).toBeInTheDocument());
+  expect(within(section).getByText(/Keine erfolgreichen Webrecherchedaten der letzten 24 Stunden/)).toBeInTheDocument();
+  expect(window.API.getPortfolioResearchStatus).toHaveBeenCalledWith(expect.arrayContaining([
+    expect.objectContaining({ id: 1, name: 'Stock Asset' }), expect.objectContaining({ id: 2 }),
+  ]));
+  expect(jest.mocked(window.API.getPortfolioResearchStatus).mock.calls[0][0][0]).not.toHaveProperty('shares');
+  fillProfile();
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
+  await waitFor(() => expect(screen.getByRole('region', { name: 'Analyseergebnis' })).toBeInTheDocument());
+  const cards = screen.getAllByTestId('asset-research-status');
+  expect(cards).toHaveLength(2);
+  expect(cards[0].textContent + cards[1].textContent).toContain('Erfolgreich geladen am');
+  expect(screen.queryByText(/30 Minuten/)).not.toBeInTheDocument();
+});
+
+it('stops promising reuse exactly at the 24-hour deadline', () => {
+  const loaded = Date.parse('2026-10-14T10:00:00Z');
+  const status = { assetId: 1, fetchedAt: new Date(loaded).toISOString(), expiresAt: new Date(loaded + 86400000).toISOString() };
+  const { rerender } = render(<AssetResearchIndicator status={status} now={loaded + 86400000 - 1} />);
+  expect(screen.getByText(/Erfolgreich geladen am/)).toBeInTheDocument();
+  rerender(<AssetResearchIndicator status={status} now={loaded + 86400000} />);
+  expect(screen.getByText(/Keine erfolgreichen Webrecherchedaten/)).toBeInTheDocument();
+});
 
 it('restores an executed 50 EUR sale as Done in both views and removes its proceeds from the remaining funding plan', async () => {
   const savedReport = await window.API.analyzePortfolio({} as never);
@@ -122,6 +155,8 @@ it('displays sourced new assets outside the local asset list and keeps them afte
   jest.mocked(window.API.analyzePortfolio).mockResolvedValue({ ...response, newAssetRecommendations: [{
     name: 'New ETF', isin: 'IE00B4L5Y983', symbol: 'IWDA', type: 'ETF', action: 'Kaufen',
     rationale: 'Breitere Diversifikation', risk: 'Marktrisiko', sourceIndexes: [0],
+    marketQuote: { isin: 'IE00B4L5Y983', price: 99.1234, currency: 'EUR', exchange: 'XETR', kind: 'last-trade',
+      quoteAsOf: new Date().toISOString(), fetchedAt: new Date().toISOString(), source: { title: 'EUR-Kursquelle', url: 'https://example.com/eur-quote' } },
   }] });
   const { store, unmount } = render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
   await open(); fillProfile();
@@ -132,6 +167,10 @@ it('displays sourced new assets outside the local asset list and keeps them afte
     expect(section.getByText(/IE00B4L5Y983/)).toHaveTextContent('IWDA');
     expect(section.getByText('Kaufen')).toBeInTheDocument();
     expect(section.getByText('Risiken: Marktrisiko')).toBeInTheDocument();
+    expect(section.getByTestId('candidate-market-quote')).toHaveTextContent('99,1234 EUR · XETR');
+    expect(section.getByTestId('candidate-market-quote')).toHaveTextContent('Kurszeitpunkt:');
+    expect(section.getByTestId('candidate-market-quote')).toHaveTextContent('Ausführungspreis und Handelbarkeit beim Depotanbieter sind nicht bestätigt');
+    expect(section.getByRole('link', { name: 'EUR-Kursquelle' })).toHaveAttribute('href', 'https://example.com/eur-quote');
     expect(section.getByRole('link', { name: '[0] Report' })).toHaveAttribute('href', 'https://example.com/report');
   };
   check(); unmount();

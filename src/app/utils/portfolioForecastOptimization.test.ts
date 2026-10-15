@@ -1,5 +1,5 @@
 import { buildForecastAllocation, readReturnForecasts, validReturnForecast } from './portfolioForecastOptimization';
-import { validPortfolioAllocation } from './portfolioAllocation';
+import { validPortfolioAllocation, allocationMismatch } from './portfolioAllocation';
 import type { PortfolioAnalysisRequest, PortfolioAnalysisResult } from './portfolioAnalysis';
 import type { InvestorContext } from './investorFacts';
 import { returnForecastFixture, returnForecastInputFixture } from '../../testing/fixtures/returnForecast';
@@ -10,6 +10,38 @@ const request = (): PortfolioAnalysisRequest => ({ provider: 'api', priceUpdated
     currency: 'EUR', costBasis: 500, dividendsEarned: 0, realizedGainLoss: 0 }],
 });
 
+it('continues the evidenced sleeve and accepts holding a reviewed unavailable position', () => {
+  const r = request();
+  r.positions.push({ ...r.positions[0], id: 12, name: 'Arbor Metals' });
+  const plan = buildForecastAllocation(r, [returnForecastFixture('1')], [], undefined, undefined, ['12']);
+  expect(plan.status).toBe('calculated');
+  expect(plan.optimization.reviewedUnavailableKeys).toEqual(['12']);
+  expect(plan.positions[1]).toMatchObject({ action: 'Halten', amountEUR: null, currentValueEUR: 1000 });
+  expect(plan.positions[1].reason).toContain('Geprüft:');
+  expect(plan.warnings.join(' ')).not.toContain('Arbor Metals:');
+  expect(allocationMismatch(plan, [{ assetId: 12, action: 'Halten', rationale: 'Test', risk: 'Test', sourceIndexes: [] }])).toBeNull();
+  expect(validPortfolioAllocation(plan)).toBe(true);
+});
+
+it('finishes forecast review without fabricating an optimum when no forecast is available', () => {
+  const plan = buildForecastAllocation(request(), [], [], undefined, undefined, ['1']);
+  expect(plan.status).toBe('blocked'); // Only the mathematical optimization is unavailable.
+  expect(plan.positions[0]).toMatchObject({ action: 'Halten', amountEUR: null, targetWeight: null });
+  expect(plan.optimization.expectedReturnPercent).toBeNull();
+  expect(plan.optimization.reviewedUnavailableKeys).toEqual(['1']);
+  expect(validPortfolioAllocation(plan)).toBe(true);
+});
+
+it('does not waive valuation or currency failures as completed forecast review', () => {
+  const r = request(); r.positions[0].price = null;
+  const plan = buildForecastAllocation(r, [], [], undefined, undefined, ['1']);
+  expect(plan.positions[0].action).toBe('Prüfen');
+  expect(plan.optimization.reviewedUnavailableKeys).toEqual([]);
+  const mismatched = buildForecastAllocation(request(), [returnForecastFixture('1', { currency: 'USD' })], [], undefined, undefined, ['1']);
+  expect(mismatched.positions[0].action).toBe('Prüfen');
+  expect(mismatched.optimization.reviewedUnavailableKeys).toEqual([]);
+});
+
 it('matches the analytic one-asset mean-variance optimum and computes the exact sale after fees', () => {
   const plan = buildForecastAllocation(request(), [returnForecastFixture()]);
   // mu=.2, sigma=.5, lambda=5: w*=mu/(lambda*sigma^2)=.16 of initial wealth.
@@ -18,6 +50,17 @@ it('matches the analytic one-asset mean-variance optimum and computes the exact 
   expect(plan.positions[0]).toMatchObject({ action: 'Verkaufen', amountEUR: 680, targetValueEUR: 320 });
   expect(plan).toMatchObject({ feesEUR: 1, projectedCashEUR: 1679 });
   expect(plan.optimization).toMatchObject({ status: 'converged', riskAversion: 5 });
+  expect(validPortfolioAllocation(plan)).toBe(true);
+});
+
+it('keeps the cash constraint feasible under a large uncertainty penalty and very small covariance', () => {
+  const r = request(); r.profile.buyBudget = 0;
+  const plan = buildForecastAllocation(r, [returnForecastFixture()], [], undefined, undefined, [], {
+    keys: ['1'], covariance: [[1e-8]], uncertainty: [1],
+  });
+  expect(plan.status).toBe('calculated');
+  expect(plan.positions[0]).toMatchObject({ action: 'Halten', amountEUR: null });
+  expect(plan.positions[0].targetWeight.percent).toBeLessThanOrEqual(100.000001);
   expect(validPortfolioAllocation(plan)).toBe(true);
 });
 
@@ -125,17 +168,29 @@ it('freezes illiquid holdings and never treats an ELTIF redemption as immediatel
   expect(plan.projectedCashEUR).toBe(1000);
 });
 
-it('optimizes sourced new candidates jointly within cash limits and crypto concentration caps', () => {
+it('optimizes sourced new candidates within available funds without a fixed crypto or cash quota', () => {
   const r = request();
   r.profile.buyBudget = 3000;
   const candidate = { name: 'Synthetic Crypto', isin: '', symbol: 'XYZ', type: 'Crypto' as const, action: 'Kaufen' as const,
     rationale: 'Test', risk: 'Test', sourceIndexes: [0] };
   const plan = buildForecastAllocation(r, [returnForecastFixture(), returnForecastFixture('new:XYZ', { targetPrice: 150, annualVolatilityPercent: 30 })], [candidate]);
   expect(plan.status).toBe('calculated');
-  expect(plan.positions[1].targetWeight.percent).toBeLessThanOrEqual(5.000001);
+  expect(plan.positions[1].targetWeight.percent).toBeCloseTo(100, 6);
   expect(plan.projectedCashEUR).toBeGreaterThanOrEqual(0);
   expect(plan.positions[1].amountEUR).toBeGreaterThan(0);
-  expect(plan.positions[1].amountEUR).toBeLessThanOrEqual(200);
+  expect(plan.positions[1].amountEUR).toBeGreaterThan(3000);
+  expect(plan.projectedCashEUR).toBeLessThan(1);
+});
+
+it.each(['Stock', 'Crypto', 'ETF'] as const)('derives the same uncapped optimum for %s from return and risk', type => {
+  const r = request(); r.positions[0].type = type; r.profile.risk = 'high';
+  const plan = buildForecastAllocation(r, [returnForecastFixture()]);
+  // mu=.2, sigma=.5, lambda=2 gives 40% before fees, independent of asset category.
+  expect(plan.status).toBe('calculated');
+  expect(plan.positions[0].targetWeight.percent).toBeCloseTo(.4 / .9995 * 100, 7);
+  expect(plan.positions[0].amountEUR).toBe(200);
+  expect(plan.assumptions.join(' ')).toContain('Keine festen Kategoriequoten');
+  expect(plan.assumptions.join(' ')).not.toContain('Krypto zusammen höchstens');
 });
 
 it('keeps other scenarios locked during a single-asset optimization and retains stable source URLs', () => {

@@ -1,4 +1,13 @@
-import { forecastResearchGaps, forecastResearchRequirements } from './forecastResearch';
+import { forecastResearchGaps, forecastResearchRequirements, reviewedUnavailableForecasts } from './forecastResearch';
+
+it('marks only gaps remaining after completed recovery as reviewed', () => {
+  const securities = [{ id: 12 }, { id: 17 }];
+  const first = 'FORECAST_GAPS: [12, 17]';
+  expect(reviewedUnavailableForecasts(first, securities)).toEqual([]);
+  expect(reviewedUnavailableForecasts(first + '\nDie Prognose-Nachrecherche konnte nicht abgeschlossen werden.', securities)).toEqual([]);
+  expect(reviewedUnavailableForecasts(first + '\n\nGezielte Prognose-Nachrecherche:\nFORECAST_GAPS: [12]', securities)).toEqual(['12']);
+  expect(reviewedUnavailableForecasts(first + '\n\nGezielte Prognose-Nachrecherche:\nFORECAST_GAPS: []', securities)).toEqual([]);
+});
 
 it('routes only unique known numeric asset IDs from the coverage footer', () => {
   expect(forecastResearchGaps('Recherche\nFORECAST_GAPS: [2, 2, 99, "1", null]\n', [{ id: 1 }, { id: 2 }])).toEqual([2]);

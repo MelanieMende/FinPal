@@ -2,15 +2,17 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { AnalysisPosition } from './portfolioAnalysis';
 import type { ReturnForecast } from './portfolioForecastOptimization';
+import { validReturnForecast } from './portfolioForecastOptimization';
+import { etfHistoricalForecast } from './etfHistoricalForecast';
 
 type YahooSummary = {
-  financialData?: { targetMeanPrice?: number; currentPrice?: number; numberOfAnalystOpinions?: number };
+  financialData?: { targetMeanPrice?: number; targetLowPrice?: number; targetHighPrice?: number; currentPrice?: number; numberOfAnalystOpinions?: number };
   price?: { currency?: string; regularMarketPrice?: number; regularMarketTime?: Date | string | number };
 };
 type YahooHistoryRow = { date: Date | string | number; close: number; adjClose?: number };
 type YahooChartResult = {
   quotes: Array<{ date: Date | string | number; close: number | null; adjclose?: number | null }>;
-  meta?: { currentTradingPeriod?: { regular?: { start?: Date | string | number; end?: Date | string | number } } };
+  meta?: { currency?: string; currentTradingPeriod?: { regular?: { start?: Date | string | number; end?: Date | string | number } } };
 };
 export interface YahooForecastClient {
   quoteSummary(symbol: string, options: { modules: ('financialData' | 'price')[] }): Promise<YahooSummary>;
@@ -19,10 +21,10 @@ export interface YahooForecastClient {
 export interface MarketForecastOptions { forceRefresh?: boolean }
 export type MarketForecastProvider = (position: AnalysisPosition, options?: MarketForecastOptions) => Promise<ReturnForecast | null>;
 
-type ConsensusCache = { targetPrice: number; analystCount: number; referencePrice: number; currency: string; referenceTime: number; fetchedAt: number; targetDate: string };
-type VolatilityCache = NonNullable<ReturnType<typeof annualizedHistoricalVolatility>> & { fetchedAt: number; refreshAfter: number };
-type CryptoModelCache = NonNullable<ReturnType<typeof cryptoHistoricalForecast>> & { currency: string; fetchedAt: number; refreshAfter: number; targetDate: string };
-type CacheEntry = { consensus?: ConsensusCache; volatility?: VolatilityCache; crypto?: CryptoModelCache };
+type ConsensusCache = { targetPrice: number; targetLowPrice?: number; targetHighPrice?: number; analystCount: number; referencePrice: number; currency: string; referenceTime: number; fetchedAt: number; targetDate: string };
+type VolatilityCache = NonNullable<ReturnType<typeof annualizedHistoricalVolatility>> & { fetchedAt: number; refreshAfter: number; riskHistory?: ReturnForecast['riskHistory'] };
+type CryptoModelCache = NonNullable<ReturnType<typeof cryptoHistoricalForecast>> & { currency: string; fetchedAt: number; refreshAfter: number; targetDate: string; riskHistory?: ReturnForecast['riskHistory'] };
+type CacheEntry = { consensus?: ConsensusCache; volatility?: VolatilityCache; crypto?: CryptoModelCache; etf?: ReturnForecast; evidenceVersion?: 2 };
 type ProviderConfig = { cacheFile?: string; now?: () => number };
 
 const day = 86400000;
@@ -146,6 +148,23 @@ function nextPotentialMarketClose(now: number, regularEnd: number): number {
   } while (true);
 }
 
+async function euroRiskHistory(client: YahooForecastClient, symbol: string, quotes: YahooChartResult['quotes'], currency: string, now: number): Promise<ReturnForecast['riskHistory']> {
+  if (!/^[A-Z]{3}$/.test(currency)) return undefined;
+  const sources = [{ title: `Yahoo Finance adjusted history ${symbol}`, url: `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}/history/` }];
+  let fx: Map<string, number> | undefined;
+  if (currency !== 'EUR') {
+    const fxSymbol = `${currency}EUR=X`;
+    const chart = await client.chart(fxSymbol, { period1: new Date(now - 400 * day), period2: new Date(now), interval: '1d', events: 'history', return: 'array' });
+    fx = new Map(chart.quotes.filter(row => positive(row.close)).map(row => [new Date(instant(row.date)).toISOString().slice(0, 10), row.close!]));
+    sources.push({ title: `Yahoo Finance daily ${currency}/EUR exchange rates`, url: `https://finance.yahoo.com/quote/${encodeURIComponent(fxSymbol)}/history/` });
+  }
+  const rows = quotes.filter(row => Number.isFinite(instant(row.date)) && instant(row.date) < Date.UTC(new Date(now).getUTCFullYear(), new Date(now).getUTCMonth(), new Date(now).getUTCDate()))
+    .map(row => { const date = new Date(instant(row.date)).toISOString().slice(0, 10); return { date, price: (positive(row.adjclose) ? row.adjclose : row.close ?? NaN) * (fx ? fx.get(date) ?? NaN : 1) }; })
+    .filter(row => positive(row.price)).sort((a, b) => a.date.localeCompare(b.date));
+  const closes = [...new Map(rows.map(row => [row.date, row])).values()].slice(-400);
+  return closes.length >= 181 ? { currency: 'EUR', closes, sources } : undefined;
+}
+
 /** Builds a complete forecast and persistently reuses consensus and volatility until their respective refresh times. */
 export function createYahooMarketForecastProvider(client: YahooForecastClient, config: ProviderConfig | (() => number) = {}): MarketForecastProvider {
   const now = typeof config === 'function' ? config : config.now ?? Date.now;
@@ -153,11 +172,47 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
   return async (position, options = {}) => {
     const rawSymbol = position.symbol.trim().toUpperCase();
     const symbol = position.type === 'Crypto' && rawSymbol && !rawSymbol.includes('-') ? `${rawSymbol}-EUR` : rawSymbol;
+    if (position.type === 'ETF' && symbol) {
+      const fetchedAt = now(), cacheKey = `etf:${symbol}`, cached = cache.get(cacheKey);
+      const currency = position.quote?.originalCurrency ?? position.currency;
+      const usable = (f: ReturnForecast | undefined): f is ReturnForecast => !!f && f.model?.kind === 'etf-history-v1'
+        && f.currency === currency && validReturnForecast(f, fetchedAt)
+        && fetchedAt - Date.parse(f.publishedAt) <= MARKET_FORECAST_FALLBACK_MAX_AGE_MS
+        && fetchedAt - Date.parse(f.referencePriceAsOf) <= MARKET_FORECAST_FALLBACK_MAX_AGE_MS;
+      let forecast = usable(cached.etf) ? cached.etf : undefined;
+      let status: ReturnForecast['dataStatus'] = 'fresh-cache';
+      if (options.forceRefresh || !forecast || fetchedAt - Date.parse(forecast.publishedAt) >= day) {
+        try {
+          const chart = await client.chart(symbol, { period1: new Date(fetchedAt - 8 * 366 * day), period2: new Date(fetchedAt), interval: '1d', events: 'history', return: 'array' });
+          if (chart.meta?.currency !== currency || !/^[A-Z]{3}$/.test(currency)) throw new Error('ETF currency mismatch');
+          const currentUtcDay = Date.UTC(new Date(fetchedAt).getUTCFullYear(), new Date(fetchedAt).getUTCMonth(), new Date(fetchedAt).getUTCDate());
+          const completed = chart.quotes.filter(row => instant(row.date) < currentUtcDay);
+          const model = etfHistoricalForecast(completed);
+          if (!model || fetchedAt - model.referenceTime > 7 * day) throw new Error('Incomplete ETF history');
+          const riskHistory = await euroRiskHistory(client, symbol, completed, currency, fetchedAt);
+          if (!riskHistory) throw new Error('Missing EUR risk history');
+          const source = { title: `Yahoo Finance adjusted ETF history ${symbol}; FinPal local scenario`, url: `https://finance.yahoo.com/quote/${encodeURIComponent(symbol)}/history/` };
+          forecast = { key: String(position.id), publisher: 'FinPal ETF-Historienmodell', publishedAt: new Date(fetchedAt).toISOString(),
+            targetDate: new Date(fetchedAt + 365 * day).toISOString(), horizonMonths: 12,
+            targetPrice: model.targetPrice, referencePrice: model.referencePrice, referencePriceAsOf: new Date(model.referenceTime).toISOString(), currency,
+            annualVolatilityPercent: model.annualVolatilityPercent, volatilityAsOf: model.volatilityAsOf, volatilityLookbackDays: model.volatilityLookbackDays,
+            scenarioReturns: model.scenarioReturns, uncertainty: { method: 'historical-bootstrap', historyYears: model.historyYears }, riskHistory,
+            model: { kind: 'etf-history-v1', observations: model.observations, historyYears: model.historyYears, tradingDaysPerYear: 252, blockLength: 20, paths: 2000, returnBasis: 'adjusted-close' },
+            assumptions: `Lokales historisches ETF-Modellszenario, kein veröffentlichtes Kursziel. ${model.observations} bereinigte Tageskurse über ${model.historyYears.toFixed(2)} Jahre; 2.000 deterministische Moving-Block-Bootstrap-Pfade, 20 Handelstage je Block und 252 Handelstage Horizont. Historischer Median wird einmal zu 75 % gegen null geschrumpft. P10/Median/P90 beschreiben die ungeschrumpfte Bootstrap-Verteilung; keine kalibrierten Zukunftswahrscheinlichkeiten. Volatilität aus 252 bereinigten täglichen Logrenditen, annualisiert mit sqrt(252). Ausschüttungs-/splitbereinigte Historie als Renditeproxy; künftige Ausschüttungen nicht zusätzlich addieren. Modell-Referenzwert ist kein prognostizierter ausführbarer ETF-Preis. Renditesignal in ${currency} bei konstantem FX; Kovarianz aus datengleichen EUR-Kursen. Historische Muster können sich ändern; TER nicht erneut abziehen, da laufende Fondskosten bereits im Kurs wirken.`,
+            forecastSources: [source], volatilitySources: [source], dataStatus: 'live', dataAgeHours: 0 };
+          if (!usable(forecast)) throw new Error('Invalid ETF scenario');
+          status = 'live';
+          try { cache.set(cacheKey, { etf: forecast }); } catch { /* Valid scenario survives a cache write failure. */ }
+        } catch { status = 'stale-fallback'; forecast = usable(cached.etf) ? cached.etf : undefined; }
+      }
+      if (!usable(forecast)) return null;
+      return { ...forecast, key: String(position.id), dataStatus: status, dataAgeHours: (fetchedAt - Date.parse(forecast.publishedAt)) / 3600000 };
+    }
     if (position.type === 'Crypto' && symbol) {
       const fetchedAt = now(), cached = cache.get(symbol);
       let model = validCrypto(cached.crypto, fetchedAt) ? cached.crypto : undefined;
       let refreshed = false, fallback = false;
-      if (options.forceRefresh || !model || fetchedAt >= model.refreshAfter) {
+      if (options.forceRefresh || !model || fetchedAt >= model.refreshAfter || cached.evidenceVersion !== 2) {
         try {
           const chart = await client.chart(symbol, { period1: new Date(fetchedAt - 5 * 365 * day), period2: new Date(fetchedAt), interval: '1d', events: 'history', return: 'array' });
           const currentUtcDay = Date.UTC(new Date(fetchedAt).getUTCFullYear(), new Date(fetchedAt).getUTCMonth(), new Date(fetchedAt).getUTCDate());
@@ -166,14 +221,15 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
           const currency = position.quote?.originalCurrency ?? position.currency;
           if (!calculated || !/^[A-Z]{3}$/.test(currency)) throw new Error('Incomplete crypto history');
           const nextUtcDay = Date.UTC(new Date(fetchedAt).getUTCFullYear(), new Date(fetchedAt).getUTCMonth(), new Date(fetchedAt).getUTCDate() + 1, 0, 15);
-          model = { ...calculated, currency, fetchedAt, refreshAfter: nextUtcDay,
+          const riskHistory = await euroRiskHistory(client, symbol, chart.quotes, currency, fetchedAt).catch((): ReturnForecast['riskHistory'] => undefined);
+          model = { ...calculated, currency, fetchedAt, refreshAfter: nextUtcDay, riskHistory,
             targetDate: new Date(fetchedAt + 365 * day).toISOString() };
           refreshed = true;
         } catch { fallback = true; }
       }
       if (!validCrypto(model, fetchedAt)) return null;
       if (refreshed) {
-        try { cache.set(symbol, { ...cached, crypto: model }); }
+        try { cache.set(symbol, { ...cached, crypto: model, evidenceVersion: 2 }); }
         catch { /* A cache write failure must not discard a valid model. */ }
       }
       const ageHours = (fetchedAt - model.fetchedAt) / 3600000;
@@ -181,6 +237,7 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
       const encoded = encodeURIComponent(symbol);
       return { key: String(position.id), publisher: 'FinPal crypto history model', publishedAt: new Date(model.fetchedAt).toISOString(),
         targetDate: model.targetDate, horizonMonths: 12, targetPrice: model.targetPrice, currency: model.currency,
+        riskHistory: model.riskHistory, uncertainty: { method: 'historical-bootstrap', historyYears: model.observations / 365 },
         referencePrice: model.referencePrice, referencePriceAsOf: new Date(model.referenceTime).toISOString(),
         annualVolatilityPercent: model.annualVolatilityPercent, volatilityAsOf: model.volatilityAsOf,
         volatilityLookbackDays: model.volatilityLookbackDays, dataStatus, dataAgeHours: ageHours,
@@ -198,7 +255,7 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
     let refreshed = false;
     let fallback = false;
 
-    const consensusDue = options.forceRefresh || !consensus || fetchedAt - consensus.fetchedAt >= MARKET_FORECAST_CONSENSUS_TTL_MS;
+    const consensusDue = options.forceRefresh || !consensus || fetchedAt - consensus.fetchedAt >= MARKET_FORECAST_CONSENSUS_TTL_MS || cached.evidenceVersion !== 2;
     if (consensusDue) {
       try {
         const summary = await client.quoteSummary(symbol, { modules: ['financialData', 'price'] });
@@ -210,12 +267,14 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
         if (!positive(targetPrice) || !positive(analystCount) || !positive(referencePrice) || !currency || !/^[A-Z]{3}$/.test(currency)
           || !Number.isFinite(referenceTime) || referenceTime > fetchedAt || fetchedAt - referenceTime > 7 * day) throw new Error('Incomplete consensus');
         consensus = { targetPrice, analystCount, referencePrice, currency, referenceTime, fetchedAt,
+          ...(positive(summary.financialData?.targetLowPrice) && summary.financialData.targetLowPrice <= targetPrice ? { targetLowPrice: summary.financialData.targetLowPrice } : {}),
+          ...(positive(summary.financialData?.targetHighPrice) && summary.financialData.targetHighPrice >= targetPrice ? { targetHighPrice: summary.financialData.targetHighPrice } : {}),
           targetDate: new Date(fetchedAt + 365 * day).toISOString() };
         refreshed = true;
       } catch { fallback = true; }
     }
 
-    const volatilityDue = options.forceRefresh || !volatility || fetchedAt >= volatility.refreshAfter;
+    const volatilityDue = options.forceRefresh || !volatility || fetchedAt >= volatility.refreshAfter || cached.evidenceVersion !== 2;
     if (volatilityDue) {
       try {
         const chart = await client.chart(symbol, { period1: new Date(fetchedAt - 400 * day), period2: new Date(fetchedAt), interval: '1d', events: 'history', return: 'array' });
@@ -227,14 +286,16 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
           date: quote.date, close: quote.close ?? NaN, adjClose: quote.adjclose ?? undefined,
         })));
         if (!calculated) throw new Error('Incomplete price history');
-        volatility = { ...calculated, fetchedAt, refreshAfter: nextPotentialMarketClose(fetchedAt, regularEnd) };
+        const historyCurrency = chart.meta?.currency ?? consensus?.currency;
+        const riskHistory = historyCurrency === consensus?.currency ? await euroRiskHistory(client, symbol, completedQuotes, historyCurrency, fetchedAt).catch((): ReturnForecast['riskHistory'] => undefined) : undefined;
+        volatility = { ...calculated, fetchedAt, refreshAfter: nextPotentialMarketClose(fetchedAt, regularEnd), riskHistory };
         refreshed = true;
       } catch { fallback = true; }
     }
 
     if (!validConsensus(consensus, fetchedAt) || !validVolatility(volatility, fetchedAt)) return null;
     if (refreshed) {
-      try { cache.set(symbol, { consensus, volatility }); }
+      try { cache.set(symbol, { consensus, volatility, evidenceVersion: 2 }); }
       catch { /* A cache write failure must not discard valid data fetched for this analysis. */ }
     }
     const ageHours = Math.max(fetchedAt - consensus.fetchedAt, fetchedAt - volatility.fetchedAt) / 3600000;
@@ -248,6 +309,8 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
       targetDate: consensus.targetDate, horizonMonths: 12, targetPrice: consensus.targetPrice, currency: consensus.currency,
       referencePrice: consensus.referencePrice, referencePriceAsOf: new Date(consensus.referenceTime).toISOString(),
       annualVolatilityPercent: volatility.annualVolatilityPercent, volatilityAsOf: volatility.volatilityAsOf,
+      uncertainty: { method: 'analyst-consensus', analystCount: consensus.analystCount, targetLowPrice: consensus.targetLowPrice, targetHighPrice: consensus.targetHighPrice },
+      riskHistory: volatility.riskHistory,
       volatilityLookbackDays: volatility.volatilityLookbackDays, dataStatus, dataAgeHours: ageHours,
       assumptions: `Yahoo Finance targetMeanPrice consensus snapshot from ${consensus.analystCount} analyst opinions. Historical volatility calculated locally from ${volatility.returnObservations} daily logarithmic returns of adjusted closing prices and annualized with sqrt(252); observation window ${volatility.volatilityLookbackDays} calendar days. ${statusText}`,
       forecastSources: [{ title: `Yahoo Finance analyst consensus for ${symbol}`, url: `https://finance.yahoo.com/quote/${encoded}/analysis/` }],

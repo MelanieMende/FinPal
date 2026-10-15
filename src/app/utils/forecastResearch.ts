@@ -10,6 +10,13 @@ export function forecastResearchGaps(text: string, securities: { id: number }[])
   } catch { return []; }
 }
 
+/** Only a completed, sourced recovery is added under this heading by the service. */
+export function reviewedUnavailableForecasts(text: string, securities: { id: number }[]): string[] {
+  const marker = '\n\nGezielte Prognose-Nachrecherche:\n';
+  const index = text.lastIndexOf(marker);
+  return index < 0 ? [] : forecastResearchGaps(text.slice(index + marker.length), securities).map(String);
+}
+
 export function forecastResearchRequirements(now = Date.now()) {
   const day = 86400000;
   return {

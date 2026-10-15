@@ -217,6 +217,10 @@ export function allocationMismatch(plan: PortfolioAllocation, recommendations: A
   for (const rec of [...recommendations, ...candidates]) {
     const key = 'assetId' in rec ? String(rec.assetId) : allocationCandidateKey(rec);
     const target = plan.positions.find(p => p.key === key);
+    if (plan.optimization?.robust?.decisionStatus === 'review-required') {
+      if (rec.action === 'Kaufen' || rec.action === 'Verkaufen') return `${key}: Modellszenario mit offener Entscheidung. Halten oder Prüfen und plannedAmountEUR null wählen; keine abhängige Umschichtung bestätigen. Gründe: ${plan.optimization.robust.reviewReasons.join(' ')}`;
+      continue;
+    }
     if (plan.status === 'calculated' && target?.action === 'Prüfen' && rec.action !== 'Prüfen') return `${key}: Die Position ist wegen fehlender Optimierungseingaben unverändert eingefroren. Prüfen wählen und die konkrete Datenlücke nennen.`;
     if (rec.action !== 'Kaufen' && rec.action !== 'Verkaufen') continue;
     if (!target || target.action !== rec.action || target.amountEUR === null) return `${key}: Kein berechneter ${rec.action === 'Kaufen' ? 'Kauf' : 'Verkauf'} möglich. Halten oder Prüfen wählen und den konkreten Modell-/Datengrund nennen.`;

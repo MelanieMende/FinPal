@@ -7,7 +7,7 @@ import { analyzePortfolio, refreshPortfolioForecast, setAnalysisOpen, clearAnaly
 import { formatSyncTime } from '../../../../utils/syncTimestamps';
 import { assessQuoteFreshness, isMarketClosedInfo } from '../../../../utils/quoteFreshness';
 import { isEltif, assessNavFreshness, type NavEvidence } from '../../../../utils/eltifValuation';
-import type { AnalysisPosition } from '../../../../utils/portfolioAnalysis';
+import type { AnalysisPosition, AssetResearchStatus } from '../../../../utils/portfolioAnalysis';
 import { selectTotalLiquidity } from '../../../../store/cash/cash.selectors';
 import { selectRecommendationExecutions } from '../../../../utils/recommendationExecution';
 import { checkPortfolioFunding } from '../../../../utils/portfolioFunding';
@@ -38,6 +38,17 @@ const euros = (amount: number) => new Intl.NumberFormat('de-DE', { style: 'curre
 const fundingLabels = { 'no-trades': 'Keine Käufe oder Verkäufe vorgeschlagen', unknown: 'Finanzierung ungeklärt', insufficient: 'Budget reicht nicht aus', conditional: 'Im Gebührenszenario gedeckt; Steuern und Spreads noch offen' };
 const emptyChatGpt: ChatGptStatus = { connected: false, accounts: [] };
 const actionOrder = { Prüfen: 0, Verkaufen: 1, Kaufen: 2, Halten: 3 };
+export function AssetResearchIndicator({ status, now }: { status?: AssetResearchStatus; now: number }) {
+  const fetched = status?.fetchedAt ? Date.parse(status.fetchedAt) : NaN;
+  const expires = status?.expiresAt ? Date.parse(status.expiresAt) : NaN;
+  const reusable = Number.isFinite(fetched) && fetched <= now && now < expires;
+  return <p data-testid="asset-research-status" className={`m-0 min-w-0 break-words text-xs ${reusable ? 'text-sky-200' : 'text-gray-400'}`}>
+    Webrecherche: {reusable
+      ? `Erfolgreich geladen am ${formatSyncTime(status!.fetchedAt)} · Wird bis ${formatSyncTime(status!.expiresAt)} wiederverwendet (24 Stunden).`
+      : status ? 'Keine erfolgreichen Webrecherchedaten der letzten 24 Stunden verfügbar. Wird bei der Analyse geladen.'
+        : 'Status der gespeicherten Webrecherche nicht verfügbar.'}
+  </p>;
+}
 const compareRecommendations = (a: { action: keyof typeof actionOrder }, b: { action: keyof typeof actionOrder }) => actionOrder[a.action] - actionOrder[b.action];
 
 type AIConnectionSettingsProps = {
@@ -207,6 +218,21 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
   const [notice, setNotice] = useState<string | null>(null);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  const [researchStatus, setResearchStatus] = useState<AssetResearchStatus[]>([]);
+  const researchAssets = JSON.stringify(positions.map(({ id, name, isin, symbol, type }) => ({ id, name, isin, symbol, type })));
+  useEffect(() => {
+    if (!open || !window.API.getPortfolioResearchStatus) return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const statuses = await window.API.getPortfolioResearchStatus(JSON.parse(researchAssets));
+        if (!cancelled) { setResearchStatus(statuses); setNow(Date.now()); }
+      } catch { if (!cancelled) setResearchStatus([]); }
+    };
+    void refresh();
+    const timer = window.setInterval((): void => { void refresh(); }, 30000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [open, researchAssets, result, analyzing]);
   const snapshot = JSON.stringify({ positions, profile, priceUpdatedAt, investorContext });
   let comparableSnapshot = resultSnapshot;
   try {
@@ -342,10 +368,10 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
         <Spinner size={20} />
         <div>
           {analysisState.targetAssetId != null && <p className="mt-0 mb-1 text-sm font-bold text-indigo-200">Einzelanalyse: {assets.find(asset => asset.ID === analysisState.targetAssetId)?.name || `Asset ${analysisState.targetAssetId}`}</p>}
-          {analysisState.targetAssetId != null && <p className="mt-0 mb-1 text-xs text-gray-400">Eine vorhandene Einzelrecherche wird bis zu 30 Minuten wiederverwendet. Bestände, Kurse und Anlageprofil werden bei jeder Empfehlung neu ausgewertet.</p>}
+          {analysisState.targetAssetId != null && <p className="mt-0 mb-1 text-xs text-gray-400">Erfolgreiche Webrecherchedaten je Asset werden 24 Stunden wiederverwendet, auch aus einer Gesamtanalyse. Bestände, Kurse und Anlageprofil werden bei jeder Empfehlung neu ausgewertet.</p>}
           <p role="status" className="m-0 text-sm text-indigo-200">{stageLabels[progress.stage]}{progress.stage === 'research' && progress.researchTotal && ` · ${progress.researchCompleted ?? 0}/${progress.researchTotal} Gruppen abgeschlossen`}</p>
           <p className="mt-1 mb-0 text-xs text-gray-300">Laufzeit: {duration(Math.max(0, Math.floor((now - startedAt) / 1000)))} · Letzte Rückmeldung vor {Math.max(0, Math.floor((now - progress.lastActivityAt) / 1000))} s</p>
-          <p className="mt-1 mb-0 text-xs text-gray-400">Webrecherche und Analyse können mehrere Minuten dauern. Zeitlimit: {ANALYSIS_TIMEOUT_MS / 60000} Minuten. Abgeschlossene Recherchegruppen werden für erneute Versuche bis zu 30 Minuten wiederverwendet.</p>
+          <p className="mt-1 mb-0 text-xs text-gray-400">Webrecherche und Analyse können mehrere Minuten dauern. Zeitlimit: {ANALYSIS_TIMEOUT_MS / 60000} Minuten. Erfolgreiche Webrecherchedaten werden 24 Stunden ab Abruf wiederverwendet, auch nach einem Neustart.</p>
         </div>
       </div>}
       {open && <div id="portfolio-analysis-content" className="mt-5 space-y-4">
@@ -418,9 +444,17 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
           <Button icon="refresh" disabled={busy || !positions.length || !result} onClick={() => refreshForecast()}>Alle Forecasts neu laden</Button>
         </div>
         <p className="mt-1 text-xs text-gray-400">„Analyse starten“ verwendet den gültigen lokalen Forecast-Cache. „Alle Forecasts neu laden“ aktualisiert nur Forecasts und lokale Zielgewichtung; die bestehende KI-Analyse bleibt erhalten.</p>
+        <p className="mt-1 text-xs text-gray-400">Erfolgreiche Webrecherchedaten werden je Asset 24 Stunden wiederverwendet. Nur fehlende oder abgelaufene Recherchen werden neu geladen; Bestände, Kurse und Anlageprofil werden erneut ausgewertet.</p>
+        {!result && positions.length > 0 && <section aria-label="Webrecherche je Asset" className="min-w-0 space-y-3 rounded-lg border border-white/10 p-3">
+          {positions.map(position => <div key={position.id} className="min-w-0">
+            <p className="m-0 break-words text-sm font-bold text-white">{position.name}</p>
+            <AssetResearchIndicator status={researchStatus.find(status => status.assetId === position.id)} now={now} />
+          </div>)}
+        </section>}
         {!positions.length && <p className="text-xs text-gray-400">Es sind keine gehaltenen Assets vorhanden.</p>}
         {result && <section aria-label="Analyseergebnis" className="space-y-3 border-t border-white/10 pt-4">
           <p className="text-xs text-gray-400">Analyse vom {formatSyncTime(result.generatedAt)} · {result.model} · Kursstand: {formatSyncTime(result.priceUpdatedAt) ?? 'unbekannt'}</p>
+          {result.allocationPlan?.method === 'forecast-mean-variance-v1' && !result.allocationPlan.optimization?.robust && <p className="text-sm text-amber-300">Diese gespeicherte Analyse verwendet das alte Modell. Für Unsicherheitsgewichtung, gemessene Kovarianzen und die neue Entscheidungsprüfung bitte die Gesamtanalyse erneut starten.</p>}
           {stale && <p role="status" className="text-amber-300 text-sm">Portfolio, Kurse oder Anlageprofil haben sich seit dieser Analyse geändert. Bitte neu analysieren.</p>}
           <p className="text-sm text-gray-200 whitespace-pre-wrap">{result.summary}</p>
           <AnalysisMessages infos={result.infos} warnings={result.warnings} />
@@ -440,10 +474,11 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
             <AnalysisMessages warnings={fundingCheck.warnings} />
           </section>}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {result.recommendations.slice().sort(compareRecommendations).map(rec => <article key={rec.assetId} className="rounded-lg border border-white/10 p-4">
+            {result.recommendations.slice().sort(compareRecommendations).map(rec => <article key={rec.assetId} className="min-w-0 rounded-lg border border-white/10 p-4">
               <div className="flex justify-between items-start gap-3"><span className="font-bold text-sm text-white">{assets.find(a => a.ID === rec.assetId)?.name || `Asset ${rec.assetId}`}</span>
                 <span className={`text-xs font-bold ${rec.action === 'Kaufen' ? 'text-emerald-400' : rec.action === 'Verkaufen' ? 'text-red-400' : rec.action === 'Prüfen' ? 'text-amber-300' : 'text-indigo-300'}`}>{rec.action}</span>
               </div>
+              <AssetResearchIndicator status={researchStatus.find(status => status.assetId === rec.assetId)} now={now} />
               {executions[rec.assetId]?.status !== 'open' && executions[rec.assetId] && <p
                 className="text-xs font-bold text-emerald-400" data-testid={`recommendation-execution-${rec.assetId}`}>
                 {executions[rec.assetId].status === 'done' ? 'Done' : 'Teilweise umgesetzt'} · {euros(executions[rec.assetId].amountEUR)} erfasst
@@ -481,6 +516,12 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                   <span className={`text-xs font-bold ${rec.action === 'Kaufen' ? 'text-emerald-400' : 'text-amber-300'}`}>{rec.action}</span>
                 </div>
                 <p className="text-xs text-gray-400">{rec.type}{rec.isin && ` · ISIN: ${rec.isin}`}{rec.symbol && ` · Ticker: ${rec.symbol}`}</p>
+                {rec.marketQuote ? <div data-testid="candidate-market-quote" className="text-xs text-gray-400 my-2 break-words">
+                  <p>EUR-Börsenkurs: {new Intl.NumberFormat('de-DE', { maximumFractionDigits: 4 }).format(rec.marketQuote.price)} EUR · {rec.marketQuote.exchange}{rec.marketQuote.symbol && ` · ${rec.marketQuote.symbol}`}</p>
+                  <p>Kurszeitpunkt: {new Date(rec.marketQuote.quoteAsOf).toLocaleString('de-DE')} · Abgerufen: {new Date(rec.marketQuote.fetchedAt).toLocaleString('de-DE')}</p>
+                  <p>Letzter Börsenkurs; Ausführungspreis und Handelbarkeit beim Depotanbieter sind nicht bestätigt.</p>
+                  <a href={rec.marketQuote.source.url} onClick={e => openSource(e, rec.marketQuote!.source.url)} target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline">{rec.marketQuote.source.title}</a>
+                </div> : rec.marketQuote === null && <p data-testid="candidate-market-quote" className="text-xs text-gray-400 my-2 break-words">EUR-Kursabruf geprüft: Kein eindeutig zugeordneter aktueller EUR-Kurs mit Kurszeitpunkt verfügbar. Die übrige Analyse wird fortgesetzt.</p>}
                 <AssetOptimizationDetails plan={result.allocationPlan} allocationKey={allocationCandidateKey(rec)} assetType={rec.type} onOpenSource={openSource} />
                 <p className="text-sm text-gray-300 whitespace-pre-wrap">{rec.rationale}</p>
                 {typeof rec.plannedAmountEUR === 'number' && !result.allocationPlan?.positions.some(position => position.key === allocationCandidateKey(rec)) && <p className="text-xs text-gray-400">Geplanter Kaufbetrag im Szenario: {euros(rec.plannedAmountEUR)}</p>}

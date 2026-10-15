@@ -7,7 +7,7 @@ it('provides filing discovery pointers by normalized ISIN without exposing holdi
     { ID: 20, name: 'Unrelated issuer', symbol: 'OTHER', isin: 'OTHER', type: 'Stock', current_shares: 1 },
   ] as Asset[]);
   const securities = buildResearchSecurities(positions);
-  expect(securities[0]).toMatchObject({ id: 12, discoveryHints: { issuer: 'Arbor Metals Corp.', listing: 'TSXV: ABR; Frankfurt: 432' } });
+  expect(securities[0]).toMatchObject({ id: 12, symbol: 'CA03880B1040.SG', discoveryHints: { issuer: 'Arbor Metals Corp.', listing: expect.stringContaining('Yahoo Finance: ABR.V (TSXV, CAD;') } });
   expect(securities[0].discoveryHints!.sourceUrls).toContain('https://www.sedarplus.ca/');
   expect(securities[0].discoveryHints!.sourceUrls.some(url => url.endsWith('.pdf'))).toBe(true);
   expect(securities[1]).not.toHaveProperty('discoveryHints');

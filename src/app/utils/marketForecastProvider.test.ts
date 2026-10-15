@@ -4,6 +4,58 @@ import path from 'node:path';
 import { annualizedHistoricalVolatility, createYahooMarketForecastProvider, cryptoHistoricalForecast, type YahooForecastClient } from './marketForecastProvider';
 import { validReturnForecast } from './portfolioForecastOptimization';
 import type { AnalysisPosition } from './portfolioAnalysis';
+import { etfHistoryFixture } from '../../testing/fixtures/etfHistory';
+
+it('provides ETF scenarios without analyst targets, persists and reuses them, and bounds offline fallback', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-etf-model-'));
+  let clock = now;
+  const client: YahooForecastClient = { quoteSummary: jest.fn(), chart: jest.fn().mockResolvedValue({ quotes: etfHistoryFixture(now), meta: { currency: 'EUR' } }) };
+  const position: AnalysisPosition = { id: 19, name: 'ETF USD (Acc)', type: 'ETF', symbol: 'IUSN.DE', isin: 'IE00BF4RFH31', price: 9.1, currency: 'EUR', shares: 1, costBasis: null, dividendsEarned: 0, realizedGainLoss: null };
+  const config = { cacheFile: path.join(directory, 'cache.json'), now: () => clock };
+  try {
+    const provider = createYahooMarketForecastProvider(client, config);
+    const first = (await provider(position))!;
+    expect(first.model).toMatchObject({ kind: 'etf-history-v1', tradingDaysPerYear: 252, paths: 2000 });
+    expect(first.riskHistory!.currency).toBe('EUR');
+    expect(validReturnForecast(first, clock)).toBe(true);
+    expect(client.quoteSummary).not.toHaveBeenCalled();
+    clock += 23 * 3600000;
+    expect((await createYahooMarketForecastProvider(client, config)(position))?.dataStatus).toBe('fresh-cache');
+    expect(client.chart).toHaveBeenCalledTimes(1);
+    clock += 2 * 3600000;
+    jest.mocked(client.chart).mockRejectedValue(new Error('offline'));
+    expect((await provider(position))?.dataStatus).toBe('stale-fallback');
+    clock += 8 * day;
+    expect(await provider(position)).toBeNull();
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+it('rejects short, stale, unadjusted or currency-mismatched ETF histories instead of inventing inputs', async () => {
+  const rows = etfHistoryFixture(now);
+  const position: AnalysisPosition = { id: 19, name: 'ETF', type: 'ETF', symbol: 'IUSN.DE', isin: '', price: 9.1, currency: 'EUR', shares: 1, costBasis: null, dividendsEarned: 0, realizedGainLoss: null };
+  for (const chart of [
+    { quotes: rows.slice(-900), meta: { currency: 'EUR' } },
+    { quotes: rows.map(row => ({ ...row, adjclose: null as number | null })), meta: { currency: 'EUR' } },
+    { quotes: rows, meta: { currency: 'USD' } },
+    { quotes: rows.filter(row => row.date.getTime() < now - 10 * day), meta: { currency: 'EUR' } },
+  ]) {
+    const client: YahooForecastClient = { quoteSummary: jest.fn(), chart: jest.fn().mockResolvedValue(chart) };
+    expect(await createYahooMarketForecastProvider(client, () => now)(position)).toBeNull();
+  }
+});
+
+it('requires actual dated FX data for a non-EUR ETF risk series', async () => {
+  const rows = etfHistoryFixture(now);
+  const client: YahooForecastClient = { quoteSummary: jest.fn(), chart: jest.fn(async symbol => symbol === 'USDEUR=X'
+    ? { quotes: rows.slice(-300).map(row => ({ date: row.date, close: .9 })) }
+    : { quotes: rows, meta: { currency: 'USD' } }) };
+  const position: AnalysisPosition = { id: 1, name: 'ETF', type: 'ETF', symbol: 'TEST.L', isin: '', price: 100, currency: 'USD', shares: 1, costBasis: null, dividendsEarned: 0, realizedGainLoss: null };
+  const forecast = (await createYahooMarketForecastProvider(client, () => now)(position))!;
+  expect(forecast.currency).toBe('USD');
+  expect(forecast.riskHistory!.closes[forecast.riskHistory!.closes.length - 1].price).toBeCloseTo(rows[rows.length - 1].adjclose * .9);
+  jest.mocked(client.chart).mockImplementation(async symbol => { if (symbol === 'USDEUR=X') throw new Error('FX missing'); return { quotes: rows, meta: { currency: 'USD' } }; });
+  expect(await createYahooMarketForecastProvider(client, () => now)(position)).toBeNull();
+});
 
 const day = 86400000;
 const now = Date.parse('2026-10-13T12:00:00Z');
@@ -94,6 +146,26 @@ it('combines a sourced analyst consensus and calculated volatility into a valid 
   expect(forecast?.assumptions).toContain('252 daily logarithmic returns');
   expect(forecast?.forecastSources[0].url).toContain('MUV2.DE/analysis');
   expect(validReturnForecast(forecast! as never, now)).toBe(true);
+});
+
+it('preserves analyst coverage and dispersion and converts historical prices with same-date FX', async () => {
+  const quotes = history.map(row => ({ ...row, adjclose: row.adjClose }));
+  const fxQuotes = history.map((row, index) => ({ date: row.date, close: .8 + index * .0001 }));
+  const client: YahooForecastClient = {
+    quoteSummary: jest.fn().mockResolvedValue({ financialData: { targetMeanPrice: 620, targetLowPrice: 500, targetHighPrice: 750, currentPrice: 560, numberOfAnalystOpinions: 7 }, price: { currency: 'USD', regularMarketTime: new Date(now - day) } }),
+    chart: jest.fn(async symbol => symbol === 'USDEUR=X' ? { quotes: fxQuotes } : { quotes, meta: { currency: 'USD' } }),
+  };
+  const position: AnalysisPosition = { id: 1, name: 'Synthetic USD asset', symbol: 'TEST', isin: '', type: 'Stock', shares: 1, price: 500, currency: 'EUR', costBasis: null, dividendsEarned: 0, realizedGainLoss: null };
+  const forecast = (await createYahooMarketForecastProvider(client, () => now)(position))!;
+  expect(forecast.uncertainty).toEqual({ method: 'analyst-consensus', analystCount: 7, targetLowPrice: 500, targetHighPrice: 750 });
+  expect(forecast.riskHistory!.currency).toBe('EUR');
+  expect(forecast.riskHistory!.closes[0].price).toBeCloseTo(history[0].adjClose * .8, 10);
+  expect(forecast.riskHistory!.sources.some(source => source.url.includes('USDEUR'))).toBe(true);
+  expect(validReturnForecast(forecast, now)).toBe(true);
+  jest.mocked(client.chart).mockImplementation(async symbol => { if (symbol === 'USDEUR=X') throw new Error('FX unavailable'); return { quotes, meta: { currency: 'USD' } }; });
+  const missingFX = (await createYahooMarketForecastProvider(client, () => now)(position))!;
+  expect(missingFX.riskHistory).toBeUndefined();
+  expect(missingFX.uncertainty!.analystCount).toBe(7);
 });
 
 it('rejects incomplete consensus data or too little price history', async () => {

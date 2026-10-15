@@ -59,6 +59,7 @@ export interface AssetRecommendation {
   tradeCheck?: { costs: string; taxes: string; conclusion: string };
 }
 export interface PortfolioAnalysisResult {
+  fundamentalRisks?: import('./robustForecastModel').FundamentalRiskAssessment[];
   allocationPlan?: import('./portfolioAllocation').PortfolioAllocation;
   fundingCheck?: import('./portfolioFunding').FundingCheck;
   summary: string;
@@ -73,6 +74,7 @@ export interface PortfolioAnalysisResult {
 }
 
 export interface NewAssetRecommendation {
+  marketQuote?: import('./candidateMarketQuote').CandidateMarketQuote | null;
   plannedAmountEUR?: number | null;
   name: string;
   isin: string;
@@ -167,6 +169,13 @@ export interface PortfolioAnalysisProgress {
   lastActivityAt: number;
   researchCompleted?: number;
   researchTotal?: number;
+}
+
+export type ResearchAsset = Pick<AnalysisPosition, 'id' | 'name' | 'isin' | 'symbol' | 'type'>;
+export interface AssetResearchStatus {
+  assetId: number;
+  fetchedAt: string | null;
+  expiresAt: string | null;
 }
 
 export interface SavedPortfolioAnalysis {

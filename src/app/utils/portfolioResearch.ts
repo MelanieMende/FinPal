@@ -16,9 +16,11 @@ const issuerHints: Record<string, { issuer: string; listing: string; sourceUrls:
     sourceUrls: ['https://www.apollo.com/agpm-eltif'],
   },
   CA03880B1040: {
-    issuer: 'Arbor Metals Corp.', listing: 'TSXV: ABR; Frankfurt: 432',
+    issuer: 'Arbor Metals Corp.', listing: 'TSXV: ABR; Frankfurt: 432; Yahoo Finance: ABR.V (TSXV, CAD; zusätzliche Recherchekennung)',
     sourceUrls: [
       'https://arbormetalscorp.com/',
+      'https://finance.yahoo.com/quote/ABR.V/analysis/',
+      'https://finance.yahoo.com/quote/ABR.V/history/',
       'https://arbormetalscorp.com/news/arbor-metals-announces-adoption-of-semi-annual-reporting/',
       'https://arbormetalscorp.com/news/',
       'https://www.sedarplus.ca/',
@@ -38,7 +40,7 @@ export const currencyExposureResearchInstructions = ' Recherchiere die wirtschaf
 
 export const currencyExposureAnalysisInstructions = ' currencyExposure beschreibt ausschließlich die lokal gelieferte Datengrundlage: unknown bedeutet keine lokal strukturierte wirtschaftliche Währungsexposition, nicht automatisch fehlende Webbelege. Ergänze sie anhand der gelieferten Recherche und nenne belegte Erkenntnisse je Position samt Quellen und Stichtag. kind direct-nominal bezeichnet die bestätigte Nominal-/Zahlungswährung einer direkten Anleihe; sie darf nicht als unbekannt dargestellt werden, belegt aber keine vollständige Netto-Risikoquote oder Absicherung. Bei Aktien, ETFs und Fonds Handelswährung, ISIN-Land, Fondswährung oder geografische Umsätze nicht mit wirtschaftlicher Währungsexposition gleichsetzen. Vorhandene recherchierte Daten auswerten und nur die verbleibenden konkreten Lücken nennen. Keine pauschale Warnung für alle Positionen allein wegen unknown. Eine fehlende exakte Portfolio-Währungsrisiko-Allokation ist eine Einschränkung der Quantifizierung, nicht allein ein Grund für die Aktion Prüfen. Belegte wesentliche Fremdwährungsrisiken bleiben in risk/warnings zu nennen.';
 
-export function buildResearchSecurities(positions: AnalysisPosition[]) {
+export function buildResearchSecurities(positions: Pick<AnalysisPosition, 'id' | 'name' | 'isin' | 'symbol' | 'type'>[]) {
   return positions.map(({ id, name, isin, symbol, type }) => {
     const hints = issuerHints[isin.trim().toUpperCase()];
     return { id, name, isin, symbol, type, ...(hints ? { discoveryHints: hints } : {}) };

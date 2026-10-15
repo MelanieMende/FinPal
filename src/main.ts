@@ -14,6 +14,7 @@ import { DivvyDiaryService } from './app/utils/divvyDiaryService';
 import { fetchEuroExchangeRates } from './app/utils/euroExchangeRates';
 import YahooFinance from 'yahoo-finance2';
 import { createYahooMarketForecastProvider } from './app/utils/marketForecastProvider';
+import { createCandidateMarketQuoteProvider } from './app/utils/candidateMarketQuote';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -43,7 +44,8 @@ let mainRendererURL: string | undefined;
 const chatGptAuth = new ChatGptAuth(dataPath);
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 const portfolioAnalysis = new PortfolioAnalysisService(dataPath, fetch, chatGptAuth,
-  createYahooMarketForecastProvider(yahooFinance, { cacheFile: path.join(dataPath, 'portfolio-market-forecast-cache.json') }));
+  createYahooMarketForecastProvider(yahooFinance, { cacheFile: path.join(dataPath, 'portfolio-market-forecast-cache.json') }),
+  createCandidateMarketQuoteProvider({ cacheFile: path.join(dataPath, 'portfolio-candidate-quote-cache.json') }));
 
 let appState: {
   dataPath: string;
@@ -257,6 +259,7 @@ ipcMain.handle('trade-republic:forget', async event => {
 });
 
 ipcMain.handle('portfolio-ai:status', () => ({ ...portfolioAnalysis.status(), chatGpt: chatGptAuth.status() }));
+ipcMain.handle('portfolio-ai:research-status', (_event, assets: import('./app/utils/portfolioAnalysis').ResearchAsset[]) => portfolioAnalysis.getResearchStatus(assets));
 ipcMain.handle('portfolio-ai:save-key', (_event, key: string) => { portfolioAnalysis.saveKey(key); return true; });
 ipcMain.handle('portfolio-ai:forget-key', () => { portfolioAnalysis.forgetKey(); return true; });
 ipcMain.handle('portfolio-ai:chatgpt-sign-in', (_event, clientId?: string) => chatGptAuth.signIn(clientId));

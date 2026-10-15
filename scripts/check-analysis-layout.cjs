@@ -49,8 +49,16 @@ async function checkInChromium(html, output) {
           if (allocation && allocation.scrollWidth > allocation.clientWidth + 1) errors.push('Allocation exceeds its container');
           const forecasts = root.querySelector('[aria-label="Prognosebasierte Optimierung"]');
           if (forecasts && forecasts.scrollWidth > forecasts.clientWidth + 1) errors.push('Forecast inputs exceed their container');
+          const robustness = root.querySelector('[aria-label="Robustheit und Entscheidungsprüfung"]');
+          if (robustness && robustness.scrollWidth > robustness.clientWidth + 1) errors.push('Robustness review exceeds its container');
           root.querySelectorAll('[aria-label^="Prognose und Zielgewichtung "]').forEach(assetAnalysis => {
             if (assetAnalysis.scrollWidth > assetAnalysis.clientWidth + 1) errors.push('Combined asset analysis exceeds its container');
+          });
+          document.querySelectorAll('[data-testid="asset-research-status"]').forEach(status => {
+            if (status.scrollWidth > status.clientWidth + 1) errors.push('Asset research status exceeds its container');
+          });
+          root.querySelectorAll('[data-testid="candidate-market-quote"]').forEach(quote => {
+            if (quote.scrollWidth > quote.clientWidth + 1) errors.push('Candidate quote exceeds its container');
           });
           root.querySelectorAll('[role="tablist"][aria-label="Analysehinweise"]').forEach(tablist => {
             const tabs = [...tablist.querySelectorAll('[role="tab"]')];
@@ -98,6 +106,9 @@ async function checkInChromium(html, output) {
           await scrollToSection('[aria-label="Berechnete Zielgewichtung"]');
           const allocationScreenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'allocation-900' + suffix + '.png'), allocationScreenshot.toPNG());
+          await scrollToSection('[aria-label="Robustheit und Entscheidungsprüfung"]');
+          const robustnessScreenshot = await window.webContents.capturePage();
+          fs.writeFileSync(path.join(output, 'robustness-900' + suffix + '.png'), robustnessScreenshot.toPNG());
           await scrollToSection('[aria-label^="Prognose und Zielgewichtung "]');
           const assetAnalysisScreenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'asset-analysis-900' + suffix + '.png'), assetAnalysisScreenshot.toPNG());
@@ -107,6 +118,12 @@ async function checkInChromium(html, output) {
           await scrollToSection('[aria-label="Analyseergebnis"]');
           const messagesScreenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'analysis-messages-900' + suffix + '.png'), messagesScreenshot.toPNG());
+          await scrollToSection('[aria-label="Webrecherche Layoutprüfung"]');
+          const researchScreenshot = await window.webContents.capturePage();
+          fs.writeFileSync(path.join(output, 'research-900' + suffix + '.png'), researchScreenshot.toPNG());
+          await scrollToSection('[aria-label="Neue Kaufideen"]');
+          const candidateScreenshot = await window.webContents.capturePage();
+          fs.writeFileSync(path.join(output, 'candidate-quote-900' + suffix + '.png'), candidateScreenshot.toPNG());
           await window.webContents.executeJavaScript('scrollTo(0, 0)');
         }
         if (width === 900 && settingsFixture) {
@@ -136,10 +153,12 @@ async function buildAndCheck() {
     import { setupStore } from './src/app/store';
     import PortfolioAnalysis from './src/app/routes/routes/AnalysisRoute/components/PortfolioAnalysis';
     import { AIConnectionSettings } from './src/app/routes/routes/AnalysisRoute/components/PortfolioAnalysis';
+    import { AssetResearchIndicator } from './src/app/routes/routes/AnalysisRoute/components/PortfolioAnalysis';
     import { readInvestorFacts, saveInvestorFacts } from './src/app/utils/investorFacts';
-    import { buildForecastAllocation } from './src/app/utils/portfolioForecastOptimization';
-    import { returnForecastFixture } from './src/testing/fixtures/returnForecast';
+    import { buildRobustForecastAllocation as buildForecastAllocation } from './src/app/utils/robustForecastModel';
+    import { robustReturnForecastFixture as returnForecastFixture } from './src/testing/fixtures/robustForecast';
     import { buildAnalysisPositions } from './src/app/utils/portfolioAnalysis';
+    import { etfReturnForecastFixture } from './src/testing/fixtures/etfHistory';
     export function render(provider) {
       const assets = [{ ID: 1, name: 'LongAssetName'.repeat(12), type: 'Crypto', symbol: 'BTC',
         isin: '', price: 100, current_shares: 1, currencySymbol: 'EUR' }];
@@ -151,21 +170,35 @@ async function buildAndCheck() {
       const state = setupStore().getState();
       const allocationPositions = buildAnalysisPositions(assets.map(a => ({ ...a, currencySymbol: '€', price: 1000 })));
       allocationPositions.push({ ...allocationPositions[0], id: 2, name: 'LongUnmodeledAssetName'.repeat(8), symbol: 'NO-FORECAST', type: 'Stock' });
+      const etfForecast = etfReturnForecastFixture('new:IE00BF4RFH31');
+      const candidate = { name: 'iShares MSCI World Small Cap UCITS ETF USD (Acc)', isin: 'IE00BF4RFH31', symbol: 'WSML', type: 'ETF', action: 'Prüfen',
+        rationale: 'Lokales Historienmodell und gemeinsame Budgetrechnung vorhanden; Risikoprüfung bleibt erforderlich.', risk: 'Small-Cap-Marktrisiko', sourceIndexes: [],
+        marketQuote: { isin: 'IE00BF4RFH31', symbol: 'IUSN.DE', price: etfForecast.referencePrice, currency: 'EUR', exchange: 'XETR', kind: 'last-trade',
+          quoteAsOf: new Date(Date.now() - 60000).toISOString(), fetchedAt: new Date().toISOString(),
+          source: { title: 'Deutsche Börse: EUR-Börsenkurs IE00BF4RFH31', url: 'https://api.boerse-frankfurt.de/v1/data/price_information/single?isin=IE00BF4RFH31' } } };
       const allocationPlan = buildForecastAllocation({ provider: 'api', priceUpdatedAt: new Date(Date.now()).toISOString(),
         positions: allocationPositions,
         profile: { goal: 'growth', risk: 'high', horizonYears: 10, buyBudget: 1000 } },
-        [returnForecastFixture('1', { targetPrice: 1100, referencePrice: 1000,
-          scenarioReturns: { p10: -45, median: 12, p90: 140 },
-          publisher: 'SyntheticPublisher'.repeat(20), assumptions: 'Synthetic assumptions for layout verification. '.repeat(15) })]);
+        [returnForecastFixture('1', { targetPrice: 1500, referencePrice: 1000,
+          uncertainty: { method: 'historical-bootstrap', historyYears: 5 },
+          scenarioReturns: { p10: -45, median: 200, p90: 300 },
+          publisher: 'SyntheticPublisher'.repeat(20), assumptions: 'Synthetic assumptions for layout verification. '.repeat(15) }), etfForecast], [candidate], undefined, undefined, ['2']);
       const recommendations = allocationPositions.map(position => ({ assetId: position.id, action: 'Prüfen',
         rationale: 'Ausführliche KI-Begründung für die zusammengeführte Asset-Kachel. '.repeat(5),
         risk: 'Risikoangabe für die Layoutprüfung.', sourceIndexes: [] }));
       const result = { summary: 'Layout fixture', infos: ['Zusätzliche Information für die Layoutprüfung.'], warnings: ['Warnung mit einem längeren Text für die Layoutprüfung.'], sources: [], recommendations, generatedAt: '2026-10-12T10:00:00Z',
-        priceUpdatedAt: null, model: 'fixture', allocationPlan };
+        priceUpdatedAt: null, model: 'fixture', allocationPlan,
+        newAssetRecommendations: [candidate] };
       const store = setupStore({ ...state, assets, transactions,
         appState: { ...state.appState, database: 'layout-fixture' },
         portfolioAnalysis: { ...state.portfolioAnalysis, provider, result } });
-      return renderToStaticMarkup(<Provider store={store}><PortfolioAnalysis standalone priceUpdatedAt={null} /></Provider>);
+      const loaded = Date.now() - 3600000;
+      return renderToStaticMarkup(<Provider store={store}><PortfolioAnalysis standalone priceUpdatedAt={null} />
+        <section aria-label="Webrecherche Layoutprüfung" className="min-w-0 space-y-3 rounded-lg border border-white/10 p-4">
+          <AssetResearchIndicator status={{ assetId: 1, fetchedAt: new Date(loaded).toISOString(), expiresAt: new Date(loaded + 86400000).toISOString() }} now={Date.now()} />
+          <AssetResearchIndicator status={{ assetId: 2, fetchedAt: null, expiresAt: null }} now={Date.now()} />
+        </section>
+      </Provider>);
     }
     export function renderSettings(provider) {
       const chatGpt = { connected: true, activeClientId: 'layout-account', accounts: [{ clientId: 'layout-account', label: 'Very Long Connected Account Name For Layout Validation', connected: true }] };

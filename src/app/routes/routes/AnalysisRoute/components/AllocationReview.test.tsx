@@ -5,12 +5,51 @@ import { buildPortfolioAllocation } from '../../../../utils/portfolioAllocation'
 import type { PortfolioAnalysisRequest } from '../../../../utils/portfolioAnalysis';
 import { buildForecastAllocation } from '../../../../utils/portfolioForecastOptimization';
 import { returnForecastFixture } from '../../../../../testing/fixtures/returnForecast';
+import { robustReturnForecastFixture } from '../../../../../testing/fixtures/robustForecast';
+import { buildRobustForecastAllocation } from '../../../../utils/robustForecastModel';
+import { etfReturnForecastFixture } from '../../../../../testing/fixtures/etfHistory';
 
 const request: PortfolioAnalysisRequest = { provider: 'api', priceUpdatedAt: null,
   profile: { goal: 'growth', risk: 'high', horizonYears: 10, buyBudget: 1000 },
   positions: [{ id: 1, type: 'Crypto', name: 'Bitcoin', isin: '', symbol: 'BTC', shares: 1, price: 1000, currency: 'EUR',
     costBasis: 800, dividendsEarned: 0, realizedGainLoss: 0 }],
 };
+
+it('labels ETF history scenarios separately from published price targets and shows trading-day methodology', () => {
+  const forecast = etfReturnForecastFixture('1');
+  const r = { ...request, positions: [{ ...request.positions[0], type: 'ETF' as const, price: forecast.referencePrice }] };
+  const plan = buildRobustForecastAllocation(r, [forecast]);
+  render(<><AllocationReview plan={plan} /><AssetOptimizationDetails plan={plan} allocationKey="1" assetType="ETF" /></>);
+  expect(screen.getByText(/Modell-Referenzwert \(kein veröffentlichtes Kursziel\)/)).toBeInTheDocument();
+  expect(screen.getByText(/Lokales ETF-Historienmodell:.*252 Handelstage/)).toBeInTheDocument();
+  expect(screen.getByText(/Historisches Bootstrap-Szenarioband: P10/)).toBeInTheDocument();
+  expect(screen.getByText(/ETF-Historienmodelle nutzen ausschüttungsbereinigte Renditeproxies/)).toBeInTheDocument();
+});
+
+it('separates an unapproved scenario from actionable amounts and shows measured risk and stress checks', () => {
+  const r = { ...request, priceUpdatedAt: new Date().toISOString(), positions: [{ ...request.positions[0], name: 'Synthetic Stock', type: 'Stock' as const, price: 50, shares: 20 }] };
+  const plan = buildRobustForecastAllocation(r, [robustReturnForecastFixture('1', { targetPrice: 100 })]);
+  render(<><AllocationReview plan={plan} /><AssetOptimizationDetails plan={plan} allocationKey="1" /></>);
+  expect(screen.getByText('Modellszenario mit offener Entscheidung')).toBeInTheDocument();
+  expect(screen.getByText(/gemessene EUR-Kovarianzen aus 365/)).toBeInTheDocument();
+  expect(screen.getByText(/Rohsignal:.*Nach Unsicherheitsgewichtung/)).toBeInTheDocument();
+  expect(screen.getByText(/Analystenabdeckung: 20/)).toBeInTheDocument();
+  expect(screen.getByText(/Reines Modellszenario: Kaufen/)).toBeInTheDocument();
+  expect(screen.getByText('Szenarioziel')).toBeInTheDocument();
+  expect(screen.getByText(/Kursziel verfehlt: Synthetic Stock: Modellnutzen/)).toBeInTheDocument();
+  expect(screen.getByText('Modellaktion: Prüfen')).toBeInTheDocument();
+  expect(plan.optimization!.expectedGainEUR).toBeNull();
+});
+
+it('shows completed unavailable forecast research as a neutral note', () => {
+  const r = { ...request, priceUpdatedAt: new Date().toISOString(), positions: [{ ...request.positions[0], type: 'Stock' as const, name: 'Arbor Metals' }] };
+  const plan = buildForecastAllocation(r, [], [], undefined, undefined, ['1']);
+  render(<AssetOptimizationDetails plan={plan} allocationKey="1" assetType="Stock" />);
+  expect(screen.getByText('Geprüft: Prognosedaten nicht verfügbar')).toBeInTheDocument();
+  expect(screen.getByText(/Hinweis: Die gezielte Nachrecherche/)).toHaveClass('text-sky-200');
+  expect(screen.queryByText('Modellaktion: Prüfen')).not.toBeInTheDocument();
+  expect(screen.getByText('Modellaktion: Halten')).toBeInTheDocument();
+});
 
 it('shows the calculated target, before/after weights, exact amount and separate model assumptions and warnings', () => {
   const plan = buildPortfolioAllocation(request);
@@ -48,7 +87,7 @@ it('shows the optimization horizon, extracted forecast, current-price return and
   const panel = within(screen.getByRole('region', { name: 'Prognose und Zielgewichtung Bitcoin' }));
   expect(panel.getByText(/Kursziel: 1.200 EUR.*20 %/)).toBeInTheDocument();
   expect(panel.getByText('Historisches Bootstrap-Szenarioband: P10 -40 % · Median 20 % · P90 120 %')).toBeInTheDocument();
-  expect(screen.getByText(/gemeinsamen Gleichlauf.*keine gemessenen Korrelationen/)).toBeInTheDocument();
+  expect(screen.getByText(/Altes Modellszenario.*keine gemessenen Korrelationen/)).toBeInTheDocument();
   expect(panel.getAllByRole('link', { name: 'Synthetic source' })).toHaveLength(2);
 });
 

@@ -32,6 +32,7 @@ declare global {
       getEuroExchangeRates?():Promise<import('./app/utils/quoteMetadata').EuroExchangeRates>,
       forgetTradeRepublicCredentials?():Promise<boolean>,
       getPortfolioAIStatus?():Promise<{hasApiKey:boolean; secureStorageAvailable:boolean; model:string; chatGpt:import('./app/utils/chatGptAuth').ChatGptStatus}>,
+      getPortfolioResearchStatus?(assets:import('./app/utils/portfolioAnalysis').ResearchAsset[]):Promise<import('./app/utils/portfolioAnalysis').AssetResearchStatus[]>,
       savePortfolioAIKey?(key:string):Promise<boolean>,
       forgetPortfolioAIKey?():Promise<boolean>,
       signInPortfolioChatGpt?(clientId?:string):Promise<import('./app/utils/chatGptAuth').ChatGptStatus>,

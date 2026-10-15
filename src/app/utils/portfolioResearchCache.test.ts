@@ -2,7 +2,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { PortfolioResearchCache } from './portfolioResearchCache';
+import { PortfolioResearchCache, RESEARCH_CACHE_TTL_MS, RESEARCH_POLICY } from './portfolioResearchCache';
+import { buildResearchSecurities } from './portfolioResearch';
 
 let dir: string;
 let file: string;
@@ -16,14 +17,29 @@ const research = { text: 'Source-backed research', sources: [{ title: 'Issuer', 
 it.each([
   ['2026-03-29T21:59:59Z', '2026-03-29T22:00:00Z'],
   ['2026-10-25T22:59:59Z', '2026-10-25T23:00:00Z'],
-])('expires at German midnight on daylight-saving transition days: %s', (before, after) => {
+])('reuses data across German midnight and expires after exactly 24 hours: %s', (before, after) => {
   const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.parse(before));
   const cache = new PortfolioResearchCache(file);
   cache.set('key', { ...research, fetchedAt: Date.now() });
   expect(new PortfolioResearchCache(file).get('key')).toBeDefined();
   clock.mockReturnValue(Date.parse(after));
+  expect(cache.get('key')).toBeDefined();
+  expect(new PortfolioResearchCache(file).get('key')).toBeDefined();
+  clock.mockReturnValue(Date.parse(before) + RESEARCH_CACHE_TTL_MS - 1);
+  expect(cache.get('key')).toBeDefined();
+  clock.mockReturnValue(Date.parse(before) + RESEARCH_CACHE_TTL_MS);
   expect(cache.get('key')).toBeUndefined();
   expect(new PortfolioResearchCache(file).get('key')).toBeUndefined();
+});
+
+it('finds successful asset research across groups and scopes without mixing instruments', () => {
+  const securities = buildResearchSecurities([{ id: 12, name: 'Arbor Metals', isin: 'CA03880B1040', symbol: 'CA03880B1040.SG', type: 'Stock' }]);
+  const cache = new PortfolioResearchCache(file);
+  const value = { ...research, fetchedAt: Date.now() };
+  cache.set(JSON.stringify({ researchPolicy: RESEARCH_POLICY, scope: 'portfolio', securities }), value);
+  expect(new PortfolioResearchCache(file).findForSecurity(securities[0])).toEqual(value);
+  expect(cache.findForSecurity({ ...securities[0], isin: 'OTHER' })).toBeUndefined();
+  expect(cache.findForSecurity({ ...securities[0], symbol: 'OTHER' })).toBeUndefined();
 });
 
 it.each(['{broken', JSON.stringify({ version: 999, entries: [] })])('ignores damaged or unsupported files', contents => {

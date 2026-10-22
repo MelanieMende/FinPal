@@ -42,9 +42,14 @@ it('uses the same base shrinkage for analyst and bootstrap signals without shrin
   const stock = robustReturnForecastFixture('2', { uncertainty: { method: 'analyst-consensus', analystCount: 10000, targetLowPrice: 55, targetHighPrice: 65 } });
   expect(conservativeForecast(crypto, 50).adjustedReturnPercent).toBeCloseTo(5, 8);
   expect(conservativeForecast(stock, 50).adjustedReturnPercent).toBeCloseTo(5, 2);
+  expect(conservativeForecast(stock, 50).effectiveReturnPercent).toBeGreaterThan(0);
+  expect(conservativeForecast(stock, 50).effectiveReturnPercent).toBeLessThan(5);
   const seven = conservativeForecast({ ...stock, uncertainty: { ...stock.uncertainty!, analystCount: 7 } }, 50);
   expect(seven.adjustedReturnPercent).toBeLessThan(conservativeForecast(stock, 50).adjustedReturnPercent);
-  expect(conservativeForecast({ ...stock, uncertainty: { ...stock.uncertainty!, targetLowPrice: 20, targetHighPrice: 100 } }, 50).uncertaintyPercent).toBeGreaterThan(conservativeForecast(stock, 50).uncertaintyPercent);
+  const wider = conservativeForecast({ ...stock, uncertainty: { ...stock.uncertainty!, targetLowPrice: 20, targetHighPrice: 100 } }, 50);
+  expect(wider.uncertaintyPercent).toBeGreaterThan(conservativeForecast(stock, 50).uncertaintyPercent);
+  expect(wider.effectiveReturnPercent).toBeGreaterThan(0);
+  expect(wider.effectiveReturnPercent).toBeLessThan(conservativeForecast(stock, 50).effectiveReturnPercent!);
 });
 
 it('estimates symmetric PSD covariance from aligned EUR intervals and preserves negative correlation', () => {
@@ -76,6 +81,37 @@ it('does not recommend the original concentrated Bitcoin-to-Jinko switch from a 
   expect(validPortfolioAllocation(plan)).toBe(true);
 });
 
+it('shows known risks and the specific remaining gap for a partial company review', () => {
+  const jinko = robustReturnForecastFixture('33', { referencePrice: 8.61, targetPrice: 100, annualVolatilityPercent: 10,
+    uncertainty: { method: 'analyst-consensus', analystCount: 30, targetLowPrice: 99, targetHighPrice: 101 } });
+  const plan = buildRobustForecastAllocation(request(), [jinko], [], undefined, undefined, [], [
+    { key: '33', status: 'unknown', materialRisks: ['loss-making', 'low-margin'],
+      rationale: 'Die aktuelle Fälligkeitsstaffel und Kreditauflagen sind noch nicht geprüft.', sources: jinko.forecastSources },
+  ]);
+  expect(plan.optimization!.robust!.reviewReasons.join(' ')).toContain('Bereits belegte Risiken');
+  expect(plan.optimization!.robust!.reviewReasons.join(' ')).toContain('Fälligkeitsstaffel');
+  expect(plan.optimization!.robust!.reviewReasons.join(' ')).not.toContain('Die belegte Prüfung wesentlicher');
+});
+
+it('compares a cash-only purchase independently without using sale proceeds or the protected reserve', () => {
+  const r = request();
+  r.profile.decisionDetails = { reserveEUR: 100, plannedWithdrawalsEUR: 50, confirmedAt: new Date().toISOString() };
+  const bitcoin = robustReturnForecastFixture('31', { referencePrice: 74456.65, targetPrice: 60000, annualVolatilityPercent: 10 });
+  const jinko = robustReturnForecastFixture('33', { referencePrice: 8.61, targetPrice: 100, annualVolatilityPercent: 10,
+    uncertainty: { method: 'analyst-consensus', analystCount: 30, targetLowPrice: 99, targetHighPrice: 101 } });
+  const plan = buildRobustForecastAllocation(r, [bitcoin, jinko]);
+  const comparison = plan.optimization!.robust!.cashOnlyComparison!;
+  expect(plan.optimization!.robust!.scenarioTrades.some(trade => trade.action === 'Verkaufen')).toBe(true);
+  expect(comparison.availableCashEUR).toBeCloseTo(117.54);
+  expect(comparison.scenarioTrades.length).toBeGreaterThan(0);
+  expect(comparison.scenarioTrades.every(trade => trade.action === 'Kaufen')).toBe(true);
+  expect(comparison.scenarioTrades.reduce((sum, trade) => sum + trade.amountEUR, comparison.feesEUR))
+    .toBeLessThanOrEqual(comparison.availableCashEUR + .01);
+  expect(comparison.remainingCashEUR).toBeGreaterThanOrEqual(150);
+  expect(comparison.stressChecks.length).toBeGreaterThan(0);
+  expect(validPortfolioAllocation(plan)).toBe(true);
+});
+
 it('makes cited corporate risks binding for proposed buys and preserves the linked trade review after AI holds', () => {
   const r = request(); r.profile.buyBudget = 1000;
   const bitcoin = robustReturnForecastFixture('31', { referencePrice: 74456.65, targetPrice: 60000, annualVolatilityPercent: 10 });
@@ -103,6 +139,15 @@ it('rejects a concentrated purchase when its attractive target fails even with c
   expect(plan.optimization!.robust!.decisionStatus).toBe('review-required');
   expect(plan.positions[0].amountEUR).toBeNull();
   expect(plan.optimization!.robust!.concentration!.scenarioLargestPercent).toBeGreaterThan(plan.optimization!.robust!.concentration!.beforeLargestPercent);
+  const details = plan.optimization!.robust!;
+  for (const check of details.stressChecks) {
+    const reason = details.reviewReasons.find(text => text.includes(`„${check.name}“`));
+    if (check.utilityImprovementEUR <= 0) {
+      expect(reason).toContain(new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(check.utilityImprovementEUR));
+      expect(reason).toContain('über 0 EUR');
+      expect(reason).toContain('kein prognostizierter Geldverlust');
+    } else expect(reason).toBeUndefined();
+  }
 });
 
 it('allows a cost-effective sale stable under stress instead of blanket-blocking all trades', () => {

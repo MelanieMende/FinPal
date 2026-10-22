@@ -3,7 +3,7 @@ import { Button, Card, Dialog, H5, Icon, Intent, Spinner } from '@blueprintjs/co
 import { useAppSelector, useAppDispatch } from '../../../../hooks';
 import { ANALYSIS_TIMEOUT_MS, buildAnalysisPositions, validateAnalysisRequest, type InvestmentProfile, type PortfolioAnalysisProgress } from '../../../../utils/portfolioAnalysis';
 import type { ChatGptModel, ChatGptStatus } from '../../../../utils/chatGptAuth';
-import { analyzePortfolio, refreshPortfolioForecast, setAnalysisOpen, clearAnalysisResult } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
+import { analyzePortfolio, analyzePortfolioLocally, refreshPortfolioForecast, refreshPortfolioPrimaryRisk, setAnalysisOpen, clearAnalysisResult } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
 import { formatSyncTime } from '../../../../utils/syncTimestamps';
 import { assessQuoteFreshness, isMarketClosedInfo } from '../../../../utils/quoteFreshness';
 import { isDescriptiveRiskInfo } from '../../../../utils/analysisMessages';
@@ -15,25 +15,49 @@ import { checkPortfolioFunding } from '../../../../utils/portfolioFunding';
 import TradeDecisionReview from './TradeDecisionReview';
 import AllocationReview, { AssetOptimizationDetails } from './AllocationReview';
 import InvestorFactsEditor from './InvestorFactsEditor';
+import DecisionProfileEditor from './DecisionProfileEditor';
+import { parseDecisionDetails, protectedCashEUR, type DecisionForm } from '../../../../utils/decisionProfile';
 import { useInvestorFacts } from '../../../../utils/useInvestorFacts';
 import { buildInvestorContext } from '../../../../utils/investorFacts';
 import { allocationCandidateKey } from '../../../../utils/portfolioAllocation';
 
 export const ANALYSIS_PROFILE_KEY = 'finpal.portfolioAnalysis.profile.v1';
 export const ANALYSIS_MODEL_KEY = 'finpal.portfolioAnalysis.model.v1';
-type ProfileForm = { goal: string; risk: string; horizonYears: string; buyBudget: string };
+type ProfileForm = { goal: string; risk: string; horizonYears: string; buyBudget: string; decisionDetails?: DecisionForm };
 const emptyProfile: ProfileForm = { goal: '', risk: '', horizonYears: '', buyBudget: '0' };
 const inputClass = 'w-full rounded border border-white/15 bg-slate-900 px-3 py-2 text-sm text-white outline-none focus:border-indigo-400';
 const stageLabels: Record<PortfolioAnalysisProgress['stage'], string> = {
   prices: 'Kurse werden aktualisiert',
   forecast: 'Forecast wird aktualisiert',
   preparing: 'KI-Verbindung wird vorbereitet',
-  research: 'Aktuelle Quellen werden recherchiert',
+  research: 'Onlinequellen werden ohne KI gesucht',
+  'ai-research': 'KI recherchiert fehlende Quellen im Web',
+  'risk-review': 'Primärberichte und Unternehmensrisiken werden geprüft',
   analysis: 'Portfolio und Empfehlungen werden analysiert',
   retrying: 'Unterbrochene KI-Anfrage wird einmal erneut versucht',
   correcting: 'Empfehlungen werden korrigiert und erneut geprüft',
   validating: 'Antwort und Quellen werden geprüft',
 };
+function assetReloadStatus(progress: PortfolioAnalysisProgress | null, targetAssetId: number | null | undefined,
+  assetId: number, researchReusable: boolean): string | null {
+  if (!progress || (targetAssetId != null && targetAssetId !== assetId)) return null;
+  switch (progress.stage) {
+    case 'prices': return 'Kurse werden neu geladen';
+    case 'forecast': return 'Forecast wird neu geladen';
+    case 'research': return progress.activeAssetId === assetId ? 'Onlinequellen werden gesucht'
+      : researchReusable ? 'Gespeicherte Recherche wird wiederverwendet' : 'Online-Suche ausstehend';
+    case 'ai-research': return 'Fehlende Quellen werden mit KI recherchiert';
+    case 'risk-review': return progress.activeAssetId === assetId
+      ? progress.activeRiskStep === 'assessment' ? 'Dokumenttext wird auf Gewinn, Marge, Liquidität, Fälligkeiten und weitere Risiken geprüft' : 'Aktuelle Primärberichte werden geladen'
+      : progress.reusedRiskAssetIds?.includes(assetId) ? 'Gespeicherte Risikoprüfung wird wiederverwendet'
+        : progress.completedRiskAssetIds?.includes(assetId) ? 'Prüflauf beendet; Befund oder Datenlücke gespeichert' : 'Risikoprüfung steht noch an';
+    case 'preparing': return 'KI-Auswertung wird vorbereitet';
+    case 'analysis': return 'KI-Auswertung läuft';
+    case 'validating': return 'Neue Empfehlung wird geprüft';
+    case 'correcting': return 'Neue Empfehlung wird korrigiert';
+    case 'retrying': return 'KI-Anfrage wird erneut versucht';
+  }
+}
 function duration(seconds: number) { return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0'); }
 const euros = (amount: number) => new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(amount);
 const fundingLabels = { 'no-trades': 'Keine Käufe oder Verkäufe vorgeschlagen', unknown: 'Finanzierung ungeklärt', insufficient: 'Budget reicht nicht aus', conditional: 'Im Gebührenszenario gedeckt; Steuern und Spreads noch offen' };
@@ -44,10 +68,10 @@ export function AssetResearchIndicator({ status, now }: { status?: AssetResearch
   const expires = status?.expiresAt ? Date.parse(status.expiresAt) : NaN;
   const reusable = Number.isFinite(fetched) && fetched <= now && now < expires;
   return <p data-testid="asset-research-status" className={`m-0 min-w-0 break-words text-xs ${reusable ? 'text-sky-200' : 'text-gray-400'}`}>
-    Webrecherche: {reusable
+    Online-Recherche: {reusable
       ? `Erfolgreich geladen am ${formatSyncTime(status!.fetchedAt)} · Wird bis ${formatSyncTime(status!.expiresAt)} wiederverwendet (24 Stunden).`
-      : status ? 'Keine erfolgreichen Webrecherchedaten der letzten 24 Stunden verfügbar. Wird bei der Analyse geladen.'
-        : 'Status der gespeicherten Webrecherche nicht verfügbar.'}
+      : status ? 'Keine erfolgreichen Suchdaten der letzten 24 Stunden verfügbar. Wird ohne KI bei der Analyse geladen.'
+        : 'Status der gespeicherten Online-Recherche nicht verfügbar.'}
   </p>;
 }
 const compareRecommendations = (a: { action: keyof typeof actionOrder }, b: { action: keyof typeof actionOrder }) => actionOrder[a.action] - actionOrder[b.action];
@@ -196,6 +220,11 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
   const [savedProfile, setProfile] = useState<ProfileForm>(readProfile);
   const totalLiquidity = useAppSelector(selectTotalLiquidity);
   const profile = { ...savedProfile, buyBudget: String(totalLiquidity) };
+  const investmentProfile = (): InvestmentProfile => ({ goal: profile.goal, risk: profile.risk,
+    horizonYears: Number(profile.horizonYears), buyBudget: totalLiquidity,
+    ...(parseDecisionDetails(profile.decisionDetails) ? { decisionDetails: parseDecisionDetails(profile.decisionDetails) } : {}),
+  } as InvestmentProfile);
+  const protectedCash = protectedCashEUR(investmentProfile());
   const [provider, setProvider] = useState<'chatgpt' | 'api'>(analysisState.provider);
   const [chatGpt, setChatGpt] = useState(emptyChatGpt);
   const [models, setModels] = useState<ChatGptModel[]>([]);
@@ -247,7 +276,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
   const hasExecution = result?.recommendations.some(rec => executions[rec.assetId]?.status !== 'open' && executions[rec.assetId]);
   const fundingCheck = result && hasExecution ? checkPortfolioFunding({
     investorContext,
-    provider, positions, profile: { ...profile, horizonYears: Number(profile.horizonYears), buyBudget: totalLiquidity } as InvestmentProfile,
+    provider, positions, profile: investmentProfile(),
     priceUpdatedAt,
   }, {
     ...result,
@@ -309,6 +338,14 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
     try { localStorage.setItem(ANALYSIS_PROFILE_KEY, JSON.stringify(next)); }
     catch { setError('Die Analyse-Einstellungen konnten nicht dauerhaft gespeichert werden.'); }
   }
+  function updateDecisionDetails(value?: DecisionForm) {
+    const next = { ...profile };
+    if (value) next.decisionDetails = value;
+    else delete next.decisionDetails;
+    setProfile(next);
+    try { localStorage.setItem(ANALYSIS_PROFILE_KEY, JSON.stringify(next)); }
+    catch { setError('Die ergänzenden Angaben konnten nicht dauerhaft gespeichert werden.'); }
+  }
   function openSource(event: React.MouseEvent<HTMLAnchorElement>, url: string) {
     event.preventDefault();
     if (window.API.openPortfolioAnalysisSource) {
@@ -323,7 +360,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
       const request = {
         provider, model, positions, priceUpdatedAt, ...(targetAssetId === undefined ? {} : { targetAssetId }),
         investorContext,
-        profile: { goal: profile.goal, risk: profile.risk, horizonYears: Number(profile.horizonYears), buyBudget: Number(profile.buyBudget.replace(',', '.')) } as InvestmentProfile,
+        profile: investmentProfile(),
       };
       validateAnalysisRequest(request);
       if (provider === 'chatgpt' && (!chatGpt.connected || !model)) throw new Error('Bitte zuerst mit ChatGPT anmelden und ein Modell auswählen.');
@@ -334,13 +371,26 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
     });
   }
 
+  function analyzeLocal() {
+    void run(async () => {
+      if (investorFactsError) throw new Error(investorFactsError);
+      if (!profile.horizonYears.trim() || !profile.buyBudget.trim()) throw new Error('Bitte Anlagedauer und Kaufbudget angeben.');
+      const request = { provider, model, positions, priceUpdatedAt, investorContext,
+        profile: investmentProfile(),
+      };
+      validateAnalysisRequest(request);
+      localStorage.setItem(ANALYSIS_PROFILE_KEY, JSON.stringify(profile));
+      await dispatch(analyzePortfolioLocally({ request, snapshot })).unwrap();
+    });
+  }
+
   function refreshForecast(assetId?: number) {
     void run(async () => {
       if (investorFactsError) throw new Error(investorFactsError);
       if (!result) throw new Error('Für die Forecast-Aktualisierung ist zuerst eine gespeicherte Analyse erforderlich.');
       if (!profile.horizonYears.trim() || !profile.buyBudget.trim()) throw new Error('Bitte Anlagedauer und Kaufbudget angeben.');
       const request = { provider, model, positions, priceUpdatedAt, investorContext,
-        profile: { goal: profile.goal, risk: profile.risk, horizonYears: Number(profile.horizonYears), buyBudget: Number(profile.buyBudget.replace(',', '.')) } as InvestmentProfile,
+        profile: investmentProfile(),
       };
       validateAnalysisRequest(request);
       localStorage.setItem(ANALYSIS_PROFILE_KEY, JSON.stringify(profile));
@@ -353,6 +403,27 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
       }
     });
   }
+
+  function refreshRisk(assetId: number) {
+    void run(async () => {
+      if (!result) throw new Error('Für die Risikoprüfung ist zuerst eine gespeicherte Analyse erforderlich.');
+      const asset = positions.find(position => position.id === assetId);
+      if (!asset) throw new Error('Das Asset ist nicht mehr im Portfolio vorhanden.');
+      const refreshed = await dispatch(refreshPortfolioPrimaryRisk({ id: asset.id, name: asset.name, isin: asset.isin,
+        symbol: asset.symbol, type: asset.type })).unwrap();
+      if (alive.current) {
+        const risk = refreshed.fundamentalRisks?.find(item => item.key === String(assetId));
+        setNotice(risk?.status === 'assessed'
+          ? `Unternehmens- und Produktrisiken für ${asset.name} aktualisiert. Falls sich der Befund geändert hat, bitte das Asset für eine neue Anlageentscheidung erneut analysieren.`
+          : `Risikoprüfung für ${asset.name} aktualisiert. Offene Punkte und fehlende Primärdaten stehen in der Asset-Kachel.`);
+      }
+    });
+  }
+
+  const localForecastKeys = new Set(result?.allocationPlan?.optimization?.forecasts.map(forecast => forecast.key) ?? []);
+  const localForecastCount = result?.mode === 'local'
+    ? positions.filter(position => localForecastKeys.has(String(position.id))).length
+    : 0;
 
   return (
     <Card className="glass-card analysis-form mb-6" data-testid="portfolio-analysis">
@@ -369,10 +440,11 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
         <Spinner size={20} />
         <div>
           {analysisState.targetAssetId != null && <p className="mt-0 mb-1 text-sm font-bold text-indigo-200">Einzelanalyse: {assets.find(asset => asset.ID === analysisState.targetAssetId)?.name || `Asset ${analysisState.targetAssetId}`}</p>}
-          {analysisState.targetAssetId != null && <p className="mt-0 mb-1 text-xs text-gray-400">Erfolgreiche Webrecherchedaten je Asset werden 24 Stunden wiederverwendet, auch aus einer Gesamtanalyse. Bestände, Kurse und Anlageprofil werden bei jeder Empfehlung neu ausgewertet.</p>}
-          <p role="status" className="m-0 text-sm text-indigo-200">{stageLabels[progress.stage]}{progress.stage === 'research' && progress.researchTotal && ` · ${progress.researchCompleted ?? 0}/${progress.researchTotal} Gruppen abgeschlossen`}</p>
+          {progress.activeCandidateName && <p className="mt-0 mb-1 text-sm font-bold text-indigo-200">Neue Kaufidee: {progress.activeCandidateName} · {progress.activeRiskStep === 'assessment' ? 'Dokumentinhalt wird geprüft' : 'Primärdokumente werden geladen'}</p>}
+          {analysisState.targetAssetId != null && <p className="mt-0 mb-1 text-xs text-gray-400">Erfolgreiche Online-Suchdaten je Asset werden 24 Stunden wiederverwendet, auch aus einer Gesamtanalyse. Bestände, Kurse und Anlageprofil werden bei jeder Empfehlung neu ausgewertet.</p>}
+          <p role="status" className="m-0 text-sm text-indigo-200">{stageLabels[progress.stage]}{(progress.stage === 'research' || progress.stage === 'ai-research' || progress.stage === 'risk-review') && progress.researchTotal ? ` · ${progress.researchCompleted ?? 0}/${progress.researchTotal} ${progress.stage === 'ai-research' ? 'Gruppen' : 'Assets'} abgeschlossen` : ''}</p>
           <p className="mt-1 mb-0 text-xs text-gray-300">Laufzeit: {duration(Math.max(0, Math.floor((now - startedAt) / 1000)))} · Letzte Rückmeldung vor {Math.max(0, Math.floor((now - progress.lastActivityAt) / 1000))} s</p>
-          <p className="mt-1 mb-0 text-xs text-gray-400">Webrecherche und Analyse können mehrere Minuten dauern. Zeitlimit: {ANALYSIS_TIMEOUT_MS / 60000} Minuten. Erfolgreiche Webrecherchedaten werden 24 Stunden ab Abruf wiederverwendet, auch nach einem Neustart.</p>
+          <p className="mt-1 mb-0 text-xs text-gray-400">Online-Suche und Analyse können mehrere Minuten dauern. Zeitlimit: {ANALYSIS_TIMEOUT_MS / 60000} Minuten. Suchdaten werden 24 Stunden wiederverwendet. Die inhaltliche Prüfung neuer Primärberichte und die Portfolio-Auswertung verbrauchen KI-Kontingent; gespeicherte Prüfungen unveränderter Berichte nicht.</p>
         </div>
       </div>}
       {open && <div id="portfolio-analysis-content" className="mt-5 space-y-4">
@@ -414,8 +486,10 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
           <div className="text-xs text-gray-300">
             <label>Zusätzliches Kaufbudget (EUR)<input type="text" inputMode="decimal" className={`${inputClass} mt-1`} value={totalLiquidity.toFixed(2).replace('.', ',')} readOnly aria-describedby="buy-budget-source" /></label>
             <p id="buy-budget-source" className="mt-1 mb-0 text-gray-400">Entspricht automatisch deiner Total Liquidity.</p>
+            {profile.decisionDetails && <p className={`mt-1 mb-0 ${protectedCash > totalLiquidity ? 'text-amber-200' : 'text-sky-200'}`}>Geschützte Liquidität: {Number.isFinite(protectedCash) ? euros(protectedCash) : 'Angaben prüfen'} · Für Käufe und Gebühren aus vorhandenem Cash verfügbar: {Number.isFinite(protectedCash) ? euros(Math.max(0, totalLiquidity - protectedCash)) : 'Ungeklärt'}.{protectedCash > totalLiquidity ? ' Der Schutzbetrag übersteigt die aktuelle Liquidität.' : ''}</p>}
           </div>
         </div>
+        <DecisionProfileEditor value={profile.decisionDetails} onChange={updateDecisionDetails} busy={busy} />
         <InvestorFactsEditor key={database} facts={investorFacts} assets={assets} transactions={transactions} onSave={saveInvestorFacts} busy={busy} storageError={investorFactsError} />
         <p className="text-xs text-gray-400">Beim Start werden Namen, ISINs, Bestände, Kurse, Einstandswerte, Gewinne und Dividenden sowie dein Anlageprofil, gespeicherte Verwahr- und Steuerangaben, Zielgewichte und abgeleitete Anschaffungsdaten an OpenAI übertragen. Kommentare und Zugangsdaten werden nicht übertragen. Kurse zuletzt aktualisiert: {formatSyncTime(priceUpdatedAt) ?? 'unbekannt'}.</p>
         <details className="text-xs text-gray-400">
@@ -441,11 +515,12 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
         {error && <p role="alert" className="text-sm text-red-400">{error}</p>}
         {notice && <p role="status" className="text-sm text-amber-300">{notice}</p>}
         <div className="flex flex-wrap items-center gap-2">
-          <Button intent={Intent.PRIMARY} loading={analyzing} disabled={busy || !positions.length} onClick={() => analyze()}>Analyse starten</Button>
+          <Button intent={Intent.PRIMARY} loading={analyzing} disabled={busy || !positions.length} onClick={() => analyze()}>{result?.mode === 'local' ? 'Mit KI und Quellen prüfen' : 'Analyse starten'}</Button>
+          <Button icon="offline" disabled={busy || !positions.length} onClick={analyzeLocal}>Lokal analysieren (ohne KI)</Button>
           <Button icon="refresh" disabled={busy || !positions.length || !result} onClick={() => refreshForecast()}>Alle Forecasts neu laden</Button>
         </div>
-        <p className="mt-1 text-xs text-gray-400">„Analyse starten“ verwendet den gültigen lokalen Forecast-Cache. „Alle Forecasts neu laden“ aktualisiert nur Forecasts und lokale Zielgewichtung; die bestehende KI-Analyse bleibt erhalten.</p>
-        <p className="mt-1 text-xs text-gray-400">Erfolgreiche Webrecherchedaten werden je Asset 24 Stunden wiederverwendet. Nur fehlende oder abgelaufene Recherchen werden neu geladen; Bestände, Kurse und Anlageprofil werden erneut ausgewertet.</p>
+        <p className="mt-1 text-xs text-gray-400">„Lokal analysieren“ verwendet keine OpenAI- oder ChatGPT-Anfrage. Es sucht deterministisch online nach Name, ISIN und Ticker und berechnet das Modell lokal. „Analyse starten“ ergänzt eine qualitative KI-Auswertung. „Alle Forecasts neu laden“ aktualisiert Forecasts und lokale Zielgewichtung.</p>
+        <p className="mt-1 text-xs text-gray-400">Erfolgreiche deterministische Online-Suchen werden je Asset 24 Stunden wiederverwendet. Die anschließende KI-Auswertung startet keine eigene Websuche; Bestände, Kurse und Anlageprofil werden erneut ausgewertet.</p>
         {!result && positions.length > 0 && <section aria-label="Webrecherche je Asset" className="min-w-0 space-y-3 rounded-lg border border-white/10 p-3">
           {positions.map(position => <div key={position.id} className="min-w-0">
             <p className="m-0 break-words text-sm font-bold text-white">{position.name}</p>
@@ -454,7 +529,11 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
         </section>}
         {!positions.length && <p className="text-xs text-gray-400">Es sind keine gehaltenen Assets vorhanden.</p>}
         {result && <section aria-label="Analyseergebnis" className="space-y-3 border-t border-white/10 pt-4">
-          <p className="text-xs text-gray-400">Analyse vom {formatSyncTime(result.generatedAt)} · {result.model} · Kursstand: {formatSyncTime(result.priceUpdatedAt) ?? 'unbekannt'}</p>
+          <p className="text-xs text-gray-400">{progress ? 'Bisherige Analyse' : 'Analyse'} vom {formatSyncTime(result.generatedAt)} · {result.model} · Kursstand: {formatSyncTime(result.priceUpdatedAt) ?? 'unbekannt'}</p>
+          {result.mode === 'local' && <div className="rounded border border-sky-400/20 bg-sky-500/5 p-3 text-sm text-sky-200" role="status">
+            <p className="m-0 font-bold">Lokale Marktdatenanalyse: {localForecastCount} von {positions.length} Positionen mit Forecast · {result.sources.length} direkte Datenquellen</p>
+            <p className="mb-0 mt-1 text-xs">Die Quellen stammen aus einer deterministischen Onlinesuche und festen Datenanbietern; ihre Inhalte wurden nicht semantisch bewertet. „Mit KI und Quellen prüfen“ ergänzt die qualitative Auswertung.</p>
+          </div>}
           {result.allocationPlan?.method === 'forecast-mean-variance-v1' && !result.allocationPlan.optimization?.robust && <p className="text-sm text-amber-300">Diese gespeicherte Analyse verwendet das alte Modell. Für Unsicherheitsgewichtung, gemessene Kovarianzen und die neue Entscheidungsprüfung bitte die Gesamtanalyse erneut starten.</p>}
           {stale && <p role="status" className="text-amber-300 text-sm">Portfolio, Kurse oder Anlageprofil haben sich seit dieser Analyse geändert. Bitte neu analysieren.</p>}
           <p className="text-sm text-gray-200 whitespace-pre-wrap">{result.summary}</p>
@@ -479,7 +558,30 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
               <div className="flex justify-between items-start gap-3"><span className="font-bold text-sm text-white">{assets.find(a => a.ID === rec.assetId)?.name || `Asset ${rec.assetId}`}</span>
                 <span className={`text-xs font-bold ${rec.action === 'Kaufen' ? 'text-emerald-400' : rec.action === 'Verkaufen' ? 'text-red-400' : rec.action === 'Prüfen' ? 'text-amber-300' : 'text-indigo-300'}`}>{rec.action}</span>
               </div>
-              <AssetResearchIndicator status={researchStatus.find(status => status.assetId === rec.assetId)} now={now} />
+              {(() => {
+                const status = researchStatus.find(item => item.assetId === rec.assetId);
+                const reusable = !!status?.expiresAt && Date.parse(status.expiresAt) > now;
+                const loading = assetReloadStatus(progress, analysisState.targetAssetId, rec.assetId, reusable);
+                const alreadyDone = progress?.stage === 'risk-review' && progress.completedRiskAssetIds?.includes(rec.assetId);
+                return loading && <p data-testid={`asset-reload-status-${rec.assetId}`} className="my-2 min-w-0 break-words rounded border border-sky-400/25 bg-sky-500/10 px-2 py-1 text-xs text-sky-200">
+                  <Icon icon="time" size={12} aria-hidden="true" /> <span className="font-semibold">{alreadyDone ? 'Prüfstand:' : 'Wird aktualisiert:'}</span> {loading}. Bisheriges Ergebnis bleibt sichtbar.
+                </p>;
+              })()}
+              {result.mode === 'local'
+                ? <p className="my-1 text-xs text-gray-400" data-testid={`local-market-data-status-${rec.assetId}`}>{localForecastKeys.has(String(rec.assetId)) ? 'Lokaler Forecast und deterministisch gefundene Onlinequellen vorhanden.' : 'Kein vollständiger lokaler Forecast verfügbar; Onlinequellen werden ohne inhaltliche Bewertung angezeigt.'}</p>
+                : <AssetResearchIndicator status={researchStatus.find(status => status.assetId === rec.assetId)} now={now} />}
+              {(() => {
+                const risk = result.fundamentalRisks?.find(item => item.key === String(rec.assetId));
+                if (!risk) return null;
+                return <details className="my-2 min-w-0 rounded border border-white/10 bg-slate-950/25 px-2 py-1 text-xs text-gray-300">
+                  <summary className={risk.status === 'assessed' ? 'text-emerald-300' : 'text-amber-200'}>
+                    Unternehmens- und Produktrisiken: {risk.status === 'assessed' ? 'belegt geprüft' : 'Prüfung mit offenen Punkten'}
+                  </summary>
+                  <p className="mb-1 whitespace-pre-wrap break-words">{risk.rationale}</p>
+                  {risk.sources.map(source => <a key={source.url} href={source.url} onClick={event => openSource(event, source.url)}
+                    className="mr-2 break-all text-indigo-300 underline">{source.title}</a>)}
+                </details>;
+              })()}
               {executions[rec.assetId]?.status !== 'open' && executions[rec.assetId] && <p
                 className="text-xs font-bold text-emerald-400" data-testid={`recommendation-execution-${rec.assetId}`}>
                 {executions[rec.assetId].status === 'done' ? 'Done' : 'Teilweise umgesetzt'} · {euros(executions[rec.assetId].amountEUR)} erfasst
@@ -493,7 +595,9 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
               <div className="flex flex-wrap gap-2">
                 <Button small disabled={busy || !positions.some(position => position.id === rec.assetId)} onClick={() => analyze(rec.assetId)} aria-label={`Asset ${rec.assetId} neu analysieren`}>Neu analysieren</Button>
                 <Button small icon="refresh" disabled={busy || !positions.some(position => position.id === rec.assetId)} onClick={() => refreshForecast(rec.assetId)} aria-label={`Forecast für Asset ${rec.assetId} neu laden`}>Forecast neu laden</Button>
+                <Button small icon="refresh" disabled={busy || !positions.some(position => position.id === rec.assetId)} onClick={() => refreshRisk(rec.assetId)} aria-label={`Unternehmens- und Produktrisiken für Asset ${rec.assetId} neu prüfen`}>Risiken neu prüfen</Button>
               </div>
+              <p className="mt-1 mb-0 text-xs text-gray-400">Die inhaltliche Prüfung neuer Primärberichte kann KI-Kontingent verbrauchen.</p>
               {rec.updatedAt && <p className="text-xs text-gray-400">Einzelanalyse vom {formatSyncTime(rec.updatedAt)} · {rec.model}. Portfolio-Zusammenfassung und übrige Empfehlungen stammen aus der Gesamtanalyse.</p>}
               <EltifValuation position={positions.find(position => position.id === rec.assetId)} evidence={rec.navEvidence} />
               <AnalysisMessages infos={rec.infos} warnings={rec.warnings} />
@@ -531,7 +635,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
               </article>)}
             </div>
           </section>}
-          <details className="text-xs text-gray-400"><summary className="cursor-pointer">Recherchequellen</summary><ul className="mt-2 space-y-1">{result.sources.map((source, index) => <li key={index}><a href={source.url} onClick={e => openSource(e, source.url)} target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline">[{index}] {source.title}</a></li>)}</ul></details>
+          <details className="text-xs text-gray-400"><summary className="cursor-pointer">{result.mode === 'local' ? `Deterministisch gefundene Online- und Marktdatenquellen (${result.sources.length})` : `Webrecherchequellen (${result.sources.length})`}</summary><ul className="mt-2 space-y-1">{result.sources.map((source, index) => <li key={index}><a href={source.url} onClick={e => openSource(e, source.url)} target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline">[{index}] {source.title}</a></li>)}</ul></details>
         </section>}
       </div>}
     </Card>

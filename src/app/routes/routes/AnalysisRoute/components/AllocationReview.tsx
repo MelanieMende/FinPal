@@ -42,7 +42,7 @@ export function AssetOptimizationDetails({ plan, allocationKey, assetType, onOpe
       </p>}
       <p className="m-0">{forecast.model?.kind === 'etf-history-v1' ? 'Modell-Referenzwert (kein veröffentlichtes Kursziel)' : 'Kursziel'}: {new Intl.NumberFormat('de-DE', { maximumFractionDigits: 4 }).format(forecast.targetPrice)} {forecast.currency} · {robust ? 'Bereinigte Modellrendite' : 'Erwartete Kursrendite'}: {percent(input?.expectedReturnPercent ?? null)}</p>
       {forecast.model?.kind === 'etf-history-v1' && <p className="m-0 text-sky-200">Lokales ETF-Historienmodell: {forecast.model.observations} bereinigte Tageskurse über {forecast.model.historyYears.toFixed(2)} Jahre · 2.000 Bootstrap-Pfade · 252 Handelstage · 20-Tage-Blöcke. Historische Szenarien, keine kalibrierten Zukunftswahrscheinlichkeiten. Ausschüttungen nicht zusätzlich addieren.</p>}
-      {estimate && <p className="m-0">Rohsignal: {percent(estimate.rawReturnPercent)} · Nach Unsicherheitsgewichtung: {percent(estimate.adjustedReturnPercent)} · Unsicherheitsproxy: {percent(estimate.uncertaintyPercent)} (keine Wahrscheinlichkeit).</p>}
+      {estimate && <p className="m-0">Rohsignal: {percent(estimate.rawReturnPercent)} · Nach Grundgewichtung: {percent(estimate.adjustedReturnPercent)}{estimate.effectiveReturnPercent !== undefined ? ` · Konfidenzgewichtet: ${percent(estimate.effectiveReturnPercent)}` : ''} · Unsicherheitsproxy: {percent(estimate.uncertaintyPercent)} (keine Wahrscheinlichkeit).</p>}
       {forecast.uncertainty?.method === 'analyst-consensus' && <p className="m-0">Analystenabdeckung: {forecast.uncertainty.analystCount ?? 'Unbekannt'} · Kurszielspanne: {forecast.uncertainty.targetLowPrice ?? 'Unbekannt'} bis {forecast.uncertainty.targetHighPrice ?? 'Unbekannt'} {forecast.currency}. Wenige Analysten oder breite Spannen schwächen das Signal.</p>}
       {forecast.scenarioReturns && <p className="m-0">Historisches Bootstrap-Szenarioband: P10 {percent(forecast.scenarioReturns.p10)} · Median {percent(forecast.scenarioReturns.median)} · P90 {percent(forecast.scenarioReturns.p90)}</p>}
       <p className="m-0">Annualisierte historische Volatilität: {percent(forecast.annualVolatilityPercent)} · Kurswährung {forecast.currency} · Stand {forecast.volatilityAsOf.slice(0, 10)} · Fenster {forecast.volatilityLookbackDays} Tage</p>
@@ -81,6 +81,7 @@ export default function AllocationReview({ plan }: { plan?: PortfolioAllocation 
   const robust = plan.optimization?.robust;
   const partial = plan.status === 'calculated' && !!plan.optimization?.unresolvedKeys?.length;
   const unresolvedCount = plan.optimization?.unresolvedKeys?.length ?? 0;
+  const scenarioVolume = robust?.scenarioTrades.reduce((sum, trade) => sum + trade.amountEUR, 0) ?? 0;
   return <section aria-label="Berechnete Zielgewichtung" className="min-w-0 space-y-3 rounded-lg border border-indigo-400/20 p-4 text-sm text-gray-300">
     <h5 className="m-0 font-bold text-indigo-300">Berechnete Zielgewichtung</h5>
     <p className="m-0 text-xs">{plan.method === 'forecast-mean-variance-v1'
@@ -92,15 +93,44 @@ export default function AllocationReview({ plan }: { plan?: PortfolioAllocation 
       <p className="m-0">{partial ? 'Modellierter Renditebeitrag des erfassten Teils zum Gesamtportfolio' : 'Modellierte Portfolio-Rendite'} nach Modellgebühren: {percent(plan.optimization.expectedReturnPercent)} · Modellierte Wertentwicklung: {euros(plan.optimization.expectedGainEUR)} · Risikoproxy: {percent(plan.optimization.riskProxyPercent)}</p>
       {partial && <p className="m-0 font-bold text-amber-200">Modellabdeckung: {percent(plan.optimization.modeledValuePercent ?? null)} · {unresolvedCount} {unresolvedCount === 1 ? 'Position' : 'Positionen'} ohne vollständige Daten unverändert eingefroren.</p>}
       <p className="m-0">{robust ? robust.covarianceStatus === 'measured-eur'
-        ? `Robustes Modell v2: gemessene EUR-Kovarianzen aus ${robust.observations} gemeinsamen Renditeintervallen; Schrumpfung ${percent((robust.covarianceShrinkage ?? 0) * 100)}.`
-        : 'Robustes Modell v2: Gemeinsame EUR-Kurshistorien fehlen; keine bestätigte Umschichtung.'
+        ? `Robustes Modell v${robust.version}: gemessene EUR-Kovarianzen aus ${robust.observations} gemeinsamen Renditeintervallen; Schrumpfung ${percent((robust.covarianceShrinkage ?? 0) * 100)}.`
+        : `Robustes Modell v${robust.version}: Gemeinsame EUR-Kurshistorien fehlen; keine bestätigte Umschichtung.`
         : 'Altes Modellszenario: angenommener Gleichlauf (+1), keine gemessenen Korrelationen. Für das robuste Modell bitte neu analysieren.'} ETF-Historienmodelle nutzen ausschüttungsbereinigte Renditeproxies; andere Dividenden, Zinsen, Steuern und Spreads sind nicht enthalten.</p>
       {robust && <section aria-label="Robustheit und Entscheidungsprüfung" className="min-w-0 space-y-2 break-words">
         <p className="m-0 font-bold">{robust.decisionStatus === 'review-required' ? 'Modellszenario mit offener Entscheidung' : robust.decisionStatus === 'no-trades' ? 'Keine wirtschaftlich belastbare Umschichtung im Modell' : 'In den geprüften Szenarien stabil; keine Ausführungsfreigabe'}</p>
+        {robust.cashOnlyComparison && <section aria-label="Vergleich nur freies Cash investieren" className="min-w-0 space-y-2 rounded border border-sky-400/30 bg-sky-500/5 p-3">
+          <p className="m-0 font-bold">Alternative: nur freies Cash investieren</p>
+          <p className="m-0">Vergleich mit unverändertem Bestand, ohne Verkäufe oder Verkaufserlöse. Frei nach geschützter Reserve: {euros(robust.cashOnlyComparison.availableCashEUR)}. Modellgebühren: {euros(robust.cashOnlyComparison.feesEUR)}. Cash im Szenario danach: {euros(robust.cashOnlyComparison.remainingCashEUR)}.</p>
+          <p className="m-0">{robust.cashOnlyComparison.decisionStatus === 'unavailable' ? 'Die Cash-Variante konnte nicht belastbar berechnet werden.'
+            : robust.cashOnlyComparison.decisionStatus === 'no-trades' ? 'Unter den Modellannahmen ergibt sich kein wirtschaftlicher Kauf aus Cash.'
+            : robust.cashOnlyComparison.decisionStatus === 'review-required' ? 'Die Cash-Variante bleibt zur Prüfung offen.'
+            : 'Die Cash-Variante besteht die geprüften Modelltests; Produkt-, Steuer- und Ausführungseignung bleiben separat zu prüfen.'}</p>
+          {robust.cashOnlyComparison.scenarioTrades.map(trade => <p className="m-0" key={trade.key}>Szenariokauf {plan.positions.find(p => p.key === trade.key)?.name ?? trade.key}: {euros(trade.amountEUR)}. Kein freigegebener Handelsbetrag.</p>)}
+          {!!(robust.cashOnlyComparison.stressChecks.length || robust.cashOnlyComparison.reviewReasons.length) && <details className="min-w-0 space-y-2">
+            <summary className="cursor-pointer">Stresstests und Prüfgründe der Cash-Variante</summary>
+            {robust.cashOnlyComparison.stressChecks.map(check => <p className={`m-0 ${check.utilityImprovementEUR <= 0 ? 'text-amber-200' : 'text-sky-200'}`} key={check.name}>{check.name}: relativer Modellnutzen {euros(check.utilityImprovementEUR)} nach Gebühren; kein prognostizierter Geldgewinn oder Verlust.</p>)}
+            {robust.cashOnlyComparison.reviewReasons.map((reason, index) => <p className="m-0 text-amber-200" key={index}>{reason}</p>)}
+          </details>}
+        </section>}
+        {robust.decisionStatus === 'review-required' && <p className="m-0 text-amber-200">Prüfung erforderlich: Die Gründe stehen unten. Die abhängigen Käufe und Verkäufe bleiben gemeinsam zurückgestellt; angezeigte Szenariobeträge sind keine freigegebenen Handelsbeträge.</p>}
         <p className="m-0">Gemeinsame Grundgewichtung 0,25 für Aktien-, ETF- und Krypto-Signale; Analystenabdeckung zusätzlich n/(n+10). Konservative Modellannahmen, keine empirisch nachgewiesene Prognosegüte.</p>
-        {robust.concentration && <p className="m-0">Größte Einzelposition: vorher {percent(robust.concentration.beforeLargestPercent)}, im Umschichtungsszenario {percent(robust.concentration.scenarioLargestPercent)}. Keine feste Quote; Konzentration wird ausdrücklich geprüft.</p>}
+        {robust.concentration && <p className="m-0">Größte Einzelposition: vorher {percent(robust.concentration.beforeLargestPercent)}, im Umschichtungsszenario {percent(robust.concentration.scenarioLargestPercent)}. {robust.concentration.scenarioLargestPercent > robust.concentration.beforeLargestPercent ? 'Die größte Positionsquote steigt; das Szenario baut diese Konzentration nicht ab. ' : ''}Für diese Quote gibt es keine feste automatische Sperrgrenze. Sie ist ein zusätzlicher Prüfhinweis und löst allein keinen Prüfstatus aus; bestätigte Zielbandbreiten bleiben verbindlich.</p>}
+        {!!robust.stressChecks.length && <p className="m-0">Stressprüfung: Verglichen wird die gesamte Umschichtung mit dem unveränderten Bestand unter denselben Stressannahmen. Der Modellnutzen verrechnet Renditesignal, Risikobewertung und Gebühren. Ein Wert von höchstens 0 EUR in einem einzigen Stressszenario löst bereits „Prüfung erforderlich“ aus; negative Werte sind kein prognostizierter Geldverlust. Bei „Schwächere Prognosen“ werden die Renditesignale geplanter Käufe um ihren Unsicherheitsproxy gesenkt und die geplanter Verkäufe entsprechend erhöht.</p>}
         {robust.stressChecks.map(check => <p className={`m-0 ${check.utilityImprovementEUR <= 0 ? 'text-amber-200' : 'text-sky-200'}`} key={check.name}>{check.name}: Modellnutzen gegenüber unverändertem Bestand {euros(check.utilityImprovementEUR)} nach Gebühren. Kein prognostizierter Geldgewinn.</p>)}
         {robust.reviewReasons.map((reason, index) => <p className="m-0 text-amber-200" key={index}>{reason}</p>)}
+        <details className="min-w-0" data-testid="model-validation-review">
+          <summary className="cursor-pointer font-bold">Fachliche Modellprüfung: Teilprüfung erfolgt, historischer Nachweis ausstehend</summary>
+          <p>Die fachliche Gegenprüfung vom 19.10.2026 bestätigt für den aktuellen Einsatz, dass ein nicht positiver Stressvergleich, offene wesentliche Produktprüfungen und fehlender Ausführungspuffer eine Freigabe verhindern. Die Konzentrationsquote allein ist kein Sperrgrund. Signalgewichtung, Unsicherheitsproxy, Risikoaversion und die starre Regel „jeder Stressvergleich über 0 EUR“ sind weiterhin nicht historisch außerhalb der Kalibrierungsdaten validiert.</p>
+          <p>Bezugsgrößen: erfasstes Portfolio einschließlich Cash {euros(plan.totalValueEUR)} · Szenario-Handelsvolumen {euros(scenarioVolume)} (Bruttosumme aus Käufen und Verkäufen; keine zusätzlichen Mittel). Externes Vermögen ist darin nicht enthalten.</p>
+          {robust.stressChecks.map(check => <p key={check.name}>{check.name}: relativer Modellnutzen {percent(plan.totalValueEUR > 0 ? check.utilityImprovementEUR / plan.totalValueEUR * 100 : null)} des erfassten Portfolios; {percent(scenarioVolume > 0 ? check.utilityImprovementEUR / scenarioVolume * 100 : null)} des Szenario-Handelsvolumens. Keine Rendite oder Verlustwahrscheinlichkeit.</p>)}
+          <ol className="list-decimal space-y-2 pl-5">
+            <li>Fachlich unabhängig prüfen: Anlegerziel, Entnahmebedarf und finanzielle Verlusttragfähigkeit; bei Fonds die tatsächlichen Anlagen und Überschneidungen. Fehlende entscheidungsrelevante Daten benennen.</li>
+            <li>Alternativen mit derselben Datenbasis vergleichen: Bestand halten, nur verfügbares neues Geld investieren, teilweise und vollständig umschichten; Gebühren, Spreads und Steuern berücksichtigen.</li>
+            <li>Empfindlichkeit gegenüber plausiblen Prognose-, Korrelations- und Risikoannahmen messen. Grenzwerte vor der Auswertung begründen; keine nachträgliche Anpassung für einen gewünschten Kauf.</li>
+            <li>Mit damals verfügbaren Daten in getrennten historischen Testzeiträumen prüfen: Nettorendite, maximaler Rückgang, Umschlag, Kosten und Häufigkeit unnötiger Sperren. Anschließend neue Entscheidungen ohne echte Orders protokollieren und später auswerten.</li>
+          </ol>
+          <p>Die aktuelle Entscheidungslogik wurde dokumentiert fachlich gegengeprüft. Belastbare Ergebnisse außerhalb der Kalibrierungsdaten stehen noch aus. Auch ein positives Ergebnis wäre keine Garantie zukünftiger Anlageerfolge.</p>
+        </details>
       </section>}
       {!plan.optimization.forecasts.length && <p className="m-0">Keine vollständigen belegten Zahlen vorhanden. Es wird kein optimierter Betrag ausgegeben.</p>}
     </div>}

@@ -1,4 +1,5 @@
 import type { PortfolioAnalysisRequest, PortfolioAnalysisResult } from './portfolioAnalysis';
+import { protectedCashEUR } from './decisionProfile';
 
 export interface FundingCheck {
   status: 'no-trades' | 'unknown' | 'insufficient' | 'conditional';
@@ -52,7 +53,9 @@ export function checkPortfolioFunding(request: PortfolioAnalysisRequest,
   }
   const cash = cents(request.profile.buyBudget);
   // One regular order per recommendation; use the respective provider fee when available.
-  const balance = cash + sales - buys - fees;
+  const reserve = cents(protectedCashEUR(request.profile));
+  const balance = cash + sales - buys - fees - reserve;
+  if (reserve > 0) warnings.push(`Geschützte Reserve und geplante Entnahmen: ${(reserve / 100).toFixed(2)} EUR. Der Finanzierungsrest ist nach Abzug dieses Schutzbetrags ausgewiesen.`);
   if (unknown) warnings.push('Mindestens ein Kauf-/Verkaufsbetrag, eine Ordergebühr oder eine EUR-Verkaufsbewertung fehlt. Eine vollständige Finanzierung ist nicht bestätigt.');
   if (orders) warnings.push(request.investorContext
     ? 'Gebührenszenario: gespeicherte Gebühr des jeweiligen Anbieters für eine reguläre Order pro Kauf-/Verkaufsvorschlag. Für neue Kaufideen gilt der gespeicherte Standardanbieter. Fehlende Gebühren bleiben ungeklärt. Zusätzliche separate Orders, Spreads, Drittkosten und Verkaufssteuern sind nicht enthalten.'

@@ -1,6 +1,7 @@
 import type { AnalysisSource, AssetRecommendation, NewAssetRecommendation, PortfolioAnalysisRequest, PortfolioAnalysisResult } from './portfolioAnalysis';
 import { allocationCandidateKey, buildPortfolioAllocation, type PortfolioAllocation } from './portfolioAllocation';
 import { isEltif } from './eltifValuation';
+import { protectedCashEUR } from './decisionProfile';
 
 export interface ReturnForecast {
   key: string;
@@ -102,15 +103,29 @@ export function validForecastOptimizationDetails(v: ForecastOptimizationDetails)
       && v.unresolvedKeys.every(key => typeof key === 'string' && key.length > 0))
     && (v.reviewedUnavailableKeys === undefined || Array.isArray(v.reviewedUnavailableKeys) && v.reviewedUnavailableKeys.length <= 105
       && v.reviewedUnavailableKeys.every(key => typeof key === 'string' && v.unresolvedKeys?.includes(key)))
-    && (v.robust === undefined || !!v.robust && v.robust.version === 2 && ['stable-scenario', 'review-required', 'no-trades'].includes(v.robust.decisionStatus)
+    && (v.robust === undefined || !!v.robust && [2, 3].includes(v.robust.version) && ['stable-scenario', 'review-required', 'no-trades'].includes(v.robust.decisionStatus)
       && ['measured-eur', 'unavailable'].includes(v.robust.covarianceStatus) && Number.isInteger(v.robust.observations) && v.robust.observations >= 0 && v.robust.observations <= 2000
       && (v.robust.covarianceShrinkage === null || finite(v.robust.covarianceShrinkage) && v.robust.covarianceShrinkage >= 0 && v.robust.covarianceShrinkage <= 1)
       && Array.isArray(v.robust.estimates) && v.robust.estimates.length <= 105 && v.robust.estimates.every(e => e && typeof e.key === 'string'
-        && [e.rawReturnPercent, e.adjustedReturnPercent, e.uncertaintyPercent].every(finite) && e.uncertaintyPercent >= 0 && (e.coverage === null || finite(e.coverage) && e.coverage > 0))
+        && [e.rawReturnPercent, e.adjustedReturnPercent, e.uncertaintyPercent].every(finite)
+        && (v.robust.version === 2 && e.effectiveReturnPercent === undefined || v.robust.version === 3 && finite(e.effectiveReturnPercent))
+        && e.uncertaintyPercent >= 0 && (e.coverage === null || finite(e.coverage) && e.coverage > 0))
       && Array.isArray(v.robust.stressChecks) && v.robust.stressChecks.length <= 110 && v.robust.stressChecks.every(s => s && typeof s.name === 'string' && finite(s.utilityImprovementEUR))
       && Array.isArray(v.robust.reviewReasons) && v.robust.reviewReasons.length <= 200 && v.robust.reviewReasons.every(s => typeof s === 'string' && s.length < 5000)
       && Array.isArray(v.robust.scenarioTrades) && v.robust.scenarioTrades.length <= 105 && v.robust.scenarioTrades.every(t => t && typeof t.key === 'string'
         && ['Kaufen', 'Verkaufen'].includes(t.action) && finite(t.amountEUR) && t.amountEUR > 0 && (t.targetPercent === null || finite(t.targetPercent) && t.targetPercent >= 0 && t.targetPercent <= 100.000001))
+      && (v.robust.cashOnlyComparison === undefined || !!v.robust.cashOnlyComparison
+        && ['stable-scenario', 'review-required', 'no-trades', 'unavailable'].includes(v.robust.cashOnlyComparison.decisionStatus)
+        && [v.robust.cashOnlyComparison.availableCashEUR, v.robust.cashOnlyComparison.feesEUR, v.robust.cashOnlyComparison.remainingCashEUR].every(n => finite(n) && n >= 0)
+        && Array.isArray(v.robust.cashOnlyComparison.scenarioTrades) && v.robust.cashOnlyComparison.scenarioTrades.length <= 105
+        && v.robust.cashOnlyComparison.scenarioTrades.every(t => t && typeof t.key === 'string' && t.action === 'Kaufen' && finite(t.amountEUR) && t.amountEUR > 0
+          && (t.targetPercent === null || finite(t.targetPercent) && t.targetPercent >= 0 && t.targetPercent <= 100.000001))
+        && v.robust.cashOnlyComparison.scenarioTrades.reduce((sum, trade) => sum + trade.amountEUR, v.robust.cashOnlyComparison.feesEUR)
+          <= v.robust.cashOnlyComparison.availableCashEUR + .02
+        && Array.isArray(v.robust.cashOnlyComparison.stressChecks) && v.robust.cashOnlyComparison.stressChecks.length <= 110
+        && v.robust.cashOnlyComparison.stressChecks.every(s => s && typeof s.name === 'string' && finite(s.utilityImprovementEUR))
+        && Array.isArray(v.robust.cashOnlyComparison.reviewReasons) && v.robust.cashOnlyComparison.reviewReasons.length <= 200
+        && v.robust.cashOnlyComparison.reviewReasons.every(s => typeof s === 'string' && s.length < 5000))
       && (v.robust.concentration === undefined || !!v.robust.concentration && [v.robust.concentration.beforeLargestPercent, v.robust.concentration.scenarioLargestPercent].every(n => finite(n) && n >= 0 && n <= 100.000001)))
     && [v.expectedReturnPercent, v.riskProxyPercent, v.expectedGainEUR].every(n => n === null || finite(n));
 }
@@ -163,8 +178,9 @@ function project(v: number[], lower: number[], upper: number[], budget: number, 
 }
 
 export function buildForecastAllocation(request: PortfolioAnalysisRequest, forecasts: ReturnForecast[] = [], candidates: NewAssetRecommendation[] = [],
-  previous?: PortfolioAnalysisResult, decisions?: AssetRecommendation[], reviewedUnavailableKeys: string[] = [], riskModel?: ForecastRiskModel): PortfolioAllocation {
-  const plan = calculateForecastAllocation(request, forecasts, candidates, previous, decisions, riskModel);
+  previous?: PortfolioAnalysisResult, decisions?: AssetRecommendation[], reviewedUnavailableKeys: string[] = [], riskModel?: ForecastRiskModel,
+  buyOnly = false): PortfolioAllocation {
+  const plan = calculateForecastAllocation(request, forecasts, candidates, previous, decisions, riskModel, buyOnly);
   const reviewed = new Set([...previous?.allocationPlan?.optimization?.reviewedUnavailableKeys ?? [], ...reviewedUnavailableKeys]);
   const optimization = plan.optimization!;
   const onlyMissingForecasts = plan.status === 'blocked' && plan.warnings.some(w => w.startsWith('Für die ausgewählte Optimierung'));
@@ -183,7 +199,7 @@ export function buildForecastAllocation(request: PortfolioAnalysisRequest, forec
 }
 
 function calculateForecastAllocation(request: PortfolioAnalysisRequest, forecasts: ReturnForecast[] = [], candidates: NewAssetRecommendation[] = [],
-  previous?: PortfolioAnalysisResult, decisions?: AssetRecommendation[], riskModel?: ForecastRiskModel): PortfolioAllocation {
+  previous?: PortfolioAnalysisResult, decisions?: AssetRecommendation[], riskModel?: ForecastRiskModel, buyOnly = false): PortfolioAllocation {
   const base = buildPortfolioAllocation(request, candidates, previous);
   const level = request.profile.goal === 'preservation' || request.profile.horizonYears < 5 ? 'low' : request.profile.risk;
   const lambda = { low: 10, medium: 5, high: 2 }[level];
@@ -200,6 +216,7 @@ function calculateForecastAllocation(request: PortfolioAnalysisRequest, forecast
       'Numerische kontinuierliche Optimierung mit konservativer Reserve aller möglichen Ordergebühren. Tatsächliche EUR-Beträge werden danach mit Gebühren und Cent-Rundung berechnet; kein garantiert globales Optimum für diskrete Orders.',
       'ELTIFs und Cash Equivalents werden ohne bestätigte kurzfristige Handelbarkeit nicht umgeschichtet. Positionen mit fehlenden vollständigen Prognose- oder Risikodaten werden in einer Teilportfolio-Optimierung unverändert eingefroren; ohne mindestens eine vollständig belegte Position bleibt die Optimierung blockiert.',
     ], warnings: ['Veröffentlichte Kursziele und historische Volatilität können falsch oder überholt sein. Das Ergebnis ist nur unter den angegebenen Annahmen optimal.'] };
+  if (protectedCashEUR(request.profile) > 0) plan.assumptions.push(`Persönlich geschützte Liquidität: ${protectedCashEUR(request.profile).toFixed(2)} EUR für Reserve und zusätzliche Entnahmen. Bleibt Teil des erfassten Vermögens und steht nicht für Käufe oder Gebühren zur Verfügung.`);
   const block = (reason: string): PortfolioAllocation => {
     plan.status = 'blocked'; plan.warnings.push(reason); plan.feesEUR = 0; plan.projectedCashEUR = request.profile.buyBudget;
     info.expectedReturnPercent = null; info.expectedGainEUR = null; info.riskProxyPercent = null;
@@ -275,26 +292,27 @@ function calculateForecastAllocation(request: PortfolioAnalysisRequest, forecast
   if (base.positions.some((p, i) => !frozen[i] && p.feeEUR === null)) return block('Ordergebühren fehlen; eine kostenbereinigte Optimierung ist nicht möglich.');
   if (feeReserve >= 1) return block('Die Gebührenreserve würde den gesamten Portfoliowert aufzehren.');
   const net = 1 - feeReserve;
+  const cashFloor = protectedCashEUR(request.profile) / total;
   const targets = base.positions.map(p => request.investorContext?.assets.find(f => f.assetId === p.assetId && f.confirmedAt)?.targetWeight ?? null);
   const lower = targets.map((t, i) => frozen[i] ? request.targetAssetId !== undefined && base.positions[i].assetId !== request.targetAssetId
     ? (base.positions[i].currentValueEUR! + (base.positions[i].action === 'Kaufen' ? 1 : base.positions[i].action === 'Verkaufen' ? -1 : 0) * (base.positions[i].amountEUR ?? 0)) / total
-    : current[i] : (t?.minPercent ?? 0) / 100 * net);
+    : current[i] : Math.max(buyOnly ? current[i] : 0, (t?.minPercent ?? 0) / 100 * net));
   const upper = inputs.map((_p, i) => frozen[i] ? lower[i] : (targets[i]?.maxPercent ?? 100) / 100 * net);
+  if (buyOnly && lower.some((value, i) => value > upper[i] + 1e-10)) return block('Eine bestätigte Zielobergrenze liegt unter dem aktuellen Bestand; die reine Cash-Variante kann diese Vorgabe ohne Verkauf nicht einhalten.');
   const fixedMinimum = lower.reduce((s, n) => s + n, 0);
-  if (fixedMinimum > net + 1e-10) return block('Bestätigte Mindestgewichte oder bestehende Einzelanalyse-Szenarien sind mit der Gebührenreserve nicht finanzierbar.');
-  const budget = net;
+  if (fixedMinimum > net - cashFloor + 1e-10) return block('Bestätigte Mindestgewichte oder bestehende Einzelanalyse-Szenarien sind mit Gebührenreserve und geschützter Liquidität nicht finanzierbar.');
+  const budget = net - cashFloor;
   const covariance = base.positions.map((p, i) => base.positions.map((q, j) => riskModel
     ? riskModel.covariance[riskModel.keys.indexOf(p.key)]?.[riskModel.keys.indexOf(q.key)] ?? 0 : sigma[i] * sigma[j]));
-  const uncertainty = base.positions.map(p => riskModel?.uncertainty[riskModel.keys.indexOf(p.key)] ?? 0);
   const gradientRisk = (x: number[]) => covariance.map(row => row.reduce((sum, n, i) => sum + n * x[i], 0));
   const variance = (x: number[]) => { const product = gradientRisk(x); return Math.max(0, x.reduce((sum, n, i) => sum + n * product[i], 0)); };
   const risk = (x: number[]) => Math.sqrt(variance(x));
-  const utility = (x: number[], fees: number) => x.reduce((sum, n, i) => sum + n * mu[i] - uncertainty[i] * Math.abs(n - current[i]), 0) - fees / total - lambda / 2 * variance(x);
+  const utility = (x: number[], fees: number) => x.reduce((sum, n, i) => sum + n * mu[i], 0) - fees / total - lambda / 2 * variance(x);
   let x = project(current, lower, upper, budget);
   const step = 1 / Math.max(1e-8, lambda * Math.max(...covariance.map(row => row.reduce((sum, value) => sum + Math.abs(value), 0))));
   for (let iteration = 0; iteration < 10000; iteration++) {
     const r = gradientRisk(x);
-    const next = project(x.map((n, i) => n + step * (mu[i] - lambda * r[i])), lower, upper, budget, current, uncertainty.map(value => step * value));
+    const next = project(x.map((n, i) => n + step * (mu[i] - lambda * r[i])), lower, upper, budget);
     info.iterations = iteration + 1;
     const change = Math.max(0, ...x.map((n, i) => Math.abs(n - next[i])));
     x = next;
@@ -310,10 +328,12 @@ function calculateForecastAllocation(request: PortfolioAnalysisRequest, forecast
     ? { assetId: p.id, action: 'Halten' as const, rationale: '', risk: '', sourceIndexes: [] }
     : decisions?.find(r => r.assetId === p.id)).filter((p): p is AssetRecommendation => !!p);
   const executed = buildPortfolioAllocation(request, candidates, previous, executionDecisions, optimizedTargets);
+  if (executed.status === 'blocked') return block(executed.warnings[executed.warnings.length - 1]);
+  if (buyOnly && executed.positions.some(p => p.action === 'Verkaufen')) return block('Die reine Cash-Variante würde einen Verkauf erfordern und wurde deshalb nicht als Cash-Einsatz bewertet.');
   const after = executed.positions.map(p => (p.currentValueEUR! + (p.action === 'Kaufen' ? 1 : p.action === 'Verkaufen' ? -1 : 0) * (p.amountEUR ?? 0)) / total);
   const improvement = utility(after, executed.feesEUR) - utility(current, 0);
   // Fixed fees and the execution engine's minimum trade sizes can erase the continuous gain.
-  if (improvement <= 1e-9 && targets.every(t => !t) && request.targetAssetId === undefined) {
+  if (improvement <= 1e-9 && targets.every(t => !t) && request.targetAssetId === undefined && request.profile.buyBudget >= protectedCashEUR(request.profile)) {
     executed.feesEUR = 0; executed.projectedCashEUR = request.profile.buyBudget;
     executed.positions.forEach(p => { p.action = 'Halten'; p.amountEUR = null; p.projectedWeightPercent = p.currentWeightPercent; });
     after.splice(0, after.length, ...current);

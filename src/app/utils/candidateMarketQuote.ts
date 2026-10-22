@@ -26,15 +26,18 @@ const endpoint = 'https://api.boerse-frankfurt.de/v1/data/price_information/sing
 // This listing is confirmed by the exchange, not inferred from the share-class currency/name.
 const listings: Record<string, { symbol: string; exchange: string }> = {
   IE00BF4RFH31: { symbol: 'IUSN.DE', exchange: 'XETR' },
+  IE00B3WJKG14: { symbol: 'QDVE.DE', exchange: 'XETR' },
+  IE00BKM4GZ66: { symbol: 'IS3N.DE', exchange: 'XETR' },
 };
 
 export function validCandidateMarketQuote(value: unknown, isin: string, now = Date.now()): value is CandidateMarketQuote {
   const q = value as CandidateMarketQuote;
+  const listing = listings[isin];
   return !!q && q.isin === isin && /^[A-Z]{2}[A-Z0-9]{9}\d$/.test(isin)
     && q.currency === 'EUR' && q.kind === 'last-trade'
     && typeof q.price === 'number' && Number.isFinite(q.price) && q.price > 0
     && typeof q.exchange === 'string' && /^[A-Z0-9]{4}$/.test(q.exchange)
-    && (q.symbol === undefined || q.symbol === listings[isin]?.symbol && q.exchange === listings[isin]?.exchange)
+    && (listing ? q.symbol === listing.symbol && q.exchange === listing.exchange : q.symbol === undefined)
     && Number.isFinite(Date.parse(q.quoteAsOf)) && Date.parse(q.quoteAsOf) <= now
     && now - Date.parse(q.quoteAsOf) <= 7 * day
     && Number.isFinite(Date.parse(q.fetchedAt)) && Date.parse(q.fetchedAt) <= now

@@ -36,13 +36,13 @@ export class PortfolioResearchCache {
     this.entries.delete(key);
     return undefined;
   }
-  findForSecurity(security: ReturnType<typeof buildResearchSecurities>[number]): Research | undefined {
+  findForSecurity(security: ReturnType<typeof buildResearchSecurities>[number], includeDiscovery = false): Research | undefined {
     let latest: Research | undefined;
     for (const [key, value] of this.entries) {
       if (!fresh(value.fetchedAt, Date.now())) continue;
       try {
         const input = JSON.parse(key);
-        if (input.researchPolicy === RESEARCH_POLICY && Array.isArray(input.securities)
+        if (input.researchPolicy === RESEARCH_POLICY && (includeDiscovery || input.provider !== 'deterministic-online') && Array.isArray(input.securities)
           && input.securities.some((item: unknown) => JSON.stringify(item) === JSON.stringify(security))
           && (!latest || value.fetchedAt > latest.fetchedAt)) latest = value;
       } catch { /* Ignore unrelated or malformed legacy keys. */ }

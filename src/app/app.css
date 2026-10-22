@@ -131,6 +131,16 @@ textarea::placeholder {
 	min-width: 0;
 }
 
+.analysis-form .decision-fields {
+	align-items: stretch;
+}
+
+.analysis-form .decision-fields > label {
+	display: flex;
+	flex-direction: column;
+	justify-content: flex-end;
+}
+
 .analysis-form :is(input, select, textarea) {
 	display: block;
 	box-sizing: border-box;

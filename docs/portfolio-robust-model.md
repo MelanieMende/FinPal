@@ -1,14 +1,20 @@
-# Robust portfolio scenario model v2
+# Robust portfolio scenario model v3
 
 This model produces a conditional 12-month scenario, not an execution instruction or a forecast of ten-year performance. It does not impose category quotas, position caps or a minimum cash percentage. User-confirmed allocation bands remain hard constraints. Unmodeled holdings remain unchanged and are not treated as having zero real-world risk.
+
+Personal decision details can now be entered in the analysis profile. Explicit cash reserves and additional planned twelve-month withdrawals create an additive EUR cash floor for allocation and funding; this cash remains part of portfolio wealth. Other personal details inform qualitative review rather than a calibrated loss limit. See [the model validation plan](portfolio-model-validation.md) for the implementation scope, evidence still required, and the distinction between software checks and professional validation.
+
+## Local analysis mode
+
+FinPal can build the quantitative report without an OpenAI, ChatGPT or web-search request. This mode loads the configured direct market-data forecasts, calculates the v3 allocation and persists the report locally. It does not research current company news, issuer documents, tax sources, spreads or new investment candidates. Proposed model trades therefore remain open for qualitative review and are not exposed as approved orders. A later AI review is optional.
 
 ## Return evidence
 
 Both analyst signals and historical bootstrap signals receive a base weight of 0.25. For crypto, the unshrunk bootstrap median is used before this common adjustment; the already-shrunk legacy target is not shrunk a second time. Analyst signals receive an additional coverage weight `n / (n + 10)`. Analyst count is a coverage proxy, not a count of independent observations.
 
-The turnover uncertainty penalty uses the larger of the supplied forecast half-range and historical annual volatility divided by the square root of the available coverage (analyst count or historical years), multiplied by the signal weight. Analyst min/max targets and bootstrap P10/P90 ranges have different meanings; these proxies are explicitly not confidence intervals or calibrated prediction errors.
+The uncertainty proxy uses the larger of the supplied forecast half-range and historical annual volatility divided by the square root of the available coverage (analyst count or historical years), multiplied by the signal weight. It scales the adjusted signal by `abs(signal) / (abs(signal) + uncertainty)`. It is not also deducted as a linear turnover hurdle. Analyst min/max targets and bootstrap P10/P90 ranges have different meanings; these proxies are explicitly not confidence intervals or calibrated prediction errors.
 
-The factors 0.25 and 10 are transparent conservative assumptions, not empirically fitted constants. Lower coverage and wider ranges weaken a signal and/or increase its turnover penalty. Unknown coverage or a missing forecast range cannot authorize a proposed trade.
+The factors 0.25 and 10 are transparent conservative assumptions, not empirically fitted constants. Lower coverage and wider ranges weaken the effective signal. Unknown coverage or a missing forecast range cannot authorize a proposed trade.
 
 ## Risk and objective
 
@@ -16,13 +22,17 @@ Adjusted daily closes are converted into EUR using same-date historical FX obser
 
 The annualized sample covariance is shrunk toward its own diagonal. The shrinkage intensity is estimated from off-diagonal sampling noise, bounded to [0, 1]. This retains positive semidefiniteness and allows measured negative correlations. The estimator follows the diagonal-target shrinkage approach; it does not claim to implement all variance/correlation shrinkage steps of corpcor. Methodological background: [Schäfer and Strimmer (2005)](https://strimmerlab.github.io/publications/journals/shrinkcov2005.pdf).
 
-The solver maximizes `adjustedReturn · weights - lambda / 2 * weights' covariance weights - uncertainty · abs(weights - currentWeights)`, followed by fees and the existing discrete execution checks. Risk aversion remains profile-dependent. Missing covariance produces no confirmed reallocation; the old numerical benchmark may only serve as a clearly marked scenario.
+The solver maximizes `confidenceWeightedReturn · weights - lambda / 2 * weights' covariance weights`, followed by fees and the existing discrete execution checks. User-confirmed strategic allocation bands are hard constraints. The full uncertainty proxy remains in the adverse-return stress check. Risk aversion remains profile-dependent. Missing covariance produces no confirmed reallocation; the old numerical benchmark may only serve as a clearly marked scenario.
 
 ## Decision checks
+
+For a full portfolio analysis, the model also calculates a separate cash-only alternative against unchanged holdings. Existing positions are lower bounds, so this alternative cannot finance purchases with sales. The available amount is current recorded cash less the user-declared reserve and planned withdrawals; order fees consume the same budget. Confirmed target upper bounds, missing valuations, forecasts, fees, or EUR risk histories can leave this alternative unavailable. The alternative has its own product-risk and stress checks. Its amounts and remaining cash are displayed as a scenario, not as approved orders. A failed full rebalance does not establish that keeping all cash is preferable, and a stable cash-only scenario does not waive product, tax, spread or execution review.
 
 A proposed purchase requires a cited assessment of material company/product risks. Documented losses, margin distress, financing, going-concern or regulatory problems require review; they are not converted into invented numerical risk premiums. Unknown assessments also require review for a purchase.
 
 The complete proposed trade bundle is compared with leaving holdings unchanged under: adverse return uncertainty, doubled risk aversion, quarter-sized return signals, perfect positive correlation stress, and failure of each proposed purchase's positive return signal. These are stress scenarios with no assigned probabilities, not an exhaustive robustness guarantee. A nonpositive net utility improvement in any check requires review. The utility comparison is not a predicted cash profit.
+
+The threshold is strictly greater than zero in every stress check. For example, -102.51 EUR under adverse return uncertainty is sufficient to require review: the bundle scores below unchanged holdings in that scenario, rather than predicting a cash loss of that size or a decline from the base scenario. This check lowers return signals for purchases and raises them for sales by their uncertainty proxies, applying the same stressed signals to both portfolios. Each failed check is reported with its value and threshold. Largest-position weights before and after are descriptive context: a scenario weight of 28.60% does not itself trigger review, and no automatic concentration cap is imposed. Confirmed allocation bands remain binding independently of this descriptive comparison.
 
 Trades that consume all available cash without a buffer for unknown spreads/taxes require review. This does not estimate taxes or certify their absence when a cash buffer exists. Tax and execution checks remain necessary.
 
@@ -30,7 +40,7 @@ Review applies to the complete dependent trade bundle: a declined purchase canno
 
 ## Compatibility and evidence
 
-Published targets, raw signals, adjusted signals, coverage, uncertainty proxies, common observation count, covariance shrinkage, concentration before/after, and stress results are displayed separately. Older saved analyses remain readable and are explicitly labeled as old scenarios requiring reanalysis for v2.
+Published targets, raw signals, adjusted signals, confidence-weighted signals, coverage, uncertainty proxies, common observation count, covariance shrinkage, concentration before/after, and stress results are displayed separately. Older saved v2 analyses remain readable; a new analysis is required to obtain a v3 result.
 
 Only the local market provider may supply historical series and numerical uncertainty evidence. AI-supplied historical arrays are discarded. Raw daily series stay local and are stripped from model request/correction payloads. Existing successful web research remains reusable for 24 hours. Loading/upgrading historical market data is a separate operation.
 
@@ -53,3 +63,19 @@ Adjusted closes provide a return proxy incorporating provider split/distribution
 Successful models persist for 24 hours; explicitly requested market refresh bypasses that cache. A labeled fallback after a provider failure requires a valid model and reference no older than seven days. Reused web research keeps its separate 24-hour policy. Only the local provider can attach numerical ETF-model metadata, uncertainty and price arrays; AI-provided model fields are discarded, and daily arrays are omitted from model request/correction payloads.
 
 An ETF initially marked `Prüfen` can still enter the joint nominal scenario when valid local evidence is present. This inclusion does not approve a purchase. All existing covariance, uncertainty, product-risk, fee, cash and stress gates apply. If the analysis subsequently declines a modeled ETF purchase, the dependent trade bundle remains open for review with no approved amounts. A model target of zero is also a calculation result; no allocation is invented merely to create an ETF purchase.
+
+## Persisted primary-document risk review
+
+All held assets now receive an explicit primary-risk status before the portfolio recommendation. For McDonald's and JinkoSolar the issuer's SEC identity is fixed by ISIN; other US equities may be matched by exact ticker and issuer name. The latest SEC submissions list and downloaded filings are reused for 24 hours. Curated issuer documents are accepted only from explicitly mapped issuer domains. A URL found by the deterministic search is never treated as document content. Instruments without a verified SEC issuer mapping currently remain `unknown`; the app does not spend an additional AI request on documents that cannot establish a current, instrument-specific review.
+
+The review extracts bounded passages on earnings, margins, cash, debt maturities, going concern and regulatory matters. A separate structured AI request assesses the five binding risk categories and periodized numerical evidence. Each positive or negative finding must cite an exact passage from a downloaded document; numbers must also occur in that passage. Missing or invalid citations become `unknown`. The document hash, assessment policy, five findings, metrics, gaps and sources persist in separate local JSON caches. An unchanged document reuses its assessment after an app restart. A changed document invalidates it. Failed freshness checks make a previously completed finding temporarily open rather than treating stale evidence as current.
+
+The verified or open review overrides a general analysis response for held assets and feeds the allocation gate. It does not supply trade approval. Instruments without a verified issuer mapping or readable primary filing retain an explicit open risk review. The main portfolio analysis still uses AI quota; reusing a risk review avoids only the separate risk-assessment request. The UI shows the active document or assessment step and keeps earlier recommendation cards visible.
+
+The risk policy now defines separate checklists for stocks, ETFs, funds, bonds, crypto assets, commodities, real estate and cash equivalents. Product checks cover identity, strategy or terms, costs, valuation, liquidity, structure, currency, custody or credit as applicable, plus regulatory issues. Corporate earnings and margin metrics apply only to stocks. Every claimed finding requires a relevant exact quote from a downloaded primary document; a missing check stays open. The policy version and document hashes invalidate prior assessments when either changes.
+
+Munich Re (DE0008430026) has a verified issuer-domain mapping to its 2026 half-year report and result release, 2025 Group annual report and 2025 Solvency and Financial Condition Report. The non-SEC collector checks the issuer identity in the downloaded content and records each report period. Its insurance-specific review uses net result, segment-specific combined ratio, solvency ratio and cash instead of a generic operating margin and mandatory debt-maturity figure. Missing passages or an unavailable report remain explicit open points; cached old `unknown` results are invalidated by the new policy version.
+
+For funds, ETFs and other products, the collector accepts issuer-hosted documents only after confirming the exact ISIN or bond CUSIP in the document and in the excerpt supplied to the assessor. A dated document is required for a completed assessment. The current issuer allowlist and curated instrument links cover only a subset of products. Unsupported issuers, missing identifiers, unavailable documents and undated or incomplete evidence remain `unknown` with explicit gaps. Thus every asset type is covered by a review policy, but a completed automatic assessment cannot be guaranteed for every individual holding.
+
+New candidates discovered during the portfolio response enter the same document retrieval, type-specific assessment and persistent cache, keyed by candidate ISIN. Their suggested source links are retrieval hints only; the general analysis response cannot mark the separate review as assessed. The candidate and active step appear in analysis progress, while the existing asset cards remain visible. The full portfolio analysis still consumes an AI request; cache reuse saves the separate primary-risk assessment request when the source documents are unchanged.

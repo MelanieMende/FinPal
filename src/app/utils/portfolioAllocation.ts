@@ -1,5 +1,6 @@
 import type { AssetRecommendation, NewAssetRecommendation, PortfolioAnalysisRequest } from './portfolioAnalysis';
 import { isEltif } from './eltifValuation';
+import { protectedCashEUR } from './decisionProfile';
 import { validForecastOptimizationDetails } from './portfolioForecastOptimization';
 
 type Bucket = 'funds' | 'stocks' | 'bonds' | 'crypto' | 'alternatives';
@@ -102,7 +103,7 @@ export function buildPortfolioAllocation(request: PortfolioAnalysisRequest, cand
   const inputs = [...request.positions, ...included];
   const fixed = positions.reduce((sum, p) => sum + (p.targetWeight?.percent ?? 0), 0);
   const assumptions = [
-    'Bezugsgröße: erfasste EUR-Positionen plus Total Liquidity; externes Vermögen und eine gesonderte Notfallreserve sind nicht erfasst.',
+    'Bezugsgröße: erfasste EUR-Positionen plus Total Liquidity; externes Vermögen ist nicht in der Bewertungsbasis enthalten. Eine angegebene Reserve bleibt Teil dieser Basis und wird vor Käufen und Gebühren geschützt.',
     'Profilmodell, keine Renditeprognose: Modellannahmen statt geschätzter Volatilitäten, Korrelationen oder optimaler zukünftiger Rendite.',
     'Unter 3 Jahren: überwiegend Cash. Unter 5 Jahren oder bei Kapitalerhalt: defensives Modell. Sonst gilt das gewählte Risikoprofil. Bei Einkommensziel geht das Krypto-Modellbudget an Anleihen; eine Ausschüttung einzelner Produkte ist damit nicht bestätigt.',
     `Modellbudgets: Fonds/ETFs ${weights.funds} %, Einzelaktien ${weights.stocks} %, Anleihen ${weights.bonds} %, Krypto ${weights.crypto} %, alternative Anlagen einschließlich ELTIF ${weights.alternatives} %, Cash mindestens ${policyCash} %.`,
@@ -183,7 +184,7 @@ export function buildPortfolioAllocation(request: PortfolioAnalysisRequest, cand
     const sales = amounts.reduce((sum, n, i) => sum + (directions[i] < 0 ? n : 0), 0);
     const lockedBuys = amounts.reduce((sum, n, i) => sum + (directions[i] > 0 && lockedTrades.has(positions[i].key) ? n : 0), 0);
     const buys = amounts.reduce((sum, n, i) => sum + (directions[i] > 0 && !lockedTrades.has(positions[i].key) ? n : 0), 0);
-    const reserve = Math.ceil(netTotal * cashTargetPercent / 100);
+    const reserve = Math.max(Math.ceil(netTotal * cashTargetPercent / 100), cents(protectedCashEUR(request.profile)));
     const budget = Math.max(0, cents(request.profile.buyBudget) + sales - fees - reserve - lockedBuys);
     if (buys > budget) amounts = amounts.map((n, i) => directions[i] > 0 && !lockedTrades.has(positions[i].key) ? Math.floor(n * budget / buys) : n);
     let removed = false;
@@ -208,6 +209,12 @@ export function buildPortfolioAllocation(request: PortfolioAnalysisRequest, cand
         : directions[i] ? 'Keine wirtschaftliche Umschichtung innerhalb der Gebühren- und Cashgrenzen.' : 'Innerhalb der Zielbandbreite.');
     if (amount && directions[i] > 0 && value + amount < cents(p.targetValueEUR) - 1) p.reason += ' Kauf wegen verfügbarer Mittel gekürzt; Ziel noch nicht vollständig erreicht.';
   });
+  if (cash < cents(protectedCashEUR(request.profile))) {
+    warnings.push('Geschützte Liquidität für Reserve und Entnahmen ist nicht gedeckt. Abhängige Umschichtungen bleiben zur Prüfung offen.');
+    positions.forEach(p => { p.action = 'Prüfen'; p.amountEUR = null; p.targetValueEUR = p.currentValueEUR; p.projectedWeightPercent = p.currentWeightPercent; p.reason = warnings[warnings.length - 1]; });
+    return { version: 1, status: 'blocked', method: 'profile-buckets-v1', targetAssetId: request.targetAssetId, totalValueEUR: total / 100,
+      cashTargetPercent: total ? 100 * cents(request.profile.buyBudget) / total : 0, projectedCashEUR: request.profile.buyBudget, feesEUR: 0, assumptions, warnings, positions };
+  }
   return { version: 1, status: 'calculated', method: 'profile-buckets-v1', targetAssetId: request.targetAssetId, totalValueEUR: total / 100,
     cashTargetPercent, projectedCashEUR: cash / 100, feesEUR: fees / 100, assumptions, warnings, positions };
 }

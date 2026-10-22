@@ -95,7 +95,9 @@ contextBridge.exposeInMainWorld('API', {
   getLastPortfolioAnalysis: () => ipcRenderer.invoke('portfolio-ai:last-result'),
   forgetLastPortfolioAnalysis: () => ipcRenderer.invoke('portfolio-ai:forget-result'),
   analyzePortfolio: (request: import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest, snapshot?: string) => ipcRenderer.invoke('portfolio-ai:analyze', request, snapshot),
+  analyzePortfolioLocally: (request: import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest, snapshot?: string) => ipcRenderer.invoke('portfolio-ai:analyze-local', request, snapshot),
   refreshPortfolioForecast: (request: import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest, assetId?: number, snapshot?: string) => ipcRenderer.invoke('portfolio-ai:refresh-forecast', request, assetId, snapshot),
+  refreshPortfolioPrimaryRisk: (asset: import('./app/utils/portfolioAnalysis').ResearchAsset) => ipcRenderer.invoke('portfolio-ai:refresh-risk', asset),
   onPortfolioAnalysisProgress: (callback: (progress: import('./app/utils/portfolioAnalysis').PortfolioAnalysisProgress) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: import('./app/utils/portfolioAnalysis').PortfolioAnalysisProgress) => callback(progress);
     ipcRenderer.on('portfolio-ai:progress', listener);

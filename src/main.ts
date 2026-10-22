@@ -15,6 +15,7 @@ import { fetchEuroExchangeRates } from './app/utils/euroExchangeRates';
 import YahooFinance from 'yahoo-finance2';
 import { createYahooMarketForecastProvider } from './app/utils/marketForecastProvider';
 import { createCandidateMarketQuoteProvider } from './app/utils/candidateMarketQuote';
+import { createDeterministicOnlineResearchProvider } from './app/utils/deterministicOnlineResearch';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -45,7 +46,8 @@ const chatGptAuth = new ChatGptAuth(dataPath);
 const yahooFinance = new YahooFinance({ suppressNotices: ['yahooSurvey'] });
 const portfolioAnalysis = new PortfolioAnalysisService(dataPath, fetch, chatGptAuth,
   createYahooMarketForecastProvider(yahooFinance, { cacheFile: path.join(dataPath, 'portfolio-market-forecast-cache.json') }),
-  createCandidateMarketQuoteProvider({ cacheFile: path.join(dataPath, 'portfolio-candidate-quote-cache.json') }));
+  createCandidateMarketQuoteProvider({ cacheFile: path.join(dataPath, 'portfolio-candidate-quote-cache.json') }),
+  createDeterministicOnlineResearchProvider(yahooFinance, { cacheFile: path.join(dataPath, 'portfolio-online-research-cache.json') }));
 
 let appState: {
   dataPath: string;
@@ -271,8 +273,15 @@ ipcMain.handle('portfolio-ai:forget-result', () => { portfolioAnalysis.forgetLas
 ipcMain.handle('portfolio-ai:analyze', (event, request: PortfolioAnalysisRequest, snapshot?: string) => portfolioAnalysis.analyze(request, progress => {
   if (!event.sender.isDestroyed()) event.sender.send('portfolio-ai:progress', progress);
 }, snapshot));
+ipcMain.handle('portfolio-ai:analyze-local', (event, request: PortfolioAnalysisRequest, snapshot?: string) => portfolioAnalysis.analyzeLocal(request, progress => {
+	if (!event.sender.isDestroyed()) event.sender.send('portfolio-ai:progress', progress);
+}, snapshot));
 ipcMain.handle('portfolio-ai:refresh-forecast', (_event, request: PortfolioAnalysisRequest, assetId?: number, snapshot?: string) =>
   portfolioAnalysis.refreshMarketForecast(request, assetId, snapshot));
+ipcMain.handle('portfolio-ai:refresh-risk', (event, asset: import('./app/utils/portfolioAnalysis').ResearchAsset) =>
+  portfolioAnalysis.refreshPrimaryRisk(asset, progress => {
+    if (!event.sender.isDestroyed()) event.sender.send('portfolio-ai:progress', progress);
+  }));
 ipcMain.handle('portfolio-ai:open-source', (_event, value: string) => {
   const url = new URL(value);
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error('Ungültiger Quellenlink.');

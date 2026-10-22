@@ -23,12 +23,26 @@ const assets = [
 const chatGpt = { connected: true, activeClientId: 'test-client', accounts: [{ clientId: 'test-client', label: 'Test account', connected: true }] };
 beforeEach(() => {
   localStorage.clear();
+  const localForecast = returnForecastFixture('1', { targetPrice: 60, referencePrice: 50 });
+  const builtLocalAllocationPlan = buildForecastAllocation({
+    provider: 'api', priceUpdatedAt: null,
+    profile: { goal: 'growth', risk: 'medium', horizonYears: 10, buyBudget: 0 },
+    positions: buildAnalysisPositions(assets),
+  }, [localForecast]);
+  const localAllocationPlan = { ...builtLocalAllocationPlan, optimization: builtLocalAllocationPlan.optimization && {
+    ...builtLocalAllocationPlan.optimization, forecasts: [localForecast],
+  } };
   window.API = {
     sendToDB: jest.fn(),
     sendToYahooFinanceAPI: jest.fn().mockResolvedValue(null),
     getPortfolioAIStatus: jest.fn().mockResolvedValue({ hasApiKey: false, secureStorageAvailable: true, model: 'api-model', chatGpt }),
     getPortfolioChatGptModels: jest.fn().mockResolvedValue([{ slug: 'account-model', displayName: 'Available model' }]),
     refreshPortfolioForecast: jest.fn(),
+    refreshPortfolioPrimaryRisk: jest.fn(),
+    analyzePortfolioLocally: jest.fn().mockResolvedValue({ mode: 'local', summary: 'Lokale Analyse', infos: [], warnings: [], sources: [{ title: 'Direkte Kursquelle', url: 'https://example.com/market-data' }], generatedAt: '2026-10-19T10:00:00Z', priceUpdatedAt: null, model: 'FinPal Local v4', allocationPlan: localAllocationPlan, recommendations: [
+      { assetId: 1, action: 'Halten', rationale: 'Lokal', risk: 'Keine Webquellen', sourceIndexes: [] },
+      { assetId: 2, action: 'Halten', rationale: 'Lokal', risk: 'Keine Webquellen', sourceIndexes: [] },
+    ] }),
     analyzePortfolio: jest.fn().mockResolvedValue({ summary: 'Diversifikation prüfen', warnings: ['Risiken berücksichtigen'], sources: [{ title: 'Report', url: 'https://example.com/report' }], generatedAt: '2026-10-02T10:00:00Z', priceUpdatedAt: null, model: 'account-model', recommendations: [
       { assetId: 1, action: 'Halten', rationale: 'Begründung', risk: 'Risiko', sourceIndexes: [0], tradeCheck: {
         costs: '100 EUR Marktwert, 1 EUR Gebühren entsprechen 1 %.', taxes: 'Verlusttöpfe unbekannt.', conclusion: 'Kein Verkauf zur Bereinigung.',
@@ -46,6 +60,58 @@ async function openAISettings() {
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'KI-Einstellungen' })); });
 }
 
+it('persists personal decision details, restores them for local requests, and clears them with stale-result detection', async () => {
+  localStorage.setItem(ANALYSIS_PROFILE_KEY, JSON.stringify({ goal: 'growth', risk: 'medium', horizonYears: '10', buyBudget: '999' }));
+  const store = setupStore({ assets, cash: [{ ID: 1, date: '2026-10-01', type: 'Deposit', amount: 1000 }] });
+  const first = render(<PortfolioAnalysis priceUpdatedAt={null} standalone />, { store });
+  fireEvent.click(screen.getByText('Persönliche Entscheidungsgrundlage ergänzen'));
+  fireEvent.change(screen.getByLabelText('Geschützte Liquiditätsreserve (EUR)'), { target: { value: '300' } });
+  fireEvent.change(screen.getByLabelText('Zusätzliche geplante Entnahmen in 12 Monaten (EUR)'), { target: { value: '200' } });
+  fireEvent.change(screen.getByLabelText('Finanziell tragbarer Verlust im erfassten Portfolio (EUR)'), { target: { value: '400' } });
+  fireEvent.change(screen.getByLabelText('Einheit für finanziell tragbaren Verlust'), { target: { value: 'percent' } });
+  expect(screen.getByLabelText('Finanziell tragbarer Verlust im erfassten Portfolio (%)')).toHaveValue(null);
+  fireEvent.change(screen.getByLabelText('Finanziell tragbarer Verlust im erfassten Portfolio (%)'), { target: { value: '100' } });
+  fireEvent.change(screen.getByLabelText('Anlageerfahrung'), { target: { value: 'basic' } });
+  expect(JSON.parse(localStorage.getItem(ANALYSIS_PROFILE_KEY)!).decisionDetails).toMatchObject({ reserveEUR: '300', experience: 'basic' });
+  first.unmount();
+  render(<PortfolioAnalysis priceUpdatedAt={null} standalone />, { store });
+  expect(screen.getByLabelText('Geschützte Liquiditätsreserve (EUR)')).toHaveValue(300);
+  expect(screen.getByLabelText('Einheit für finanziell tragbaren Verlust')).toHaveValue('percent');
+  expect(screen.getByLabelText('Finanziell tragbarer Verlust im erfassten Portfolio (%)')).toHaveValue(100);
+  fireEvent.click(screen.getByRole('button', { name: 'Lokal analysieren (ohne KI)' }));
+  await waitFor(() => expect(window.API.analyzePortfolioLocally).toHaveBeenCalledTimes(1));
+  expect(jest.mocked(window.API.analyzePortfolioLocally!).mock.calls[0][0].profile).toMatchObject({ buyBudget: 1000,
+    decisionDetails: { reserveEUR: 300, plannedWithdrawalsEUR: 200, lossCapacityPercent: 100, experience: 'basic', confirmedAt: expect.any(String) } });
+  expect(jest.mocked(window.API.analyzePortfolioLocally!).mock.calls[0][0].profile.decisionDetails?.lossCapacityEUR).toBeUndefined();
+  expect(screen.queryByText(/haben sich seit dieser Analyse geändert/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText('Persönliche Entscheidungsgrundlage ergänzen'));
+  fireEvent.click(screen.getByRole('button', { name: 'Ergänzende Angaben löschen' }));
+  expect(JSON.parse(localStorage.getItem(ANALYSIS_PROFILE_KEY)!).decisionDetails).toBeUndefined();
+  expect(screen.getByLabelText('Geschützte Liquiditätsreserve (EUR)')).toHaveValue(null);
+  expect(screen.getByText(/haben sich seit dieser Analyse geändert/)).toBeInTheDocument();
+});
+
+it('runs the local analysis without requiring a connected AI provider', async () => {
+  const store = setupStore({ assets });
+  render(<PortfolioAnalysis priceUpdatedAt={null} />, { store });
+  await open();
+  fireEvent.change(screen.getByLabelText('Anlageziel'), { target: { value: 'growth' } });
+  fireEvent.change(screen.getByLabelText('Risikobereitschaft'), { target: { value: 'medium' } });
+  fireEvent.change(screen.getByLabelText('Anlagedauer (Jahre)'), { target: { value: '10' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Lokal analysieren (ohne KI)' }));
+  await waitFor(() => expect(window.API.analyzePortfolioLocally).toHaveBeenCalledTimes(1));
+  expect(screen.getByRole('status')).toHaveTextContent('1 von 2 Positionen mit Forecast · 1 direkte Datenquellen');
+  expect(screen.getByRole('status')).toHaveTextContent('deterministischen Onlinesuche');
+  expect(screen.getByText('Deterministisch gefundene Online- und Marktdatenquellen (1)')).toBeInTheDocument();
+  expect(screen.getByTestId('local-market-data-status-1')).toHaveTextContent('Lokaler Forecast');
+  expect(screen.getByTestId('local-market-data-status-2')).toHaveTextContent('ohne inhaltliche Bewertung');
+  expect(screen.queryAllByTestId('asset-research-status')).toHaveLength(0);
+  expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
+  expect(jest.mocked(window.API.analyzePortfolioLocally!).mock.calls[0][0]).toMatchObject({
+    profile: { goal: 'growth', risk: 'medium', horizonYears: 10 },
+  });
+});
+
 it('shows actual per-asset research availability before analysis and in recommendation cards', async () => {
   const loaded = new Date(Date.now() - 3600000).toISOString();
   const expires = new Date(Date.parse(loaded) + 86400000).toISOString();
@@ -56,7 +122,7 @@ it('shows actual per-asset research availability before analysis and in recommen
   await open();
   const section = screen.getByRole('region', { name: 'Webrecherche je Asset' });
   await waitFor(() => expect(within(section).getByText(/Erfolgreich geladen am/)).toBeInTheDocument());
-  expect(within(section).getByText(/Keine erfolgreichen Webrecherchedaten der letzten 24 Stunden/)).toBeInTheDocument();
+  expect(within(section).getByText(/Keine erfolgreichen Suchdaten der letzten 24 Stunden/)).toBeInTheDocument();
   expect(window.API.getPortfolioResearchStatus).toHaveBeenCalledWith(expect.arrayContaining([
     expect.objectContaining({ id: 1, name: 'Stock Asset' }), expect.objectContaining({ id: 2 }),
   ]));
@@ -76,7 +142,7 @@ it('stops promising reuse exactly at the 24-hour deadline', () => {
   const { rerender } = render(<AssetResearchIndicator status={status} now={loaded + 86400000 - 1} />);
   expect(screen.getByText(/Erfolgreich geladen am/)).toBeInTheDocument();
   rerender(<AssetResearchIndicator status={status} now={loaded + 86400000} />);
-  expect(screen.getByText(/Keine erfolgreichen Webrecherchedaten/)).toBeInTheDocument();
+  expect(screen.getByText(/Keine erfolgreichen Suchdaten/)).toBeInTheDocument();
 });
 
 it('restores an executed 50 EUR sale as Done in both views and removes its proceeds from the remaining funding plan', async () => {
@@ -225,6 +291,24 @@ it('refreshes one asset forecast without starting a new AI asset analysis', asyn
   expect(screen.getByRole('status')).toHaveTextContent('bestehende KI-Einzelanalyse wurde beibehalten');
 });
 
+it('keeps the asset card visible while refreshing only its primary risk assessment', async () => {
+  const response = await window.API.analyzePortfolio({} as never);
+  let finish!: (value: typeof response) => void;
+  jest.mocked(window.API.refreshPortfolioPrimaryRisk!).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+  render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
+  await open(); fillProfile();
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
+  jest.mocked(window.API.analyzePortfolio).mockClear();
+  fireEvent.click(screen.getByRole('button', { name: 'Unternehmens- und Produktrisiken für Asset 1 neu prüfen' }));
+  expect(window.API.refreshPortfolioPrimaryRisk).toHaveBeenCalledWith(expect.objectContaining({ id: 1, type: 'Stock' }));
+  expect(screen.getAllByText('Stock Asset')).toHaveLength(2);
+  expect(screen.getByTestId('asset-reload-status-1')).toHaveTextContent('Aktuelle Primärberichte werden geladen');
+  expect(screen.queryByTestId('asset-reload-status-2')).not.toBeInTheDocument();
+  await act(async () => { finish(response); });
+  expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
+  expect(screen.getAllByText('Stock Asset')).toHaveLength(2);
+});
+
 it('displays the shared financing check and its unresolved deductions', async () => {
   const response = await window.API.analyzePortfolio({} as never);
   jest.mocked(window.API.analyzePortfolio).mockResolvedValue({ ...response, fundingCheck: {
@@ -252,11 +336,41 @@ it('starts a single asset refresh, keeps existing results visible and preserves 
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Asset 1 neu analysieren' })); });
   expect(window.API.analyzePortfolio).toHaveBeenLastCalledWith(expect.objectContaining({ targetAssetId: 1, positions: expect.arrayContaining([expect.objectContaining({ id: 1 }), expect.objectContaining({ id: 2 })]) }), expect.any(String));
   expect(screen.getByText('Begründung')).toBeInTheDocument();
+  expect(screen.getByTestId('asset-reload-status-1')).toHaveTextContent('KI-Auswertung wird vorbereitet');
+  expect(screen.queryByTestId('asset-reload-status-2')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Asset 2 neu analysieren' })).toBeDisabled();
   await act(async () => { reject(new Error('Einzelanalyse fehlgeschlagen')); });
   expect(screen.getByRole('alert')).toHaveTextContent('Einzelanalyse fehlgeschlagen');
   expect(store.getState().portfolioAnalysis.result).toEqual(original);
   expect(screen.getByRole('button', { name: 'Asset 1 neu analysieren' })).toBeEnabled();
+});
+
+it('keeps asset recommendation cards visible during a full rerun and labels the active asset step', async () => {
+  let progressCallback: (progress: import('../../../../utils/portfolioAnalysis').PortfolioAnalysisProgress) => void;
+  window.API.onPortfolioAnalysisProgress = jest.fn(callback => { progressCallback = callback; return jest.fn(); });
+  const { store } = render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
+  await open(); fillProfile();
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
+  const original = store.getState().portfolioAnalysis.result;
+  let reject: (error: Error) => void;
+  jest.mocked(window.API.analyzePortfolio).mockImplementationOnce(() => new Promise((_resolve, rejectPromise) => { reject = rejectPromise; }));
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
+  expect(store.getState().portfolioAnalysis.result).toEqual(original);
+  expect(screen.getByText('Begründung')).toBeInTheDocument();
+  expect(screen.getByText(/Bisherige Analyse vom/)).toBeInTheDocument();
+  expect(screen.getByTestId('asset-reload-status-1')).toHaveTextContent('KI-Auswertung wird vorbereitet');
+  act(() => progressCallback({ stage: 'research', activeAssetId: 2, researchCompleted: 0, researchTotal: 2, lastActivityAt: Date.now() }));
+  expect(screen.getByTestId('asset-reload-status-2')).toHaveTextContent('Onlinequellen werden gesucht');
+  act(() => progressCallback({ stage: 'risk-review', activeAssetId: 1, activeRiskStep: 'assessment',
+    completedRiskAssetIds: [], reusedRiskAssetIds: [], researchCompleted: 0, researchTotal: 1, lastActivityAt: Date.now() }));
+  expect(screen.getByTestId('asset-reload-status-1')).toHaveTextContent('Dokumenttext wird auf Gewinn, Marge, Liquidität, Fälligkeiten');
+  expect(screen.getByRole('status')).toHaveTextContent('0/1 Assets abgeschlossen');
+  act(() => progressCallback({ stage: 'risk-review', completedRiskAssetIds: [1], reusedRiskAssetIds: [1],
+    researchCompleted: 1, researchTotal: 1, lastActivityAt: Date.now() }));
+  expect(screen.getByTestId('asset-reload-status-1')).toHaveTextContent('Gespeicherte Risikoprüfung wird wiederverwendet');
+  await act(async () => reject(new Error('Analyse fehlgeschlagen')));
+  expect(screen.getByText('Begründung')).toBeInTheDocument();
+  expect(screen.queryByTestId('asset-reload-status-1')).not.toBeInTheDocument();
 });
 
 it('uses live total liquidity instead of a saved budget and marks results stale when liquidity changes', async () => {
@@ -358,7 +472,7 @@ it('shows real progress, elapsed time and waiting time until the request finishe
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
     expect(screen.getByRole('status')).toHaveTextContent('KI-Verbindung wird vorbereitet');
     act(() => progressCallback({ stage: 'research', lastActivityAt: Date.now() }));
-    expect(screen.getByRole('status')).toHaveTextContent('Aktuelle Quellen werden recherchiert');
+    expect(screen.getByRole('status')).toHaveTextContent('Onlinequellen werden ohne KI gesucht');
     act(() => jest.advanceTimersByTime(65000));
     expect(screen.getByText(/Laufzeit:/)).toHaveTextContent('Laufzeit: 1:05');
     expect(screen.getByText(/Laufzeit:/)).toHaveTextContent('Letzte Rückmeldung vor 65 s');
@@ -531,8 +645,11 @@ it('shows warnings first and opens informational messages only through their tab
   const quoteNote = 'Die Kurse aller Positionen besitzen einen quoteAsOf-Zeitpunkt; ein fehlender Kurszeitpunkt liegt nicht vor. Die US-Schlusskurse mit Status market-closed werden nicht allein wegen Börsenschluss oder Vorbörse beanstandet.';
   const marketClosedInfo = 'Assets 6, 11, 25, 33, 34: Letzter Schlusskurs – regulärer US-Markt noch geschlossen. Der ältere Kurs ist durch die Handelspause erklärbar.';
   const concentrationInfo = 'Bitcoin stellt 27,50 % der Anlagen beziehungsweise 23,27 % einschließlich Cash und damit die größte Einzelrisikokonzentration dar; das lokale Modell weist 43,35 % annualisierte Volatilität und ein sehr breites historisches Bootstrap-Band aus [82].';
+  const executionInfo = 'Spreads und tatsächliche Ausführungskurse müssen unmittelbar vor jeder Order geprüft werden. Die gespeicherte 1-EUR-Pauschale ist kein aktuelles Geld-/Brief-Angebot [13].';
+  const sectorInfo = 'QDVE ist ein konzentrierter US-Technologie-Sektor-ETF und kein breiter S&P-500-Fonds; Halbleiter, Hardware und Software dominieren, bei hohem Bewertungsniveau [28][33].';
+  const currencyInfo = 'Die exakte wirtschaftliche Währungsrisiko-Allokation des Portfolios ist nicht quantifizierbar. Handels-, Fonds- und Berichtswährungen sind keine exakten Nettoexpositionen; für die Anleihe ist jedoch ein direktes USD-Nominalrisiko bestätigt.';
   jest.mocked(window.API.analyzePortfolio).mockResolvedValue({ ...response,
-    infos: ['Regulärer Schlusskurs'], warnings: [quoteNote, marketClosedInfo, concentrationInfo, 'Bei einer Position fehlt quoteAsOf.'],
+    infos: ['Regulärer Schlusskurs'], warnings: [quoteNote, marketClosedInfo, concentrationInfo, currencyInfo, executionInfo, sectorInfo, 'Bei einer Position fehlt quoteAsOf.'],
     recommendations: response.recommendations.map(rec => ({ ...rec, infos: ['Einzelanalyse abgeschlossen'], warnings: ['Kursdaten prüfen'] })),
   });
   render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
@@ -547,6 +664,9 @@ it('shows warnings first and opens informational messages only through their tab
   expect(screen.queryByText(quoteNote)).not.toBeInTheDocument();
   expect(screen.queryByText(marketClosedInfo)).not.toBeInTheDocument();
   expect(screen.queryByText(concentrationInfo)).not.toBeInTheDocument();
+  expect(screen.queryByText(currencyInfo)).not.toBeInTheDocument();
+  expect(screen.queryByText(executionInfo)).not.toBeInTheDocument();
+  expect(screen.queryByText(sectorInfo)).not.toBeInTheDocument();
   expect(screen.queryByText('Regulärer Schlusskurs')).not.toBeInTheDocument();
   expect(screen.queryByText('Einzelanalyse abgeschlossen')).not.toBeInTheDocument();
 
@@ -556,6 +676,9 @@ it('shows warnings first and opens informational messages only through their tab
   expect(within(summaryInfoPanel).getByText(quoteNote)).toBeInTheDocument();
   expect(within(summaryInfoPanel).getByText(marketClosedInfo)).toBeInTheDocument();
   expect(within(summaryInfoPanel).getByText(concentrationInfo)).toBeInTheDocument();
+  expect(within(summaryInfoPanel).getByText(currencyInfo)).toBeInTheDocument();
+  expect(within(summaryInfoPanel).getByText(executionInfo)).toBeInTheDocument();
+  expect(within(summaryInfoPanel).getByText(sectorInfo)).toBeInTheDocument();
   expect(within(summaryInfoPanel).getByText('Regulärer Schlusskurs')).toBeInTheDocument();
   expect(within(summaryInfoPanel).queryByText('Bei einer Position fehlt quoteAsOf.')).not.toBeInTheDocument();
 

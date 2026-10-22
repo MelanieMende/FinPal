@@ -13,6 +13,7 @@ import { returnForecastFixture, returnForecastInputFixture } from '../../testing
 import { robustReturnForecastFixture } from '../../testing/fixtures/robustForecast';
 import { createCandidateMarketQuoteProvider } from './candidateMarketQuote';
 import { etfReturnForecastFixture } from '../../testing/fixtures/etfHistory';
+import { riskChecksFor } from './assetRiskPolicy';
 
 jest.mock('electron', () => ({ safeStorage: {
   isEncryptionAvailable: jest.fn(() => true),
@@ -31,9 +32,117 @@ const research = { status: 'completed', output: [
   { type: 'message', content: [{ type: 'output_text', text: 'Recherche', annotations: [{ type: 'url_citation', title: 'Emittent', url: 'https://example.com/report' }] }] },
 ] };
 const structured = { status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(report) }] }] };
+const apiResponsesWithUnavailableDocuments = (...responses: Response[]) => {
+  const queue = [...responses];
+  return jest.fn(async (url: string, _options?: RequestInit) => url.includes('/v1/responses')
+    ? queue.shift() ?? new Response('', { status: 500 })
+    : new Response('', { status: 404 }));
+};
+
+it('assesses a new ETF from its exact issuer document and saves the candidate review', async () => {
+  const isin = 'IE00ZZZZZZZ1';
+  const url = `https://www.ishares.com/example/${isin}`;
+  const candidate = { ...newAsset, name: 'iShares Example ETF', isin, symbol: 'EXAMPLE' };
+  const answer = { ...report, newAssetRecommendations: [candidate] };
+  const html = `ISIN ${isin}. As of 2026-09-30. Investment objective tracks an index. Ongoing charges are 0.15 percent. Sector holdings are concentrated. Units may be redeemed daily. Securities lending creates counterparty risk. Currency exposure is USD. No material legal proceedings are reported.`;
+  const quotes: Record<string, string> = {
+    identity: `ISIN ${isin}.`, strategy: 'Investment objective tracks an index.', costs: 'Ongoing charges are 0.15 percent.',
+    concentration: 'Sector holdings are concentrated.', liquidity: 'Units may be redeemed daily.',
+    structure: 'Securities lending creates counterparty risk.', currency: 'Currency exposure is USD.',
+    regulatory: 'No material legal proceedings are reported.',
+  };
+  const riskAnswer = { checks: riskChecksFor('ETF').map(flag => ({ flag, finding: 'risk', reason: 'Documented exposure.', documentIndex: 0, quote: quotes[flag] })), metrics: [] as unknown[] };
+  const researched = { ...research, output: [{ type: 'web_search_call', status: 'completed' },
+    { type: 'message', content: [{ type: 'output_text', text: 'Official product document', annotations: [{ type: 'url_citation', title: candidate.name, url }] }] }] };
+  const queue = [new Response(JSON.stringify(researched)), structuredResponse(answer), structuredResponse(riskAnswer), structuredResponse(answer)];
+  const fetcher = jest.fn(async (target: string) => target === url
+    ? new Response(html, { headers: { 'content-type': 'text/html' } })
+    : queue.shift() ?? new Response('', { status: 500 }));
+  const service = new PortfolioAnalysisService(dir, fetcher as unknown as typeof fetch); service.saveKey('sk-testOnlyNotARealKey');
+  const result = await service.analyze(request);
+  expect(result.fundamentalRisks?.find(item => item.key === `new:${isin}`)).toMatchObject({ status: 'assessed', materialRisks: expect.arrayContaining(['structure']) });
+  expect(fetcher.mock.calls.filter(([target]) => target === url)).toHaveLength(1);
+  expect(fs.existsSync(path.join(dir, 'portfolio-primary-risk-assessments.json'))).toBe(true);
+  expect(new PortfolioAnalysisService(dir, jest.fn()).getLastResult()?.report.fundamentalRisks?.find(item => item.key === `new:${isin}`)?.status).toBe('assessed');
+});
 let dir: string;
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-ai-test-')); jest.clearAllMocks(); });
 afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
+
+it('builds and persists a local quantitative analysis without an OpenAI request', async () => {
+  const mockedFetch = jest.fn();
+  const forecast = robustReturnForecastFixture('1', { targetPrice: 60 });
+  const marketProvider = jest.fn().mockResolvedValue(forecast);
+  const onlineProvider = jest.fn().mockResolvedValue({ assetId: 1, query: 'Asset', fetchedAt: Date.now(), searchStatus: 'completed', newsCount: 1,
+    text: 'Deterministische Suche', sources: [{ title: 'Aktuelle Meldung', url: 'https://example.com/news' }] });
+  const service = new PortfolioAnalysisService(dir, mockedFetch, undefined, marketProvider, undefined, onlineProvider);
+  const result = await service.analyzeLocal(request, undefined, JSON.stringify({ transactionIds: [10, 11] }));
+  expect(mockedFetch).not.toHaveBeenCalled();
+  expect(marketProvider).toHaveBeenCalledTimes(1);
+  expect(onlineProvider).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), { forceRefresh: false });
+  expect(result).toMatchObject({ mode: 'local', model: 'FinPal Local v4', newAssetRecommendations: [] });
+  expect(result.infos?.join(' ')).toContain('deterministische Onlinesuche');
+  expect(result.recommendations[0]).toMatchObject({ plannedAmountEUR: null, sourceIndexes: [expect.any(Number)], executionBaseline: { transactionIds: [10, 11] } });
+  expect(result.sources).toContainEqual({ title: 'Aktuelle Meldung', url: 'https://example.com/news' });
+  expect(result.allocationPlan?.optimization?.robust?.version).toBe(3);
+  expect(service.getLastResult()?.report.mode).toBe('local');
+});
+
+it('reuses deterministic discovery without spending AI quota on web research', async () => {
+  const onlineProvider = jest.fn().mockResolvedValue({ assetId: 1, query: 'Asset', fetchedAt: Date.now(), searchStatus: 'completed', newsCount: 1,
+    text: 'Deterministische Suche für Asset 1', sources: [{ title: 'Aktuelle Meldung', url: 'https://example.com/report' }] });
+  const mockedFetch = jest.fn().mockImplementation(async () => structuredResponse(report));
+  const service = new PortfolioAnalysisService(dir, mockedFetch, undefined,
+    jest.fn().mockResolvedValue(robustReturnForecastFixture('1', { targetPrice: 60 })), undefined, onlineProvider);
+  service.saveKey('sk-testOnlyNotARealKey');
+  const result = await service.analyze(request);
+  expect(result.mode).toBe('ai');
+  expect(onlineProvider).toHaveBeenCalledTimes(1);
+  expect(mockedFetch).toHaveBeenCalled();
+  const bodies = mockedFetch.mock.calls.map(([, options]) => JSON.parse(options.body));
+  expect(bodies.every(body => !body.tools)).toBe(true);
+  expect(JSON.parse(bodies[0].input[0].content).research).toContain('Deterministische Suche');
+  expect(service.getResearchStatus(request.positions)[0].fetchedAt).not.toBeNull();
+  await service.analyze(request);
+  expect(onlineProvider).toHaveBeenCalledTimes(1);
+  expect(mockedFetch.mock.calls.map(([, options]) => JSON.parse(options.body)).every(body => !body.tools)).toBe(true);
+});
+
+it('reuses a persisted primary-document risk review without another AI risk request', async () => {
+  const stockRequest = { ...request, positions: request.positions.map(position => ({ ...position,
+    name: "McDonald's", isin: 'US5801351017', symbol: 'MCD', type: 'Stock' as const })) };
+  const onlineProvider = jest.fn().mockResolvedValue({ assetId: 1, query: 'MCD', fetchedAt: Date.now(),
+    searchStatus: 'completed', newsCount: 0, text: 'Suchdaten', sources: [{ title: 'Suchquelle', url: 'https://example.com/report' }] });
+  const riskAnswer = { checks: ['loss-making', 'low-margin', 'financing', 'going-concern', 'regulatory'].map(flag => ({
+    flag, finding: 'unknown', reason: 'Auszug genügt nicht.', documentIndex: null as number | null, quote: '',
+  })), metrics: [] as unknown[] };
+  const mockedFetch = jest.fn(async (url: string, options?: RequestInit) => {
+    if (url.includes('/submissions/')) return new Response(JSON.stringify({ filings: { recent: { form: ['10-Q'],
+      accessionNumber: ['0000063908-26-000073'], primaryDocument: ['mcd-20260630.htm'], reportDate: ['2026-06-30'] } } }));
+    if (url.includes('/Archives/')) return new Response('<html>Net income and cash and cash equivalents were reported.</html>',
+      { headers: { 'content-type': 'text/html' } });
+    const body = JSON.parse(String(options?.body));
+    return structuredResponse(body.text?.format?.name === 'primary_risk_assessment' ? riskAnswer : report);
+  });
+  const first = new PortfolioAnalysisService(dir, mockedFetch as unknown as typeof fetch, undefined, undefined, undefined, onlineProvider);
+  first.saveKey('sk-testOnlyNotARealKey');
+  await first.analyze(stockRequest);
+  const second = new PortfolioAnalysisService(dir, mockedFetch as unknown as typeof fetch, undefined, undefined, undefined, onlineProvider);
+  const progress = jest.fn();
+  await second.analyze(stockRequest, progress);
+  const riskCalls = mockedFetch.mock.calls.filter(([url, options]) => !url.includes('/submissions/') && !url.includes('/Archives/') &&
+    JSON.parse(String(options?.body)).text?.format?.name === 'primary_risk_assessment');
+  expect(riskCalls).toHaveLength(1);
+  expect(onlineProvider).toHaveBeenCalledTimes(1);
+  expect(progress.mock.calls.some(([value]) => value.stage === 'risk-review' && value.reusedRiskAssetIds?.includes(1))).toBe(true);
+  expect(second.getLastResult()?.report.fundamentalRisks?.[0].status).toBe('unknown');
+  const documentCalls = mockedFetch.mock.calls.filter(([url]) => url.includes('/Archives/')).length;
+  const refreshed = await second.refreshPrimaryRisk(stockRequest.positions[0]);
+  expect(mockedFetch.mock.calls.filter(([url]) => url.includes('/Archives/')).length).toBeGreaterThan(documentCalls);
+  expect(mockedFetch.mock.calls.filter(([url, options]) => !url.includes('/submissions/') && !url.includes('/Archives/') &&
+    JSON.parse(String(options?.body)).text?.format?.name === 'primary_risk_assessment')).toHaveLength(2);
+  expect(second.getLastResult()?.report.fundamentalRisks).toEqual(refreshed.fundamentalRisks);
+});
 
 it('loads a local ETF history model for a new review candidate and passes the joint calculation back without exposing daily arrays', async () => {
   const f = etfReturnForecastFixture('0');
@@ -59,6 +168,31 @@ it('loads a local ETF history model for a new review candidate and passes the jo
   expect(result.newAssetRecommendations[0].plannedAmountEUR ?? null).toBeNull();
   expect(service.getLastResult()?.report.allocationPlan).toEqual(result.allocationPlan);
   expect(provider.mock.calls.filter(([position]) => position.id === 0)).toHaveLength(1);
+});
+
+it('includes IS3N local history in the joint candidate budget optimization', async () => {
+  const f = etfReturnForecastFixture('0');
+  const candidate = { ...newAsset, name: 'iShares Core MSCI EM IMI UCITS ETF USD (Acc)',
+    isin: 'IE00BKM4GZ66', symbol: 'IS3N', action: 'Prüfen' as const };
+  const answer = { ...report, newAssetRecommendations: [candidate] };
+  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research)))
+    .mockImplementation(async () => structuredResponse(answer));
+  const quotes = createCandidateMarketQuoteProvider({ requestFetch: jest.fn().mockResolvedValue(new Response(JSON.stringify({
+    isin: candidate.isin, lastPrice: f.referencePrice, currency: { originalValue: 'EUR' }, mic: 'XETR', tradedInPercent: false,
+    timestampLastPrice: new Date(Date.now() - 60000).toISOString(),
+  }))) });
+  const provider = jest.fn(async position => position.id === 0 ? f : robustReturnForecastFixture(String(position.id), { targetPrice: 40 }));
+  const service = new PortfolioAnalysisService(dir, mockedFetch, undefined, provider, quotes);
+  service.saveKey('sk-testOnlyNotARealKey');
+  const result = await service.analyze({ ...request, priceUpdatedAt: new Date().toISOString(),
+    profile: { ...request.profile, buyBudget: 267.84 }, positions: request.positions.map(position => ({ ...position, currency: 'EUR' })) });
+  expect(provider.mock.calls.find(([position]) => position.id === 0)?.[0]).toMatchObject({
+    isin: candidate.isin, symbol: 'IS3N.DE', price: f.referencePrice, type: 'ETF', currency: 'EUR', shares: 0,
+  });
+  const correction = JSON.parse(JSON.parse(mockedFetch.mock.calls[2][1].body).input.at(-1).content).correction;
+  expect(correction.candidateMarketForecasts[0]).toMatchObject({ key: 'new:IE00BKM4GZ66', model: { kind: 'etf-history-v1' } });
+  expect(correction.allocationPlan.optimization.inputs.some((input: { key: string }) => input.key === 'new:IE00BKM4GZ66')).toBe(true);
+  expect(result.allocationPlan!.optimization!.forecasts.some(item => item.key === 'new:IE00BKM4GZ66')).toBe(true);
 });
 
 it('reassesses new candidates with locally fetched EUR quotes and persists them without forcing a purchase', async () => {
@@ -112,15 +246,21 @@ it('uses stored investor facts in analysis while keeping acquisition lots out of
   const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research)))
     .mockResolvedValueOnce(new Response(JSON.stringify(structured)));
   const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
-  await service.analyze({ ...request, investorContext });
-  const researchBody = JSON.parse(mockedFetch.mock.calls[0][1].body);
-  const analysisBody = JSON.parse(mockedFetch.mock.calls[1][1].body);
+  const decisionDetails = { reserveEUR: 30, plannedWithdrawalsEUR: 20, lossCapacityEUR: 100, notes: 'Private cash planning', confirmedAt: new Date().toISOString() };
+  await service.analyze({ ...request, investorContext, profile: { ...request.profile, decisionDetails } });
+  const apiCalls = mockedFetch.mock.calls.filter(([url]) => url.includes('/v1/responses'));
+  const researchBody = JSON.parse(apiCalls[0][1]!.body as string);
+  const analysisBody = JSON.parse(apiCalls[1][1]!.body as string);
   const publicInput = JSON.parse(researchBody.input[0].content);
   expect(publicInput.taxJurisdiction).toBe('CH');
   expect(researchBody.input[0].content).not.toContain('remainingLots');
   expect(researchBody.input[0].content).not.toContain('2025-06-12');
+  expect(publicInput.profile.decisionDetails).toBeUndefined();
+  expect(researchBody.input[0].content).not.toContain('Private cash planning');
   const input = JSON.parse(analysisBody.input[0].content);
   expect(input.portfolio.investorContext).toEqual(investorContext);
+  expect(input.portfolio.profile.decisionDetails).toEqual(decisionDetails);
+  expect(analysisBody.instructions).toContain('Verlusttragfähigkeit');
   expect(input.tradeEconomics[0]).toMatchObject({ taxResidence: 'CH', custody: { provider: 'Trade Republic' },
     acquisitionHistory: { coverage: 'complete', remainingLots: [{ transactionId: 71 }] } });
   expect(analysisBody.instructions).toContain('Bekannte Angaben niemals pauschal als unbekannt');
@@ -189,7 +329,7 @@ it('researches sourced outlooks and requests a profile-aware timing decision wit
   expect(result.allocationPlan.optimization.status).toBe('converged');
 });
 
-it('keeps cited corporate risks binding through correction and keeps daily histories out of AI payloads', async () => {
+it('does not accept a legacy source link as a completed corporate risk review', async () => {
   const r = { ...request, profile: { ...request.profile, buyBudget: 1000 }, priceUpdatedAt: new Date().toISOString() };
   const f = robustReturnForecastFixture('1', { targetPrice: 100 });
   const first = { ...report, newAssetRecommendations: [] as typeof report.newAssetRecommendations,
@@ -200,8 +340,8 @@ it('keeps cited corporate risks binding through correction and keeps daily histo
     .mockResolvedValueOnce(structuredResponse(first)).mockResolvedValueOnce(structuredResponse(correction));
   const service = new PortfolioAnalysisService(dir, mockedFetch, undefined, jest.fn().mockResolvedValue(f)); service.saveKey('sk-testOnlyNotARealKey');
   const result = await service.analyze(r);
-  expect(result.fundamentalRisks![0].materialRisks).toEqual(['loss-making']);
-  expect(result.allocationPlan!.optimization!.robust!.reviewReasons.join(' ')).toContain('Verlustlage');
+  expect(result.fundamentalRisks![0]).toMatchObject({ status: 'unknown', materialRisks: [] });
+  expect(result.allocationPlan!.optimization!.robust!.reviewReasons.join(' ')).toContain('Risikoprüfung');
   expect(result.allocationPlan!.optimization!.robust!.decisionStatus).toBe('review-required');
   expect(result.recommendations[0]).toMatchObject({ action: 'Halten', plannedAmountEUR: null });
   expect(result.fundingCheck!.status).toBe('no-trades');
@@ -210,6 +350,26 @@ it('keeps cited corporate risks binding through correction and keeps daily histo
     const body = JSON.parse(call[1].body);
     expect(body.input.map((input: { content: string }) => input.content).join(' ')).not.toContain('riskHistory');
   }
+});
+
+it('does not spend a correction request to override missing primary document evidence', async () => {
+  const r = { ...request, profile: { ...request.profile, buyBudget: 1000 }, priceUpdatedAt: new Date().toISOString(),
+    positions: request.positions.map(position => ({ ...position, type: 'Stock' as const, currency: 'EUR' })) };
+  const forecast = robustReturnForecastFixture('1', { referencePrice: 50, targetPrice: 100 });
+  const unknown = { ...report, newAssetRecommendations: [] as typeof report.newAssetRecommendations, fundamentalRisks: [
+    { key: '1', status: 'unknown', materialRisks: [] as string[], rationale: 'Nicht ausgewertet.', sourceIndexes: [] as number[] },
+  ] };
+  const assessed = { ...unknown, fundamentalRisks: [
+    { key: '1', status: 'assessed', materialRisks: [] as string[], rationale: 'Aktueller Bericht geprüft; kein bindendes Merkmal belegt.', sourceIndexes: [0] },
+  ] };
+  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research)))
+    .mockResolvedValueOnce(structuredResponse(unknown)).mockResolvedValueOnce(structuredResponse(assessed));
+  const service = new PortfolioAnalysisService(dir, mockedFetch, undefined, jest.fn().mockResolvedValue(forecast));
+  service.saveKey('sk-testOnlyNotARealKey');
+  const result = await service.analyze(r);
+  expect(mockedFetch).toHaveBeenCalledTimes(2);
+  expect(result.fundamentalRisks).toContainEqual(expect.objectContaining({ key: '1', status: 'unknown', materialRisks: [] }));
+  expect(result.allocationPlan!.optimization!.robust!.reviewReasons.join(' ')).toContain('Risikoprüfung');
 });
 
 it('uses structured market forecasts in the local optimizer without requiring AI-generated optimization inputs', async () => {
@@ -225,11 +385,11 @@ it('uses structured market forecasts in the local optimizer without requiring AI
       ...(expectedPosition.action === 'Verkaufen' ? { tradeDecision: tradeDecisionFixture } : {}) }],
   };
   const marketProvider = jest.fn().mockResolvedValue(forecast);
-  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research)))
-    .mockResolvedValueOnce(structuredResponse(optimizedReport)).mockResolvedValueOnce(structuredResponse(optimizedReport));
+  const mockedFetch = apiResponsesWithUnavailableDocuments(new Response(JSON.stringify(research)),
+    structuredResponse(optimizedReport), structuredResponse(optimizedReport));
   const service = new PortfolioAnalysisService(dir, mockedFetch, undefined, marketProvider); service.saveKey('sk-testOnlyNotARealKey');
   const result = await service.analyze(forecastRequest);
-  const analysisInput = JSON.parse(JSON.parse(mockedFetch.mock.calls[1][1].body).input[0].content);
+  const analysisInput = JSON.parse(JSON.parse(mockedFetch.mock.calls.filter(([url]) => url.includes('/v1/responses'))[1][1]!.body as string).input[0].content);
   expect(marketProvider).toHaveBeenCalledWith(forecastRequest.positions[0], { forceRefresh: true });
   expect(analysisInput.marketForecasts).toEqual([forecast]);
   expect(analysisInput.portfolio.refreshMarketForecasts).toBeUndefined();
@@ -251,8 +411,8 @@ it('refreshes all persisted forecasts and allocation without calling the AI anal
   const refreshedForecast = returnForecastFixture('1', { targetPrice: 80, referencePriceAsOf: currentTime,
     forecastSources: [{ title: 'Refreshed forecast', url: 'https://example.com/refreshed' }] });
   const marketProvider = jest.fn().mockResolvedValueOnce(initialForecast);
-  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research)))
-    .mockResolvedValueOnce(structuredResponse(optimizedReport)).mockResolvedValueOnce(structuredResponse(optimizedReport));
+  const mockedFetch = apiResponsesWithUnavailableDocuments(new Response(JSON.stringify(research)),
+    structuredResponse(optimizedReport), structuredResponse(optimizedReport));
   const service = new PortfolioAnalysisService(dir, mockedFetch, undefined, marketProvider); service.saveKey('sk-testOnlyNotARealKey');
   const initial = await service.analyze(forecastRequest, undefined, 'saved-snapshot');
   const recommendation = initial.recommendations[0];
@@ -569,9 +729,15 @@ it('emits the actual analysis stages in order without portfolio content', async 
   const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
   const progress = jest.fn();
   await service.analyze(request, progress);
-  expect(progress.mock.calls.map(([update]) => update.stage)).toEqual(['preparing', 'research', 'analysis', 'validating']);
+  expect(progress.mock.calls.map(([update]) => update.stage)).toEqual(['preparing', 'ai-research', 'risk-review', 'risk-review', 'risk-review', 'analysis', 'validating', 'risk-review', 'risk-review', 'risk-review', 'validating']);
   for (const [update] of progress.mock.calls) {
-    expect(Object.keys(update).sort()).toEqual(['lastActivityAt', 'stage']);
+    expect(Object.keys(update).sort()).toEqual(update.stage === 'ai-research'
+      ? ['lastActivityAt', 'researchCompleted', 'researchTotal', 'stage']
+      : update.stage === 'risk-review'
+        ? ['completedRiskAssetIds', 'lastActivityAt', 'researchCompleted', 'researchTotal', 'reusedRiskAssetIds', 'stage',
+          ...(update.activeAssetId === undefined ? [] : ['activeAssetId', 'activeRiskStep']),
+          ...(update.activeCandidateName === undefined ? [] : ['activeCandidateName', 'activeRiskStep'])].sort()
+        : ['lastActivityAt', 'stage']);
     expect(update.lastActivityAt).toEqual(expect.any(Number));
   }
 });
@@ -632,11 +798,11 @@ it('researches the exact Treasury bond and retains its valuation evidence withou
     bondHolding: { nominal: 180, currency: 'USD', source: 'user-confirmed', purchaseAccruedInterestEUR: -0.17,
       transactions: [{ id: 112, date: '2025-11-03', nominal: 180, accruedInterestEUR: -0.17 }] },
   }] };
-  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research)))
-    .mockResolvedValueOnce(new Response(JSON.stringify(structured)));
+  const mockedFetch = apiResponsesWithUnavailableDocuments(new Response(JSON.stringify(research)), new Response(JSON.stringify(structured)));
   const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
   const result = await service.analyze(bondRequest);
-  const researchBody = JSON.parse(mockedFetch.mock.calls[0][1].body);
+  const apiCalls = mockedFetch.mock.calls.filter(([url]) => url.includes('/v1/responses'));
+  const researchBody = JSON.parse(apiCalls[0][1]!.body as string);
   const security = JSON.parse(researchBody.input[0].content).securities[0];
   expect(security.discoveryHints.issuer).toContain('912810SQ2');
   expect(security.discoveryHints.sourceUrls).toContain('https://api.boerse-frankfurt.de/v1/data/price_information/single?isin=US912810SQ22');
@@ -646,7 +812,7 @@ it('researches the exact Treasury bond and retains its valuation evidence withou
   expect(security).not.toHaveProperty('shares');
   expect(researchBody.instructions).toContain('nicht zu einem scheinbar aktuellen Datensatz kombinieren');
   expect(researchBody.instructions).toContain('Absicherungsziel und verbleibende Risiken');
-  const analysisBody = JSON.parse(mockedFetch.mock.calls[1][1].body);
+  const analysisBody = JSON.parse(apiCalls[1][1]!.body as string);
   const position = JSON.parse(analysisBody.input[0].content).portfolio.positions[0];
   expect(position.quote).toEqual(bondRequest.positions[0].quote);
   expect(position.bondHolding.nominal).toBe(180);
@@ -762,7 +928,7 @@ it('automatically corrects an invalid recommendation once using the existing res
   expect(correction.reason).toMatch(/belegte Quelle/);
   expect(correction.rejectedAnalysis).toEqual(invalid);
   expect(retryBody.text.format).toEqual(JSON.parse(mockedFetch.mock.calls[1][1].body).text.format);
-  expect(progress.mock.calls.map(([update]) => update.stage)).toEqual(['preparing', 'research', 'analysis', 'validating', 'correcting', 'validating']);
+  expect(progress.mock.calls.map(([update]) => update.stage)).toEqual(['preparing', 'ai-research', 'risk-review', 'risk-review', 'risk-review', 'analysis', 'validating', 'correcting', 'validating', 'risk-review', 'risk-review', 'risk-review', 'validating']);
   expect(report.warnings).toEqual(['Kurszeitpunkt fehlt']);
 });
 
@@ -841,7 +1007,7 @@ it('researches every position in bounded concurrent groups and merges their cita
   expect(researchRequests.filter(input => input.profile)).toHaveLength(1);
   expect(researchRequests[0].heldSecurities).toHaveLength(19);
   expect(result.sources.map(source => source.url)).toEqual(['https://example.com/1', 'https://example.com/7', 'https://example.com/13', 'https://example.com/19']);
-  expect(progress).toHaveBeenCalledWith(expect.objectContaining({ stage: 'research', researchCompleted: 4, researchTotal: 4 }));
+  expect(progress).toHaveBeenCalledWith(expect.objectContaining({ stage: 'ai-research', researchCompleted: 4, researchTotal: 4 }));
 });
 
 it('reuses completed research after a failure and profile changes, expires it after 24 hours and clears it on deletion', async () => {
@@ -979,6 +1145,7 @@ it.each([
   { event: { type: 'response.incomplete', response: { incomplete_details: { reason: 'max_output_tokens' } } }, reason: /Antwortlimit/ },
   { event: { type: 'response.incomplete', response: { incomplete_details: { reason: 'content_filter' } } }, reason: /Inhaltsfilter/ },
   { event: { type: 'response.failed', response: { error: { code: 'server_error', message: 'private details' } } }, reason: /Serverfehler/ },
+  { event: { type: 'response.failed', response: { error: { type: 'server_error', message: 'private details' } } }, reason: /Serverfehler/ },
   { event: { type: 'error', error: { code: 'rate_limit_exceeded', message: 'private details' } }, reason: /Anfragelimit/ },
   { event: { type: 'error', code: 'context_length_exceeded', message: 'private details' }, reason: /Kontextlimit/ },
   { event: { type: 'response.failed', response: { error: { code: 'unrecognized', message: 'private details' } } }, reason: /keinen bekannten Fehlergrund/ },
@@ -1000,6 +1167,28 @@ it('retries a transient analysis stream failure once without repeating successfu
   expect(mockedFetch).toHaveBeenCalledTimes(3);
   expect(JSON.parse(mockedFetch.mock.calls[2][1].body)).toEqual(JSON.parse(mockedFetch.mock.calls[1][1].body));
   expect(progress.mock.calls.map(([update]) => update.stage)).toContain('retrying');
+});
+
+it('retries a stream interruption without a supplied reason once', async () => {
+  const mockedFetch = jest.fn()
+    .mockResolvedValueOnce(failedStream({ type: 'response.incomplete', response: {} }))
+    .mockResolvedValueOnce(sse(research))
+    .mockResolvedValueOnce(sse(structured));
+  const auth = { models: jest.fn().mockResolvedValue([{ slug: 'account-model' }]), accessToken: jest.fn().mockResolvedValue('test-oauth-token') } as unknown as ChatGptAuth;
+  const progress = jest.fn();
+  const result = await new PortfolioAnalysisService(dir, mockedFetch, auth).analyze({ ...request, provider: 'chatgpt', model: 'account-model' }, progress);
+  expect(result.summary).toBe(report.summary);
+  expect(mockedFetch).toHaveBeenCalledTimes(3);
+  expect(JSON.parse(mockedFetch.mock.calls[1][1].body).instructions).toContain('Antworte kompakt und vollständig');
+  expect(progress.mock.calls.map(([update]) => update.stage)).toContain('retrying');
+});
+
+it('reports a repeated unexplained interruption without promising another retry', async () => {
+  const mockedFetch = jest.fn().mockImplementation(async () => failedStream({ type: 'response.incomplete', response: {} }));
+  const auth = { models: jest.fn().mockResolvedValue([{ slug: 'account-model' }]), accessToken: jest.fn().mockResolvedValue('test-oauth-token') } as unknown as ChatGptAuth;
+  await expect(new PortfolioAnalysisService(dir, mockedFetch, auth).analyze({ ...request, provider: 'chatgpt', model: 'account-model' }))
+    .rejects.toThrow(/auch nach einer automatischen Wiederholung/);
+  expect(mockedFetch).toHaveBeenCalledTimes(2);
 });
 
 it('requests a compact complete report once when the API reaches the output limit', async () => {
@@ -1069,14 +1258,20 @@ it('retains separate infos through validation and accepts older reports without 
   expect(validateAnalysisResult(report, request, sources).infos).toEqual([]);
 });
 
-it('moves descriptive concentration metrics to infos while retaining actionable warnings', () => {
-  const note = 'Bitcoin stellt 27,50 % der Anlagen beziehungsweise 23,27 % einschließlich Cash und damit die größte Einzelrisikokonzentration dar; das lokale Modell weist 43,35 % annualisierte Volatilität und ein sehr breites historisches Bootstrap-Band aus [82].';
+it.each([
+  'Bitcoin stellt 27,50 % der Anlagen beziehungsweise 23,27 % einschließlich Cash und damit die größte Einzelrisikokonzentration dar; das lokale Modell weist 43,35 % annualisierte Volatilität und ein sehr breites historisches Bootstrap-Band aus [82].',
+  'Die exakte wirtschaftliche Währungsrisiko-Allokation des Portfolios ist nicht quantifizierbar. Handels-, Fonds- und Berichtswährungen sind keine exakten Nettoexpositionen; für die Anleihe ist jedoch ein direktes USD-Nominalrisiko bestätigt.',
+  'Spreads und tatsächliche Ausführungskurse müssen unmittelbar vor jeder Order geprüft werden. Die gespeicherte 1-EUR-Pauschale ist kein aktuelles Geld-/Brief-Angebot [13].',
+  'QDVE ist ein konzentrierter US-Technologie-Sektor-ETF und kein breiter S&P-500-Fonds; Halbleiter, Hardware und Software dominieren, bei hohem Bewertungsniveau [28][33].',
+])('moves descriptive risk notes to infos while retaining actionable warnings: %s', note => {
   const actionable = note + ' Die festgelegte Konzentrationsgrenze ist überschritten; Position reduzieren.';
-  const result = validateAnalysisResult({ ...report, infos: [note], warnings: [note, actionable, 'Kurszeitpunkt fehlt'],
+  const executionWarning = 'Für die konkrete Kauforder fehlen aktuelle Geld-/Brief-Kurse; die Ausführung ist noch nicht prüfbar.';
+  const sectorWarning = 'QDVE wurde als breiter S&P-500-Baustein eingeplant; die festgelegte Technologie-Sektorgrenze ist überschritten.';
+  const result = validateAnalysisResult({ ...report, infos: [note], warnings: [note, actionable, 'Kurszeitpunkt fehlt', executionWarning, sectorWarning],
     recommendations: report.recommendations.map(rec => ({ ...rec, warnings: [note, actionable] })),
   }, request, [{ title: 'Source', url: 'https://example.com' }]);
   expect(result.infos).toEqual([note]);
-  expect(result.warnings).toEqual([actionable, 'Kurszeitpunkt fehlt']);
+  expect(result.warnings).toEqual([actionable, 'Kurszeitpunkt fehlt', executionWarning, sectorWarning]);
   expect(result.recommendations[0].infos).toEqual([note]);
   expect(result.recommendations[0].warnings).toEqual([actionable]);
   fs.writeFileSync(path.join(dir, 'portfolio-ai-last-analysis.json'), JSON.stringify({ version: 1, request, snapshot: 'legacy', report: {
@@ -1101,11 +1296,11 @@ it.each([true, false])('keeps ELTIF NAV evidence and broker age separate through
   const eltifRequest: PortfolioAnalysisRequest = { ...request, priceUpdatedAt: '2026-10-08T08:00:00Z', positions: [{ ...request.positions[0], id: 32, price: 109.395, type: 'Fund' as const, name: 'Apollo ELTIF', isin: 'LU3170240538', quote: { originalPrice: 109.395, originalCurrency: 'EUR', valuationCurrency: 'EUR' as const, source: 'trade-republic', quoteAsOf: '2026-09-10T15:21:10Z', fetchedAt: '2026-10-08T07:00:00Z', convertedAt: null, fxRateToEUR: 1, fxSource: null, fxAsOf: null, fxFetchedAt: null } }] };
   const navEvidence: import('./eltifValuation').NavEvidence = { isin: 'LU3170240538', value: evidenced ? 110 : null, currency: evidenced ? 'USD' : null, valuationDate: evidenced ? '2026-08-31' : null, publicationCycle: evidenced ? 'Monthly' : null, nextPublicationDue: evidenced ? '2026-10-15' : null, sourceIndexes: evidenced ? [0] : [] };
   const answer = { ...report, warnings: [] as string[], newAssetRecommendations: [] as typeof report.newAssetRecommendations, recommendations: [{ ...report.recommendations[0], assetId: 32, navEvidence }] };
-  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research))).mockResolvedValueOnce(new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(answer) }] }] })));
+  const mockedFetch = apiResponsesWithUnavailableDocuments(new Response(JSON.stringify(research)), new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(answer) }] }] })));
   const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
   try {
     const result = await service.analyze(eltifRequest);
-    const input = JSON.parse(mockedFetch.mock.calls[1][1].body);
+    const input = JSON.parse(mockedFetch.mock.calls.filter(([url]) => url.includes('/v1/responses'))[1][1]!.body as string);
     expect(JSON.parse(input.input[0].content).quoteFreshness[0]).toMatchObject({ status: 'nav-unverified', brokerTickStatus: 'old' });
     expect(result.infos.join(' ')).toContain('Broker-Tick');
     expect(result.warnings.join(' ')).not.toContain('Assets 32:');

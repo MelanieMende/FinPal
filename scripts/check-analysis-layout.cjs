@@ -51,6 +51,17 @@ async function checkInChromium(html, output) {
           if (forecasts && forecasts.scrollWidth > forecasts.clientWidth + 1) errors.push('Forecast inputs exceed their container');
           const robustness = root.querySelector('[aria-label="Robustheit und Entscheidungsprüfung"]');
           if (robustness && robustness.scrollWidth > robustness.clientWidth + 1) errors.push('Robustness review exceeds its container');
+          const decisionFields = root.querySelector('[data-testid="decision-profile-fields"]');
+          if (decisionFields && decisionFields.scrollWidth > decisionFields.clientWidth + 1) errors.push('Decision profile exceeds its container');
+          const decisionLabels = [...(decisionFields?.querySelectorAll('.decision-fields > label') || [])];
+          for (let index = 1; index < decisionLabels.length; index++) {
+            const previous = decisionLabels[index - 1], current = decisionLabels[index];
+            if (Math.abs(previous.getBoundingClientRect().top - current.getBoundingClientRect().top) < 1
+              && Math.abs(previous.querySelector('input,select').getBoundingClientRect().bottom - current.querySelector('input,select').getBoundingClientRect().bottom) > 1)
+              errors.push('Decision profile controls in the same row are not aligned');
+          }
+          const modelValidation = root.querySelector('[data-testid="model-validation-review"]');
+          if (modelValidation && modelValidation.scrollWidth > modelValidation.clientWidth + 1) errors.push('Model validation review exceeds its container');
           root.querySelectorAll('[aria-label^="Prognose und Zielgewichtung "]').forEach(assetAnalysis => {
             if (assetAnalysis.scrollWidth > assetAnalysis.clientWidth + 1) errors.push('Combined asset analysis exceeds its container');
           });
@@ -100,6 +111,9 @@ async function checkInChromium(html, output) {
           const suffix = zoom === 1 ? '' : '-125';
           const screenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'analysis-900' + suffix + '.png'), screenshot.toPNG());
+          await scrollToSection('[data-testid="decision-profile-fields"]');
+          const decisionScreenshot = await window.webContents.capturePage();
+          fs.writeFileSync(path.join(output, 'decision-profile-900' + suffix + '.png'), decisionScreenshot.toPNG());
           await scrollToSection('[data-testid="investor-facts-1"]');
           const assetScreenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'asset-fields-900' + suffix + '.png'), assetScreenshot.toPNG());
@@ -109,6 +123,9 @@ async function checkInChromium(html, output) {
           await scrollToSection('[aria-label="Robustheit und Entscheidungsprüfung"]');
           const robustnessScreenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'robustness-900' + suffix + '.png'), robustnessScreenshot.toPNG());
+          await scrollToSection('[data-testid="model-validation-review"]');
+          const validationScreenshot = await window.webContents.capturePage();
+          fs.writeFileSync(path.join(output, 'model-validation-900' + suffix + '.png'), validationScreenshot.toPNG());
           await scrollToSection('[aria-label^="Prognose und Zielgewichtung "]');
           const assetAnalysisScreenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'asset-analysis-900' + suffix + '.png'), assetAnalysisScreenshot.toPNG());
@@ -160,6 +177,9 @@ async function buildAndCheck() {
     import { buildAnalysisPositions } from './src/app/utils/portfolioAnalysis';
     import { etfReturnForecastFixture } from './src/testing/fixtures/etfHistory';
     export function render(provider) {
+      localStorage.setItem('finpal.portfolioAnalysis.profile.v1', JSON.stringify({ goal: 'growth', risk: 'high', horizonYears: '10', buyBudget: '1000',
+        decisionDetails: { reserveEUR: '300', plannedWithdrawalsEUR: '200', externalAssetsEUR: '123456789.99', liabilitiesEUR: '12345678', monthlySurplusEUR: '-100.50',
+          lossCapacityUnit: 'percent', lossCapacityPercent: '100', tolerableDrawdownPercent: '25', experience: 'experienced', notes: 'LongPersonalPlanningNote'.repeat(30), confirmedAt: new Date().toISOString() } }));
       const assets = [{ ID: 1, name: 'LongAssetName'.repeat(12), type: 'Crypto', symbol: 'BTC',
         isin: '', price: 100, current_shares: 1, currencySymbol: 'EUR' }];
       const transactions = [{ ID: 1, asset_ID: 1, date: '2025-01-01', type: 'Buy', amount: 1, price_per_share: 80, depot: 'Trade Republic' }];

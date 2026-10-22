@@ -31,14 +31,37 @@ it('separates an unapproved scenario from actionable amounts and shows measured 
   const plan = buildRobustForecastAllocation(r, [robustReturnForecastFixture('1', { targetPrice: 100 })]);
   render(<><AllocationReview plan={plan} /><AssetOptimizationDetails plan={plan} allocationKey="1" /></>);
   expect(screen.getByText('Modellszenario mit offener Entscheidung')).toBeInTheDocument();
+  const cashComparison = within(screen.getByRole('region', { name: 'Vergleich nur freies Cash investieren' }));
+  expect(cashComparison.getByText(/Vergleich mit unverändertem Bestand, ohne Verkäufe oder Verkaufserlöse/)).toBeInTheDocument();
+  expect(cashComparison.getByText(/Frei nach geschützter Reserve:/)).toHaveTextContent('1.000,00 €');
   expect(screen.getByText(/gemessene EUR-Kovarianzen aus 365/)).toBeInTheDocument();
-  expect(screen.getByText(/Rohsignal:.*Nach Unsicherheitsgewichtung/)).toBeInTheDocument();
+  expect(screen.getByText(/Rohsignal:.*Nach Grundgewichtung:.*Konfidenzgewichtet:.*Unsicherheitsproxy:/)).toBeInTheDocument();
   expect(screen.getByText(/Analystenabdeckung: 20/)).toBeInTheDocument();
   expect(screen.getByText(/Reines Modellszenario: Kaufen/)).toBeInTheDocument();
   expect(screen.getByText('Szenarioziel')).toBeInTheDocument();
   expect(screen.getByText(/Kursziel verfehlt: Synthetic Stock: Modellnutzen/)).toBeInTheDocument();
   expect(screen.getByText('Modellaktion: Prüfen')).toBeInTheDocument();
   expect(plan.optimization!.expectedGainEUR).toBeNull();
+});
+
+it('explains the stress threshold separately from a rising concentration without inventing a position cap', () => {
+  const plan = buildRobustForecastAllocation({ ...request, priceUpdatedAt: new Date().toISOString() }, [robustReturnForecastFixture('1', { referencePrice: 1000, targetPrice: 2000 })]);
+  const details = plan.optimization!.robust!;
+  details.decisionStatus = 'review-required';
+  details.concentration = { beforeLargestPercent: 25, scenarioLargestPercent: 28.6 };
+  details.stressChecks = [{ name: 'Schwächere Prognosen', utilityImprovementEUR: -102.51 }];
+  render(<AllocationReview plan={plan} />);
+  const review = within(screen.getByRole('region', { name: 'Robustheit und Entscheidungsprüfung' }));
+  expect(review.getByText(/Schwächere Prognosen: Modellnutzen/)).toHaveTextContent('-102,51 €');
+  expect(review.getByText(/Größte Einzelposition:/)).toHaveTextContent('28,6 %');
+  expect(review.getByText(/Größte Einzelposition:/)).toHaveTextContent('löst allein keinen Prüfstatus aus');
+  expect(review.getByText(/Stressprüfung:/)).toHaveTextContent('höchstens 0 EUR');
+  expect(review.getByText(/Stressprüfung:/)).toHaveTextContent('kein prognostizierter Geldverlust');
+  expect(review.getByText(/Prüfung erforderlich: Die Gründe/)).toHaveTextContent('gemeinsam zurückgestellt');
+  const validation = within(screen.getByTestId('model-validation-review'));
+  expect(validation.getByText('Fachliche Modellprüfung: Teilprüfung erfolgt, historischer Nachweis ausstehend')).toBeInTheDocument();
+  expect(validation.getByText(/Schwächere Prognosen: relativer Modellnutzen/)).toHaveTextContent('-5,13 % des erfassten Portfolios');
+  expect(validation.getByText(/Die fachliche Gegenprüfung vom/)).toHaveTextContent('nicht historisch außerhalb der Kalibrierungsdaten validiert');
 });
 
 it('shows completed unavailable forecast research as a neutral note', () => {

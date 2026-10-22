@@ -50,7 +50,7 @@ it('keeps the last successful indicators during and after a failed new analysis 
   await act(async () => { render(<AssetList />, { store }); });
   const recommendation = () => within(screen.getByTestId('asset-row-10'));
   await act(async () => { store.dispatch(analyzePortfolio.pending('second', args)); });
-  expect(store.getState().portfolioAnalysis.result).toBeNull();
+  expect(store.getState().portfolioAnalysis.result).toEqual(report);
   expect(recommendation().getByRole('img', { name: 'KI-Empfehlung: Kaufen' })).toBeInTheDocument();
   await act(async () => { store.dispatch(analyzePortfolio.rejected(new Error('Timed out'), 'second', args)); });
   expect(recommendation().getByRole('img', { name: 'KI-Empfehlung: Kaufen' })).toBeInTheDocument();

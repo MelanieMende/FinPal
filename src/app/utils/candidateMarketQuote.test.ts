@@ -19,6 +19,31 @@ it('resolves an ISIN to its actual EUR trading venue despite a USD share class a
   expect(candidate.symbol).toBe('WSML');
 });
 
+it('links QDVE to its confirmed Xetra history series for candidate forecasting', async () => {
+  const qdve = { ...candidate, name: 'iShares S&P 500 Information Technology Sector UCITS ETF USD (Acc)',
+    isin: 'IE00B3WJKG14', symbol: 'QDVE' };
+  const requestFetch = jest.fn().mockResolvedValue(response({ ...raw, isin: qdve.isin, lastPrice: 46.146, mic: 'XETR' }));
+  const quote = await createCandidateMarketQuoteProvider({ requestFetch, now: () => time })(qdve);
+  expect(quote).toMatchObject({ isin: qdve.isin, price: 46.146, currency: 'EUR', exchange: 'XETR', symbol: 'QDVE.DE' });
+});
+
+it('links the MSCI EM IMI candidate to IS3N.DE and refreshes a cached quote that predates the mapping', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-is3n-candidate-'));
+  const cacheFile = path.join(dir, 'quotes.json');
+  const is3n = { ...candidate, name: 'iShares Core MSCI EM IMI UCITS ETF USD (Acc)', isin: 'IE00BKM4GZ66', symbol: 'IS3N' };
+  const oldQuote = { isin: is3n.isin, price: 46.146, currency: 'EUR', exchange: 'XETR', quoteAsOf: raw.timestampLastPrice,
+    fetchedAt: new Date(time - 3600000).toISOString(), kind: 'last-trade',
+    source: { title: 'Deutsche Börse: EUR-Börsenkurs ' + is3n.isin,
+      url: 'https://api.boerse-frankfurt.de/v1/data/price_information/single?isin=' + is3n.isin } };
+  fs.writeFileSync(cacheFile, JSON.stringify({ version: 1, quotes: [oldQuote] }));
+  const requestFetch = jest.fn().mockResolvedValue(response({ ...raw, isin: is3n.isin, lastPrice: 46.146, mic: 'XETR' }));
+  try {
+    const quote = await createCandidateMarketQuoteProvider({ cacheFile, requestFetch, now: () => time })(is3n);
+    expect(quote).toMatchObject({ isin: is3n.isin, price: 46.146, exchange: 'XETR', symbol: 'IS3N.DE' });
+    expect(requestFetch).toHaveBeenCalledTimes(1);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 it.each([
   { isin: 'IE00B4L5Y983' }, { currency: { originalValue: 'USD' } }, { tradedInPercent: true },
   { lastPrice: 0 }, { timestampLastPrice: undefined }, { timestampLastPrice: '2026-10-15T00:00:00Z' },

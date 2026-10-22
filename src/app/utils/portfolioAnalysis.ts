@@ -1,5 +1,6 @@
 import { validQuote, type QuoteMetadata } from './quoteMetadata';
 import { validInvestorContext, type InvestorContext } from './investorFacts';
+import { validDecisionDetails, type DecisionDetails } from './decisionProfile';
 
 export const DEFAULT_ANALYSIS_MODEL = 'gpt-5.4-mini';
 export const ANALYSIS_TIMEOUT_MS = 10 * 60 * 1000;
@@ -7,6 +8,7 @@ export const RESEARCH_BATCH_SIZE = 6;
 export const RESEARCH_CONCURRENCY = 3;
 
 export interface InvestmentProfile {
+  decisionDetails?: DecisionDetails;
   goal: 'growth' | 'income' | 'preservation';
   risk: 'low' | 'medium' | 'high';
   horizonYears: number;
@@ -59,6 +61,7 @@ export interface AssetRecommendation {
   tradeCheck?: { costs: string; taxes: string; conclusion: string };
 }
 export interface PortfolioAnalysisResult {
+  mode?: 'ai' | 'local';
   fundamentalRisks?: import('./robustForecastModel').FundamentalRiskAssessment[];
   allocationPlan?: import('./portfolioAllocation').PortfolioAllocation;
   fundingCheck?: import('./portfolioFunding').FundingCheck;
@@ -115,6 +118,7 @@ export function validateAnalysisRequest(request: PortfolioAnalysisRequest): void
   if (request.refreshMarketForecasts !== undefined && typeof request.refreshMarketForecasts !== 'boolean') throw new Error('Die Forecast-Aktualisierung ist ungültig.');
   if (request.investorContext !== undefined && !validInvestorContext(request.investorContext)) throw new Error('Die dauerhaften Analyseangaben oder Anschaffungsdaten sind ungültig.');
   const p = request?.profile;
+  if (p?.decisionDetails !== undefined && !validDecisionDetails(p.decisionDetails)) throw new Error('Bitte die ergänzenden persönlichen Angaben prüfen: gültige Beträge und einen Verlustprozentsatz zwischen 0 und 100 angeben.');
   if (!p || !['growth', 'income', 'preservation'].includes(p.goal) || !['low', 'medium', 'high'].includes(p.risk)
     || !Number.isFinite(p.horizonYears) || p.horizonYears <= 0 || p.horizonYears > 100
     || !Number.isFinite(p.buyBudget) || p.buyBudget < 0 || p.buyBudget > 1e9) {
@@ -165,10 +169,15 @@ export function validateAnalysisRequest(request: PortfolioAnalysisRequest): void
 }
 
 export interface PortfolioAnalysisProgress {
-  stage: 'prices' | 'forecast' | 'preparing' | 'research' | 'analysis' | 'validating' | 'correcting' | 'retrying';
+  stage: 'prices' | 'forecast' | 'preparing' | 'research' | 'ai-research' | 'risk-review' | 'analysis' | 'validating' | 'correcting' | 'retrying';
+  activeRiskStep?: 'documents' | 'assessment';
+  activeCandidateName?: string;
+  completedRiskAssetIds?: number[];
+  reusedRiskAssetIds?: number[];
   lastActivityAt: number;
   researchCompleted?: number;
   researchTotal?: number;
+  activeAssetId?: number;
 }
 
 export type ResearchAsset = Pick<AnalysisPosition, 'id' | 'name' | 'isin' | 'symbol' | 'type'>;

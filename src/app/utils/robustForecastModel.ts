@@ -2,6 +2,8 @@ import type { AnalysisSource, AssetRecommendation, NewAssetRecommendation, Portf
 import { allocationCandidateKey, type PortfolioAllocation } from './portfolioAllocation';
 import { buildForecastAllocation, validReturnForecast, type ReturnForecast, type ForecastRiskModel } from './portfolioForecastOptimization';
 import { validCandidateMarketQuote } from './candidateMarketQuote';
+import { protectedCashEUR } from './decisionProfile';
+import { allRiskCheckNames, riskCheckLabels } from './assetRiskPolicy';
 
 export interface FundamentalRiskAssessment {
   key: string;
@@ -11,22 +13,31 @@ export interface FundamentalRiskAssessment {
   sources: AnalysisSource[];
 }
 export interface RobustModelDetails {
-  version: 2;
+  version: 2 | 3;
   decisionStatus: 'stable-scenario' | 'review-required' | 'no-trades';
   covarianceStatus: 'measured-eur' | 'unavailable';
   observations: number;
   covarianceShrinkage: number | null;
-  estimates: { key: string; rawReturnPercent: number; adjustedReturnPercent: number; uncertaintyPercent: number; coverage: number | null }[];
+  estimates: { key: string; rawReturnPercent: number; adjustedReturnPercent: number; effectiveReturnPercent?: number; uncertaintyPercent: number; coverage: number | null }[];
   stressChecks: { name: string; utilityImprovementEUR: number }[];
   reviewReasons: string[];
   scenarioTrades: { key: string; action: 'Kaufen' | 'Verkaufen'; amountEUR: number; targetPercent: number | null }[];
   concentration?: { beforeLargestPercent: number; scenarioLargestPercent: number };
+  cashOnlyComparison?: {
+    availableCashEUR: number;
+    decisionStatus: 'stable-scenario' | 'review-required' | 'no-trades' | 'unavailable';
+    feesEUR: number;
+    remainingCashEUR: number;
+    scenarioTrades: RobustModelDetails['scenarioTrades'];
+    stressChecks: RobustModelDetails['stressChecks'];
+    reviewReasons: string[];
+  };
 }
 
 // Model assumptions, not fitted forecast accuracy or confidence intervals. Applied to BOTH methods.
 export const ROBUST_SIGNAL_WEIGHT = .25;
 export const ANALYST_COVERAGE_PRIOR = 10;
-const riskLabels: Record<string, string> = { 'loss-making': 'Verlustlage', 'low-margin': 'schwache Marge', financing: 'Finanzierungsrisiko', 'going-concern': 'Fortführungsrisiko', regulatory: 'Regulierungsrisiko' };
+const riskLabels: Record<string, string> = { ...riskCheckLabels, 'loss-making': 'Verlustlage', 'low-margin': 'schwache Marge', financing: 'Finanzierungsrisiko', 'going-concern': 'Fortführungsrisiko', regulatory: 'Regulierungsrisiko' };
 
 /** Dates are intersected BEFORE returns, so every column covers the exact same intervals. */
 export function estimateEuroCovariance(forecasts: ReturnForecast[]) {
@@ -70,17 +81,22 @@ export function conservativeForecast(f: ReturnForecast, current: number) {
     : evidence?.method === 'historical-bootstrap' && f.scenarioReturns ? (f.scenarioReturns.p90 - f.scenarioReturns.p10) / 200 : null;
   const sigma = f.annualVolatilityPercent / 100;
   const uncertainty = weight * Math.max(dispersion ?? sigma, sigma / Math.sqrt(Math.max(1, coverage ?? 1)));
-  return { key: f.key, rawReturnPercent: raw * 100, adjustedReturnPercent: raw * weight * 100,
+  const adjusted = raw * weight;
+  // Uncertainty reduces confidence in the signal without becoming a second,
+  // linear hurdle that every portfolio change must clear.
+  const confidence = Math.abs(adjusted) / (Math.abs(adjusted) + uncertainty || 1);
+  return { key: f.key, rawReturnPercent: raw * 100, adjustedReturnPercent: adjusted * 100,
+    effectiveReturnPercent: adjusted * confidence * 100,
     uncertaintyPercent: uncertainty * 100, coverage, complete: !!evidence && coverage !== null && dispersion !== null };
 }
 
 /** Fundamentals are explicit, cited decision gates. They are never turned into invented numeric premiums. */
 export function readFundamentalRisks(value: unknown, sources: AnalysisSource[]): FundamentalRiskAssessment[] {
   if (!Array.isArray(value) || value.length > 105) return [];
-  const flags = ['loss-making', 'low-margin', 'financing', 'going-concern', 'regulatory'];
+  const flags: string[] = allRiskCheckNames;
   const read = value.filter(v => v && typeof v.key === 'string' && v.key.length < 500 && ['assessed', 'unknown'].includes(v.status)
     && typeof v.rationale === 'string' && v.rationale.length > 0 && v.rationale.length <= 3000
-    && Array.isArray(v.materialRisks) && v.materialRisks.length <= 5 && v.materialRisks.every((flag: unknown) => typeof flag === 'string' && flags.includes(flag))
+    && Array.isArray(v.materialRisks) && v.materialRisks.length <= 8 && v.materialRisks.every((flag: unknown) => typeof flag === 'string' && flags.includes(flag))
     && Array.isArray(v.sourceIndexes) && v.sourceIndexes.length <= 30 && v.sourceIndexes.every((i: unknown) => Number.isInteger(i) && Number(i) >= 0 && Number(i) < sources.length)
     && (v.status === 'unknown' || v.sourceIndexes.length > 0));
   return read.filter(v => read.filter(other => other.key === v.key).length === 1).map(v => ({ key: v.key, status: v.status,
@@ -88,7 +104,8 @@ export function readFundamentalRisks(value: unknown, sources: AnalysisSource[]):
 }
 
 export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest, forecasts: ReturnForecast[] = [], candidates: NewAssetRecommendation[] = [],
-  previous?: PortfolioAnalysisResult, decisions?: AssetRecommendation[], reviewedUnavailableKeys: string[] = [], fundamentals: FundamentalRiskAssessment[] = []): PortfolioAllocation {
+  previous?: PortfolioAnalysisResult, decisions?: AssetRecommendation[], reviewedUnavailableKeys: string[] = [], fundamentals: FundamentalRiskAssessment[] = [],
+  variant: 'full' | 'cash-only' = 'full'): PortfolioAllocation {
   const supplied = new Map<string, ReturnForecast>();
   if (request.targetAssetId !== undefined) for (const f of previous?.allocationPlan?.optimization?.forecasts ?? []) if (validReturnForecast(f)) supplied.set(f.key, f);
   for (const f of forecasts) if (validReturnForecast(f)) supplied.set(f.key, f);
@@ -117,7 +134,7 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
     const estimate = estimates.find(e => e.key === f.key);
     const quote = currentCandidateQuote(f);
     return !estimate ? f : { ...f, uncertainty: undefined, model: undefined, targetPrice: (request.positions.find(p => String(p.id) === f.key)?.quote?.originalPrice
-      ?? request.positions.find(p => String(p.id) === f.key)?.price ?? quote?.price ?? f.referencePrice) * (1 + estimate.adjustedReturnPercent / 100),
+      ?? request.positions.find(p => String(p.id) === f.key)?.price ?? quote?.price ?? f.referencePrice) * (1 + estimate.effectiveReturnPercent! / 100),
       referencePrice: quote?.price ?? f.referencePrice, referencePriceAsOf: quote?.quoteAsOf ?? f.referencePriceAsOf };
   });
   const measured = estimateEuroCovariance([...supplied.values()]);
@@ -126,10 +143,26 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
   // All previous forecasts are already in adjusted; do not merge unadjusted old views back into the calculation.
   const context = previous ? { ...previous, allocationPlan: previous.allocationPlan && { ...previous.allocationPlan,
     optimization: previous.allocationPlan.optimization && { ...previous.allocationPlan.optimization, forecasts: adjusted } } } : undefined;
-  const plan = buildForecastAllocation(request, adjusted, modelCandidates, context, undefined, reviewedUnavailableKeys, riskModel);
-  const details: RobustModelDetails = { version: 2, decisionStatus: 'no-trades', covarianceStatus: measured ? 'measured-eur' : 'unavailable',
+  const plan = buildForecastAllocation(request, adjusted, modelCandidates, context, undefined, reviewedUnavailableKeys, riskModel, variant === 'cash-only');
+  const details: RobustModelDetails = { version: 3, decisionStatus: 'no-trades', covarianceStatus: measured ? 'measured-eur' : 'unavailable',
     observations: measured?.observations ?? 0, covarianceShrinkage: measured?.shrinkage ?? null, estimates, stressChecks: [], reviewReasons: [], scenarioTrades: [] };
   plan.optimization!.robust = details;
+  if (variant === 'full' && request.targetAssetId === undefined) {
+    const cashPlan = buildRobustForecastAllocation(request, forecasts, candidates, previous, undefined, reviewedUnavailableKeys, fundamentals, 'cash-only');
+    const cashDetails = cashPlan.optimization!.robust!;
+    details.cashOnlyComparison = {
+      availableCashEUR: Math.max(0, Math.round((request.profile.buyBudget - protectedCashEUR(request.profile)) * 100) / 100),
+      decisionStatus: cashPlan.status === 'blocked' ? 'unavailable' : cashDetails.decisionStatus,
+      feesEUR: cashDetails.scenarioTrades.length ? cashDetails.scenarioTrades.reduce((sum, trade) => sum + (cashPlan.positions.find(p => p.key === trade.key)?.feeEUR ?? 0), 0) : 0,
+      remainingCashEUR: cashDetails.scenarioTrades.length
+        ? Math.max(0, Math.round((request.profile.buyBudget - cashDetails.scenarioTrades.reduce((sum, trade) => sum + trade.amountEUR, 0)
+          - cashDetails.scenarioTrades.reduce((sum, trade) => sum + (cashPlan.positions.find(p => p.key === trade.key)?.feeEUR ?? 0), 0)) * 100) / 100)
+        : request.profile.buyBudget,
+      scenarioTrades: cashDetails.scenarioTrades,
+      stressChecks: cashDetails.stressChecks,
+      reviewReasons: cashPlan.status === 'blocked' ? cashPlan.warnings.slice(-1) : cashDetails.reviewReasons,
+    };
+  }
   // Keep published/raw targets in the report; adjusted estimates are displayed separately.
   plan.optimization!.forecasts = [...supplied.values()].filter(f => plan.positions.some(p => p.key === f.key));
   if (!measured) {
@@ -137,12 +170,12 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
   }
   plan.assumptions = plan.assumptions.filter(text => !text.includes('gemeinsame Korrelation +1'));
   plan.assumptions = plan.assumptions.map(text => text.startsWith('12-Monats-Ziel:')
-    ? '12-Monats-Ziel: bereinigtes Renditesignal minus λ/2 × EUR-Portfoliovarianz minus Unsicherheitsstrafe für Änderungen gegenüber dem aktuellen Bestand. Keine automatische Fortschreibung auf die langfristige Anlagedauer.'
+    ? '12-Monats-Ziel: konfidenzgewichtetes Renditesignal minus λ/2 × EUR-Portfoliovarianz. Bestätigte strategische Zielbandbreiten sind harte Grenzen. Keine automatische Fortschreibung auf die langfristige Anlagedauer.'
     : text.startsWith('Kursziele müssen')
       ? 'Kursziele müssen zur Originalwährung und Preiseinheit passen. Für das Renditesignal werden konstante Wechselkurse unterstellt; gemessene EUR-Kovarianzen enthalten historische FX-Bewegungen. Zukünftige Wechselkurse werden nicht prognostiziert. Zieltermine: 330–400 Tage, keine Extrapolation anderer Horizonte.'
       : text);
-  plan.assumptions.push('Robustes Modell v2: Aktien- und Bootstrap-Signale erhalten denselben Grundfaktor 0,25. Analystenabdeckung gewichtet zusätzlich mit n/(n+10). Dies sind konservative, nicht empirisch kalibrierte Modellannahmen; keine Trefferwahrscheinlichkeiten.');
-  plan.assumptions.push('Prognosestreuung und historische Volatilität bestrafen unsichere Änderungen gegenüber dem aktuellen Bestand. Analystenspannen und Bootstrap-Bänder sind unterschiedliche Szenariodaten, keine vergleichbaren Konfidenzintervalle.');
+  plan.assumptions.push('Robustes Modell v3: Aktien- und Bootstrap-Signale erhalten denselben Grundfaktor 0,25. Analystenabdeckung gewichtet zusätzlich mit n/(n+10). Dies sind konservative, nicht empirisch kalibrierte Modellannahmen; keine Trefferwahrscheinlichkeiten.');
+  plan.assumptions.push('Unsicherheit gewichtet das bereits geschrumpfte Signal graduell mit |Signal|/(|Signal| + Unsicherheitsproxy). Sie wird nicht nochmals als lineare Handelsstrafe abgezogen. Die vollständige Unsicherheit bleibt in den Stressprüfungen erhalten. Analystenspannen und Bootstrap-Bänder sind unterschiedliche Szenariodaten, keine vergleichbaren Konfidenzintervalle.');
   if ([...supplied.values()].some(f => f.model?.kind === 'etf-history-v1')) {
     plan.assumptions.push('ETF-Historienmodelle verwenden bereinigte Kurse als historischen Renditeproxy mit Ausschüttungs-/Splitbereinigung. Keine veröffentlichte Kursprognose und keine kalibrierten Zukunftswahrscheinlichkeiten; historische Renditen werden einmal zu 75 % gegen null geschrumpft. Künftige Ausschüttungen nicht zusätzlich addieren. Neue ETFs werden anhand ihres belegten EUR-Börsenkurses mit Beständen, Liquidität, Gebühren und Risiken gemeinsam modelliert; auch ein Nullbetrag ist ein berechnetes Ergebnis.');
     plan.assumptions = plan.assumptions.map(text => text.startsWith('Cashrendite =')
@@ -168,7 +201,8 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
     if (!estimates.find(e => e.key === trade.key)?.complete) details.reviewReasons.push(`${trade.name}: Prognoseabdeckung oder Prognosespanne ist nicht ausreichend belegt.`);
     if (trade.action === 'Kaufen') {
       const assessment = fundamentals.find(f => f.key === trade.key);
-      if (!assessment || assessment.status !== 'assessed') details.reviewReasons.push(`${trade.name}: Die belegte Prüfung wesentlicher Unternehmens- beziehungsweise Produktrisiken fehlt.`);
+      if (!assessment) details.reviewReasons.push(`${trade.name}: In dieser Analyse fehlt eine belegte Prüfung wesentlicher Unternehmens- beziehungsweise Produktrisiken. Vorhandene Suchlinks allein sind keine inhaltliche Prüfung.`);
+      else if (assessment.status !== 'assessed') details.reviewReasons.push(`${trade.name}: Die Risikoprüfung ist noch nicht abgeschlossen. ${assessment.materialRisks.length ? `Bereits belegte Risiken: ${assessment.materialRisks.map(risk => riskLabels[risk] ?? risk).join(', ')}. ` : ''}${assessment.rationale}`);
       else if (assessment.materialRisks.length) details.reviewReasons.push(`${trade.name}: Belegte wesentliche Risiken (${assessment.materialRisks.map(risk => riskLabels[risk] ?? risk).join(', ')}): ${assessment.rationale}`);
     }
   }
@@ -180,7 +214,7 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
       const p = plan.positions.find(p => p.key === key);
       return ((p?.currentValueEUR ?? 0) + (p?.action === 'Kaufen' ? 1 : p?.action === 'Verkaufen' ? -1 : 0) * (p?.amountEUR ?? 0)) / total;
     });
-    const mu = measured.keys.map(key => (estimates.find(e => e.key === key)?.adjustedReturnPercent ?? 0) / 100);
+    const mu = measured.keys.map(key => (estimates.find(e => e.key === key)?.effectiveReturnPercent ?? 0) / 100);
     const u = riskModel!.uncertainty;
     const lambda = plan.optimization!.riskAversion;
     const utility = (weights: number[], returns: number[], covariance: number[][], riskAversion: number) => weights.reduce((sum, weight, i) => sum + weight * returns[i]
@@ -195,7 +229,10 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
     for (const trade of trades.filter(p => p.action === 'Kaufen')) scenarios.push({ name: `Kursziel verfehlt: ${trade.name}`,
       returns: mu.map((value, i) => measured.keys[i] === trade.key ? Math.min(0, value) : value), matrix: measured.covariance, lambda });
     details.stressChecks = scenarios.map(s => ({ name: s.name, utilityImprovementEUR: total * (utility(after, s.returns, s.matrix, s.lambda) - utility(before, s.returns, s.matrix, s.lambda)) - plan.feesEUR }));
-    if (details.stressChecks.some(s => s.utilityImprovementEUR <= 0)) details.reviewReasons.push('Die gesamte Umschichtung verbessert den Modellnutzen nach Gebühren nicht in allen ausgewiesenen Stressszenarien.');
+    for (const check of details.stressChecks.filter(s => s.utilityImprovementEUR <= 0)) {
+      const amount = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(check.utilityImprovementEUR);
+      details.reviewReasons.push(`Prüfung erforderlich: Im Stress „${check.name}“ beträgt der Modellnutzen der Umschichtung gegenüber dem unveränderten Bestand nach Gebühren ${amount} EUR. Für ein stabiles Modellszenario muss dieser Vergleich in jedem geprüften Stressszenario über 0 EUR liegen. Der Betrag ist eine risikogewichtete Modellgröße, kein prognostizierter Geldverlust.`);
+    }
   }
   details.decisionStatus = details.reviewReasons.length ? 'review-required' : 'stable-scenario';
   details.reviewReasons = [...new Set(details.reviewReasons)].slice(0, 180);
@@ -210,7 +247,7 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
     plan.cashTargetPercent = 100 * request.profile.buyBudget / plan.totalValueEUR;
     plan.optimization!.expectedReturnPercent = null; plan.optimization!.expectedGainEUR = null; plan.optimization!.riskProxyPercent = null;
   } else if (decisions) {
-    const accepted = buildForecastAllocation(request, adjusted, modelCandidates, context, decisions, reviewedUnavailableKeys, riskModel);
+    const accepted = buildForecastAllocation(request, adjusted, modelCandidates, context, decisions, reviewedUnavailableKeys, riskModel, variant === 'cash-only');
     accepted.optimization!.forecasts = plan.optimization!.forecasts;
     accepted.optimization!.robust = { ...details, decisionStatus: accepted.positions.some(p => p.amountEUR !== null) ? 'stable-scenario' : 'no-trades' };
     accepted.assumptions = plan.assumptions;
@@ -219,4 +256,4 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
   return plan;
 }
 
-export const robustAnalysisInstructions = ' Verwende das robuste Modell v2. Rohkursziele sind keine erwarteten sicheren Renditen. Liefere fundamentalRisks je Asset beziehungsweise neuem Kandidaten: key, status assessed oder unknown, materialRisks aus loss-making, low-margin, financing, going-concern, regulatory, rationale und nullbasierte sourceIndexes. assessed benötigt Belege; fehlende Angaben unknown lassen. low-margin nur bei belegtem erheblichem Margenproblem markieren, keine freie Zahlenschätzung. Belegte Verluste, Finanzierungsprobleme oder sonstige wesentliche Risiken dürfen nicht durch ein hohes Kursziel überstimmt werden. optimization.robust.decisionStatus review-required bedeutet Modellszenario mit offener Entscheidung: keine Kauf-/Verkaufsempfehlung und keinen plannedAmountEUR ausgeben. Abhängige Verkäufe dürfen einen zurückgestellten Kauf nicht finanzieren. Auch ein stable-scenario ist keine Ausführungsfreigabe; qualifizierte Gegenargumente, Steuern, Spread, Horizontabweichung und Konzentration können Halten/Prüfen rechtfertigen. Nenne Rohsignal, bereinigtes Signal und Unsicherheitsproxy getrennt. Wenn die größte Einzelposition im Szenario steigt, darf der Wechsel nicht pauschal als Konzentrationsabbau bezeichnet werden. Bestätige eine Modellaktion niemals allein, um einem berechneten Betrag zu entsprechen. Keine festen Kategoriequoten einführen.';
+export const robustAnalysisInstructions = ' Verwende das robuste Modell v3. Rohkursziele sind keine erwarteten sicheren Renditen. Liefere fundamentalRisks je Asset beziehungsweise neuem Kandidaten: key, status assessed oder unknown, materialRisks aus den für den Asset-Typ passenden Prüffeldern und nullbasierte sourceIndexes sowie rationale. Die fünf Unternehmensmerkmale loss-making, low-margin, financing, going-concern und regulatory gelten nur für Aktien; Fonds, ETFs, Anleihen und andere Produkte verwenden ihre eigene Prüfliste. assessed benötigt Belege; fehlende Angaben unknown lassen. Auch bei status unknown bereits belegte Risiken in materialRisks nennen und in rationale präzise die verbleibenden ungeprüften Merkmale angeben. Fehlende inhaltliche Auswertung vorhandener Primärquellen ist nicht gleichbedeutend mit öffentlich fehlenden Unternehmensdaten. low-margin nur bei belegtem erheblichem Margenproblem markieren, keine freie Zahlenschätzung. Belegte Verluste, Finanzierungsprobleme oder sonstige wesentliche Risiken dürfen nicht durch ein hohes Kursziel überstimmt werden. optimization.robust.decisionStatus review-required bedeutet Modellszenario mit offener Entscheidung: keine Kauf-/Verkaufsempfehlung und keinen plannedAmountEUR ausgeben. Abhängige Verkäufe dürfen einen zurückgestellten Kauf nicht finanzieren. Auch ein stable-scenario ist keine Ausführungsfreigabe; qualifizierte Gegenargumente, Steuern, Spread, Horizontabweichung und Konzentration können Halten/Prüfen rechtfertigen. Nenne Rohsignal, bereinigtes Signal und Unsicherheitsproxy getrennt. Wenn die größte Einzelposition im Szenario steigt, darf der Wechsel nicht pauschal als Konzentrationsabbau bezeichnet werden. Bestätige eine Modellaktion niemals allein, um einem berechneten Betrag zu entsprechen. Erkläre den Prüfstatus anhand der konkreten reviewReasons: Ein Stressvergleich von höchstens 0 EUR gegenüber unverändertem Bestand nach Gebühren erfordert Prüfung. Negative Modellnutzenwerte sind keine prognostizierten Geldverluste und keine Veränderung gegenüber dem Basisszenario. Die größte Positionsquote allein löst keinen automatischen Prüfstatus aus; es gibt keine feste Konzentrationssperrgrenze. Trenne zusätzliche Konzentrationshinweise von den tatsächlichen Auslösern. Keine festen Kategoriequoten einführen.';

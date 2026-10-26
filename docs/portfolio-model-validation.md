@@ -60,7 +60,7 @@ Verglichen werden unveränderter Bestand, nur neues verfügbares Geld, teilweise
 
 Vor Beginn der empirischen Auswertung Hypothesen, Varianten und Entscheidungskriterien schriftlich festlegen. Insbesondere prüfen:
 
-- Ist die Anforderung eines positiven relativen Modellnutzens in jedem Stress angemessen, oder verhindert sie wirtschaftlich sinnvolle Entscheidungen?
+- Ist der positive relative Modellnutzen im Basisszenario nach Gebühren als Mindestschwelle angemessen, und wie sollen negative Stresstests die Höhe oder Eignung einer Entscheidung beeinflussen?
 - Sind Signalgewicht 0,25, Abdeckungsprior 10, Unsicherheitsproxy und profilabhängige Risikoaversion begründbar?
 - Bleiben Richtung und Umfang der Entscheidung bei plausiblen anderen Prognosen, Kovarianzfenstern, Gebühren und Risikoparametern stabil?
 - Passen Zwölfmonatsmodell und langfristiger Anlegerhorizont zusammen? Welche Risiken fehlen?
@@ -77,7 +77,13 @@ Zeitlich getrennte Kalibrierungs-, Validierungs- und unangetastete Testperioden 
 
 Prüfer, Datum, Modell-/Datenversion, untersuchte Varianten, Ergebnisse, verbleibende Grenzen und genehmigte Verwendung dokumentieren. Anschließend neue Modellentscheidungen mit damaligen Eingaben ohne echte Orders protokollieren und erst nach Ablauf des Horizonts auswerten. Bei Modelländerungen erneut prüfen. Eine zweite KI kann Gegenargumente sammeln, ersetzt aber weder unabhängige fachliche Verantwortung noch empirische Evidenz.
 
-Softwaretests prüfen derzeit Rechenregeln, Datengrenzen, Cashschutz, Finanzierung und Darstellung. Eine fachliche Validierung, historische Out-of-sample-Auswertung und laufende Erfolgskontrolle sind damit nicht abgeschlossen. Die Stressregel wird durch diesen Prüfplan nicht gelockert.
+Softwaretests prüfen derzeit Rechenregeln, Datengrenzen, Cashschutz, Finanzierung und Darstellung. Eine fachliche Validierung, historische Out-of-sample-Auswertung und laufende Erfolgskontrolle sind damit nicht abgeschlossen.
+
+## Änderung der Stressregel am 26.10.2026
+
+Ein negativer relativer Modellnutzen in einem einzelnen Stressszenario ist nun ein sichtbarer Warnhinweis statt eines automatischen Vetos. Für eine berechnete Umschichtung muss der relative Modellnutzen im Basisszenario nach Gebühren positiv sein. Belegte Unternehmens- und Produktrisiken, unzureichende Daten, fehlender Ausführungspuffer und weitere unabhängige Sperrgründe bleiben wirksam. Die Cash-Variante nutzt dieselbe Regel.
+
+Die fachliche Gegenprüfung vom 19.10.2026 bezog sich auf die frühere strengere Regel. Die geänderte Schwelle ist nicht historisch außerhalb der Kalibrierungsdaten validiert. Vor einer belastbaren Bewertung müssen insbesondere unnötig blockierte Chancen und zusätzliche Verluste in ungünstigen Marktphasen anhand zeitlich getrennter historischer Daten verglichen werden.
 
 ## Fachliche Quellen
 

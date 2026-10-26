@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import type { AnalysisPosition } from './portfolioAnalysis';
-import { PrimaryRiskResearch } from './primaryRiskResearch';
+import { PrimaryRiskResearch, riskExcerpt } from './primaryRiskResearch';
 import { knownResearchSources } from './portfolioResearch';
 
 jest.mock('pdf-parse', () => ({ PDFParse: class {
@@ -90,9 +90,143 @@ it('loads Munich Re issuer reports for its German ISIN and reuses their dated ex
     const second = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
     expect(fetcher).toHaveBeenCalledTimes(4);
     expect(second.documents.map(doc => doc.hash)).toEqual(first.documents.map(doc => doc.hash));
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    const oldAnnual = saved.documents.find((doc: { source: { url: string } }) => doc.source.url.includes('Group-Annual-Report-2025'));
+    delete oldAnnual.excerptVersion;
+    fs.writeFileSync(file, JSON.stringify(saved));
+    const upgraded = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
+    expect(fetcher).toHaveBeenCalledTimes(5);
+    expect(upgraded.documents.find(doc => doc.source.url.includes('Group-Annual-Report-2025'))?.excerptVersion).toBe(2);
     const wrongFetcher = jest.fn(async () => new Response(report.replaceAll('Munich Re', 'Other Company'), { headers: { 'content-type': 'application/pdf' } }));
     const wrong = await new PrimaryRiskResearch(path.join(folder, 'wrong.json'), wrongFetcher as unknown as typeof fetch, () => now).collect(position);
     expect(wrong.discoveryChecked).toBe(false);
     expect(wrong.documents).toHaveLength(0);
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
+it('loads Lufthansa interim and annual reports for its verified German ISIN', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-lufthansa-documents-'));
+  const now = Date.parse('2026-10-26T10:00:00Z');
+  const position = { id: 18, name: 'Lufthansa', isin: 'DE0008232125', symbol: 'LHA.DE', type: 'Stock' } as AnalysisPosition;
+  const report = 'Lufthansa Group 2nd Interim Report January - June 2026. Net profit/loss attributable to shareholders of Deutsche Lufthansa AG -542 EUR million. EBIT margin -0.7 percent. Cash and cash equivalents 1,799 EUR million. Opportunities and risk report.';
+  const fetcher = jest.fn(async (url: string) => url.includes('financial-reports.html')
+    ? new Response('<a href="/fileadmin/downloads/en/financial-reports/interims-reports/LH-QR-2026-2-e.pdf">Q2</a><a href="/fileadmin/downloads/en/financial-reports/annual-reports/LH-AR-2025-e.pdf">Annual</a>')
+    : new Response(report, { headers: { 'content-type': 'application/pdf' } }));
+  try {
+    const file = path.join(folder, 'documents.json');
+    const first = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
+    expect(first.discoveryChecked).toBe(true);
+    expect(first.gaps).toEqual([]);
+    expect(first.documents.map(doc => doc.period)).toEqual(['2026-06-30', '2025-12-31']);
+    expect(first.documents[0].excerpt).toContain('Net profit/loss attributable to shareholders');
+    expect(first.documents[0].excerpt).toContain('EBIT margin');
+    expect(first.documents.map(doc => doc.source.url)).toEqual(knownResearchSources(position));
+    const again = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
+    expect(again.documents).toHaveLength(2);
+    expect(fetcher).toHaveBeenCalledTimes(4);
+    const wrong = await new PrimaryRiskResearch(path.join(folder, 'wrong.json'),
+      jest.fn(async (url: string) => url.includes('financial-reports.html') ? new Response('')
+        : new Response(report.replaceAll('Lufthansa', 'Other Airline'), { headers: { 'content-type': 'application/pdf' } })) as unknown as typeof fetch,
+      () => now).collect(position);
+    expect(wrong.discoveryChecked).toBe(false);
+    expect(wrong.documents).toHaveLength(0);
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
+it('prefers a newly published Lufthansa interim report from the issuer index', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-lufthansa-new-report-'));
+  const now = Date.parse('2026-11-04T10:00:00Z');
+  const position = { id: 18, name: 'Lufthansa', isin: 'DE0008232125', symbol: 'LHA.DE', type: 'Stock' } as AnalysisPosition;
+  const report = 'Lufthansa Group. Net profit/loss -100 EUR million. EBIT margin -0.2 percent.';
+  const fetcher = jest.fn(async (url: string) => url.includes('financial-reports.html')
+    ? new Response('<a href="/fileadmin/downloads/en/financial-reports/interims-reports/LH-QR-2026-3-e.pdf">Q3</a>')
+    : new Response(report, { headers: { 'content-type': 'application/pdf' } }));
+  try {
+    const result = await new PrimaryRiskResearch(path.join(folder, 'documents.json'), fetcher as unknown as typeof fetch, () => now).collect(position);
+    expect(result.documents[0].period).toBe('2026-09-30');
+    expect(result.documents[0].source.url).toContain('LH-QR-2026-3-e.pdf');
+    expect(result.discoveryChecked).toBe(true);
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
+it('loads only verified Arbor Metals filing copies for its Canadian ISIN', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-arbor-documents-'));
+  const now = Date.parse('2026-10-26T10:00:00Z');
+  const position = { id: 19, name: 'Arbor Metals', isin: 'CA03880B1040', symbol: 'CA03880B1040.SG', type: 'Stock' } as AnalysisPosition;
+  const fetcher = jest.fn(async (url: string) => new Response(`ARBOR METALS CORP. ${url.includes('2026-02-21') ? 'October 31, 2025' : 'April 30, 2026'}. Net income (loss) (420,586) CAD. Cash and cash equivalents 716,380 CAD. Material uncertainty may cast significant doubt upon the Company ability to continue as a going concern.`,
+    { headers: { 'content-type': 'application/pdf' } }));
+  try {
+    const file = path.join(folder, 'documents.json');
+    const result = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
+    expect(result.discoveryChecked).toBe(true);
+    expect(result.gaps).toEqual([]);
+    expect(result.documents.map(doc => doc.period)).toEqual(['2026-04-30', '2026-04-30', '2025-10-31']);
+    expect(result.documents[0].excerpt).toContain('Material uncertainty');
+    expect(result.documents.map(doc => doc.source.url)).toEqual(knownResearchSources(position).filter(url => url.includes('cdn.financialreports.eu')));
+    const again = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
+    expect(again.documents).toHaveLength(3);
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    const wrong = await new PrimaryRiskResearch(path.join(folder, 'wrong.json'),
+      jest.fn(async () => new Response('OTHER METALS CORP. April 30, 2026. October 31, 2025. Cash 1,000.',
+        { headers: { 'content-type': 'application/pdf' } })) as unknown as typeof fetch, () => now).collect(position);
+    expect(wrong.discoveryChecked).toBe(false);
+    expect(wrong.documents).toHaveLength(0);
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
+it('prioritizes Munich Re disclosures about actual legal and regulatory proceedings', () => {
+  const legal = 'Legal risks As part of the normal course of business, Munich Re companies are involved in court, regulatory and arbitration proceedings in various countries. The outcome of those proceedings is neither certain nor predictable. However, we believe that none will have a significant negative effect on Munich Re.';
+  const text = `Munich Re Group Annual Report 2025. ${'Regulatory supervision is monitored. '.repeat(200)} ${legal}`;
+  const excerpt = riskExcerpt(text, 'Stock', true);
+  expect(excerpt).toContain('involved in court, regulatory and arbitration proceedings');
+  expect(excerpt).toContain('none will have a significant negative effect');
+  const halfYear = riskExcerpt('Munich Re Half-Year Financial Report 2026. The statements relating to opportunities and risks as presented in the Munich Re Group Annual Report 2025 apply unchanged. Munich Re continues to enjoy a very solid capital base.', 'Stock', true);
+  expect(halfYear).toContain('apply unchanged');
+  const liquidity = riskExcerpt('Munich Re. Our objective in managing liquidity risk is to ensure that we are in a position to meet our payment obligations at all times. The use of quantitative risk criteria also ensures that sufficient liquidity is available even under adverse scenarios. The overview below shows the liquidity requirements arising from our financial liabilities, divided into maturity bands.', 'Stock', true);
+  expect(liquidity).toContain('adverse scenarios');
+  expect(liquidity).toContain('maturity bands');
+});
+
+it('extracts issuer net earnings and reported operating margin from SEC filings', () => {
+  const filing = `<html><body><h2>Condensed Consolidated Statements of Earnings</h2>
+    <p>For the Six Months Ended June 30, 2026</p>
+    <table><tr><td>Net revenues</td><td>$</td><td>19,435</td></tr>
+    <tr><td>Operating income</td><td>$</td><td>2,754</td></tr>
+    <tr><td>Net earnings attributable to Mondelēz International</td><td>$</td><td>2,108</td></tr></table>
+    <p>Operating income margin increased from 10.1% in the first six months of 2025 to 14.2% in the first six months of 2026.</p></body></html>`;
+  const excerpt = riskExcerpt(filing);
+  expect(excerpt).toContain('Net earnings attributable to Mondelēz International');
+  expect(excerpt).toContain('2,108');
+  expect(excerpt).toContain('Operating income margin increased');
+  expect(excerpt).toContain('14.2%');
+});
+
+it('prioritizes a current SEC filing conclusion about material legal impact', () => {
+  const filing = `<html><p>${'Regulatory matters are described. '.repeat(80)}</p><p>At present we believe that the ultimate outcome of these legal proceedings and regulatory and governmental matters, individually and in the aggregate, will not materially harm our financial position, results of operations or cash flows. However, legal proceedings and regulatory and governmental matters are subject to inherent uncertainties, and unfavorable resolutions could involve substantial fines.</p></html>`;
+  const excerpt = riskExcerpt(filing);
+  expect(excerpt).toContain('will not materially harm our financial position');
+  expect(excerpt).toContain('unfavorable resolutions could involve substantial fines');
+});
+
+it('rebuilds cached stock excerpts created before the earnings and margin extraction update', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-stock-excerpt-'));
+  const now = Date.parse('2026-10-26T10:00:00Z');
+  const position = { id: 17, name: 'Mondelez', isin: 'US6092071058', symbol: 'MDLZ', type: 'Stock' } as AnalysisPosition;
+  const fetcher = jest.fn(async (url: string) => url.includes('/submissions/')
+    ? new Response(JSON.stringify({ filings: { recent: { form: ['10-Q'], accessionNumber: ['0001628280-26-050179'],
+      primaryDocument: ['mdlz-20260630.htm'], reportDate: ['2026-06-30'] } } }))
+    : new Response('<html>Net earnings attributable to Mondelez International $ 2,108. Operating income margin 14.2%.</html>'));
+  try {
+    const file = path.join(folder, 'documents.json');
+    const research = new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now);
+    const first = await research.collect(position);
+    expect(first.documents[0].excerptVersion).toBe(2);
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    delete saved.documents[0].excerptVersion;
+    saved.documents[0].excerpt = 'Old excerpt';
+    fs.writeFileSync(file, JSON.stringify(saved));
+    const second = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
+    expect(second.documents[0].excerpt).toContain('Net earnings attributable');
+    expect(second.documents[0].excerptVersion).toBe(2);
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });

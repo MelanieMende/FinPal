@@ -93,6 +93,21 @@ it('shows known risks and the specific remaining gap for a partial company revie
   expect(plan.optimization!.robust!.reviewReasons.join(' ')).not.toContain('Die belegte Prüfung wesentlicher');
 });
 
+it('keeps reviewed residual uncertainty visible without making it a risk gate', () => {
+  const jinko = robustReturnForecastFixture('33', { referencePrice: 8.61, targetPrice: 100, annualVolatilityPercent: 10,
+    uncertainty: { method: 'analyst-consensus', analystCount: 30, targetLowPrice: 99, targetHighPrice: 101 } });
+  const risk = { key: '33', status: 'unknown' as const, materialRisks: [] as string[], rationale: 'Primärberichte geprüft; ausdrückliche Entwarnung fehlt.', sources: jinko.forecastSources };
+  const blocked = buildRobustForecastAllocation(request(), [jinko], [], undefined, undefined, [], [risk]);
+  expect(blocked.optimization!.robust!.reviewReasons.join(' ')).toContain('Risikoprüfung ist noch nicht abgeschlossen');
+  const reviewed = buildRobustForecastAllocation(request(), [jinko], [], undefined, undefined, [],
+    [{ ...risk, decisionReadiness: 'reviewed-uncertainty' }]);
+  expect(reviewed.optimization!.robust!.reviewReasons.join(' ')).not.toContain('Risikoprüfung ist noch nicht abgeschlossen');
+  expect(reviewed.warnings.join(' ')).toContain('verbleibende Unsicherheit');
+  const material = buildRobustForecastAllocation(request(), [jinko], [], undefined, undefined, [],
+    [{ ...risk, decisionReadiness: 'reviewed-uncertainty', materialRisks: ['loss-making'] }]);
+  expect(material.optimization!.robust!.reviewReasons.join(' ')).toContain('Verlustlage');
+});
+
 it('compares a cash-only purchase independently without using sale proceeds or the protected reserve', () => {
   const r = request();
   r.profile.decisionDetails = { reserveEUR: 100, plannedWithdrawalsEUR: 50, confirmedAt: new Date().toISOString() };
@@ -130,7 +145,7 @@ it('makes cited corporate risks binding for proposed buys and preserves the link
   expect(allocationMismatch(corrected, [{ ...holds[1], action: 'Kaufen', plannedAmountEUR: 100 }])).toContain('offener Entscheidung');
 });
 
-it('rejects a concentrated purchase when its attractive target fails even with clean fundamentals', () => {
+it('keeps negative stress results visible without treating them as the sole veto', () => {
   const r = request(); r.positions = [r.positions[1]]; r.profile.buyBudget = 1000;
   const f = robustReturnForecastFixture('33', { referencePrice: 8.61, targetPrice: 100, annualVolatilityPercent: 10,
     uncertainty: { method: 'analyst-consensus', analystCount: 50, targetLowPrice: 99, targetHighPrice: 101 } });
@@ -141,13 +156,28 @@ it('rejects a concentrated purchase when its attractive target fails even with c
   expect(plan.optimization!.robust!.concentration!.scenarioLargestPercent).toBeGreaterThan(plan.optimization!.robust!.concentration!.beforeLargestPercent);
   const details = plan.optimization!.robust!;
   for (const check of details.stressChecks) {
-    const reason = details.reviewReasons.find(text => text.includes(`„${check.name}“`));
+    const warning = plan.warnings.find(text => text.includes(`„${check.name}“`));
     if (check.utilityImprovementEUR <= 0) {
-      expect(reason).toContain(new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(check.utilityImprovementEUR));
-      expect(reason).toContain('über 0 EUR');
-      expect(reason).toContain('kein prognostizierter Geldverlust');
-    } else expect(reason).toBeUndefined();
+      expect(warning).toContain(new Intl.NumberFormat('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(check.utilityImprovementEUR));
+      expect(warning).toContain('kein prognostizierter Geldverlust');
+      expect(details.reviewReasons.some(text => text.includes(`„${check.name}“`))).toBe(false);
+    } else expect(warning).toBeUndefined();
   }
+});
+
+it('permits a positive net base scenario despite a negative stress check when other gates pass', () => {
+  const r = request(); r.positions = [r.positions[1]]; r.profile.buyBudget = 1000;
+  r.profile.decisionDetails = { reserveEUR: 100, plannedWithdrawalsEUR: 0, confirmedAt: new Date().toISOString() };
+  const f = robustReturnForecastFixture('33', { referencePrice: 8.61, targetPrice: 100, annualVolatilityPercent: 10,
+    uncertainty: { method: 'analyst-consensus', analystCount: 50, targetLowPrice: 99, targetHighPrice: 101 } });
+  const risk = { key: '33', status: 'assessed' as const, materialRisks: [] as string[], rationale: 'Synthetic assessment.', sources: f.forecastSources };
+  const plan = buildRobustForecastAllocation(r, [f], [], undefined, undefined, [], [risk]);
+  expect(plan.optimization!.robust!.baseUtilityImprovementEUR).toBeGreaterThan(0);
+  expect(plan.optimization!.robust!.stressChecks.some(check => check.utilityImprovementEUR <= 0)).toBe(true);
+  expect(plan.optimization!.robust!.decisionStatus).toBe('stable-scenario');
+  expect(plan.positions[0].action).toBe('Kaufen');
+  expect(plan.warnings.some(warning => warning.startsWith('Stresshinweis:'))).toBe(true);
+  expect(validPortfolioAllocation(plan)).toBe(true);
 });
 
 it('allows a cost-effective sale stable under stress instead of blanket-blocking all trades', () => {

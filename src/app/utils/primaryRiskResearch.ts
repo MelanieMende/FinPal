@@ -11,6 +11,7 @@ export interface RiskDocument {
   fetchedAt: number;
   period: string | null;
   identity?: string;
+  excerptVersion?: number;
 }
 export interface RiskDocumentSet {
   documents: RiskDocument[];
@@ -21,16 +22,35 @@ export interface RiskDocumentSet {
 const DAY = 24 * 60 * 60 * 1000;
 const MAX_BYTES = 16_000_000;
 const MAX_DOCUMENTS = 4;
+const munichAnnualLegalReport = (url: string) => url.includes('/2025-annual-report/MunichRe-Group-Annual-Report-2025-en.pdf');
+const munichHalfYearRiskUpdateReport = (url: string) => url.includes('/2026-half-year-financial-report/MunichRe-Half-Year-Financial-Report-2026-en.pdf');
+const munichRiskExcerptReport = (url: string) => munichAnnualLegalReport(url) || munichHalfYearRiskUpdateReport(url);
+const LUFTHANSA_REPORT_INDEX = 'https://investor-relations.lufthansagroup.com/en/financial-reports-publications/financial-reports.html';
+const lufthansaReportPeriod = (url: string): string | null => {
+  const interim = /\/LH-QR-(20\d{2})-([1-3])-e\.pdf$/i.exec(url);
+  if (interim) return `${interim[1]}-${['03-31', '06-30', '09-30'][Number(interim[2]) - 1]}`;
+  const annual = /\/LH-AR-(20\d{2})-e\.pdf$/i.exec(url);
+  return annual ? `${annual[1]}-12-31` : null;
+};
 const SEC_CIK_BY_ISIN: Record<string, string> = {
   US5801351017: '0000063908',
+  US6092071058: '0001103982',
   US47759T1007: '0001481513',
 };
 const ISSUER_HOST_BY_ISIN: Record<string, string> = {
+  DE0008232125: 'investor-relations.lufthansagroup.com',
   DE0008430026: 'www.munichre.com',
   US47759T1007: 'ir.jinkosolar.com',
   CA03880B1040: 'arbormetalscorp.com',
 };
 const KNOWN_STOCK_REPORT_PERIOD = (isin: string, url: string): string | null => {
+  if (isin === 'CA03880B1040') {
+    if (url.endsWith('/46989_rns_2026-06-10_705e6e40-5c45-419b-96c0-21acf3219846.pdf')
+      || url.endsWith('/46989_rns_2026-06-10_e4ebb3a3-86bd-496c-bbec-8c980d358494.pdf')) return '2026-04-30';
+    if (url.endsWith('/46989_rns_2026-02-21_ac4032f4-a922-4eef-aac8-50a80bea9e26.pdf')) return '2025-10-31';
+    return null;
+  }
+  if (isin === 'DE0008232125') return lufthansaReportPeriod(url);
   if (isin !== 'DE0008430026') return null;
   if (url.includes('/2026-half-year-financial-report/MunichRe-Half-Year-Financial-Report-2026-en.pdf') ||
     url.includes('/2026-half-year-financial-report/MunichRe-Media-release-Q2-2026_en.pdf')) return '2026-06-30';
@@ -43,13 +63,22 @@ const PRODUCT_HOSTS = ['ishares.com', 'blackrock.com', 'vanguard.co.uk', 'vangua
   'apollo.com', 'treasurydirect.gov'];
 const officialProductHost = (host: string) => PRODUCT_HOSTS.some(domain => host === domain || host.endsWith(`.${domain}`));
 const keywordGroups = [
-  /net (?:income|loss)|operating (?:income|loss|margin)|gross (?:profit|margin)/ig,
+  /opportunities and risk report|net profit\/loss attributable to shareholders|liquid funds/ig,
+  /ultimate outcome of these legal proceedings and regulatory and governmental matters/ig,
+  /operating income margin|operating margin|EBIT margin/ig,
+  /net (?:income|loss|earnings)(?: attributable to [^\n.]{1,80})?|net profit\/loss/ig,
+  /operating (?:income|loss)|gross (?:profit|margin)/ig,
   /cash and cash equivalents|restricted cash|liquidity|current liabilities/ig,
   /short.term borrowings|long.term debt|credit facilit|maturit|debt obligations/ig,
   /going concern|substantial doubt/ig,
   /legal proceedings|regulator|tariff|trade restriction|anti.dump|forced labor/ig,
 ];
 const insuranceKeywords = [
+  /Legal risks\s+As part of the normal course of business/ig,
+  /statements relating to opportunities and risks\s+as presented in the Munich Re Group Annual Report 2025\s+apply unchanged/ig,
+  /Our objective in managing liquidity risk is to ensure that we\s+are in a position to meet our payment obligations at all\s+times/ig,
+  /quantitative risk criteria also ensures that sufficient liquidity\s+is available even under adverse scenarios/ig,
+  /The overview below shows the liquidity requirements\s+arising from our financial liabilities, divided into maturity\s+bands/ig,
   /net result|consolidated result|konzernergebnis/ig,
   /combined ratio|total technical result|underwriting result|versicherungstechnisch/ig,
   /solvency ratio|solvency capital requirement|eligible own funds|solvenzquote/ig,
@@ -71,6 +100,8 @@ const allowedDocumentUrl = (value: string, curated: Set<string>, issuerHost?: st
     const url = new URL(value);
     return url.protocol === 'https:' && !url.username && !url.password &&
       ((!!cik && url.hostname === 'www.sec.gov' && url.pathname.startsWith(`/Archives/edgar/data/${Number(cik)}/`)) ||
+        (issuerHost === 'arbormetalscorp.com' && url.hostname === 'cdn.financialreports.eu'
+          && url.pathname.startsWith('/financialreports/media/filings/46989/') && curated.has(url.toString())) ||
         (!!issuerHost && url.hostname === issuerHost && (curated.has(url.toString()) ||
           [...curated].some(known => url.toString().startsWith(`${known}/_jcr_content/renditions/`)))));
   } catch { return false; }
@@ -101,7 +132,7 @@ export function riskExcerpt(html: string, type: AnalysisPosition['type'] = 'Stoc
       pattern.lastIndex = end;
     }
   }
-  return found.join('\n[…]\n').slice(0, 18000);
+  return found.join('\n[…]\n').slice(0, insurance ? 24000 : 18000);
 }
 function productDocumentPeriod(text: string, now: number): string | null {
   const dates: number[] = [];
@@ -208,6 +239,26 @@ export class PrimaryRiskResearch {
     const candidates = [...curated].filter(url => allowedDocumentUrl(url, curated, issuerHost, cik) &&
       (/\.(?:htm|html|pdf)(?:$|\?|\/)/i.test(url) ||
         (position.isin.trim().toUpperCase() === 'US47759T1007' && url.includes('/news-release-details/jinkosolar-announces-'))));
+    if (position.isin.trim().toUpperCase() === 'DE0008232125') {
+      try {
+        const response = await this.requestFetch(LUFTHANSA_REPORT_INDEX, { headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' },
+          signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000) });
+        if (!response.ok || Number(response.headers.get('content-length')) > 2_000_000) throw new Error('Report index unavailable');
+        const html = await response.text();
+        if (html.length > 2_000_000) throw new Error('Report index too large');
+        const discovered = [...html.matchAll(/href=["']([^"']+\/LH-(?:QR-20\d{2}-[1-3]|AR-20\d{2})-e\.pdf(?:\?[^"']*)?)["']/gi)]
+          .map(match => new URL(decodeEntities(match[1]), LUFTHANSA_REPORT_INDEX).toString().split('?')[0])
+          .filter(url => new URL(url).hostname === 'investor-relations.lufthansagroup.com'
+            && new URL(url).pathname.startsWith('/fileadmin/downloads/en/financial-reports/')
+            && !!lufthansaReportPeriod(url) && Date.parse(lufthansaReportPeriod(url)!) <= this.now());
+        const newest = (pattern: RegExp) => discovered.filter(url => pattern.test(url))
+          .sort((a, b) => lufthansaReportPeriod(b)!.localeCompare(lufthansaReportPeriod(a)!))[0];
+        for (const url of [newest(/\/LH-AR-/), newest(/\/LH-QR-/)].filter((value): value is string => !!value)) {
+          curated.add(url);
+          candidates.unshift(url);
+        }
+      } catch { if (signal?.aborted) throw signal.reason; }
+    }
     if (position.type !== 'Stock') candidates.push(...[...curated].filter(url => officialProductHost(new URL(url).hostname)));
     const identityHint = position.name.toLowerCase().split(/\W+/).find(word => word.length >= 5);
     if (position.type !== 'Stock' && position.isin.trim()) for (const hint of sourceHints
@@ -250,6 +301,7 @@ export class PrimaryRiskResearch {
       || (position.type !== 'Stock' && officialProductHost(new URL(item).hostname))).slice(0, MAX_DOCUMENTS)) {
       const stored = this.cache.get(url);
       if (!forceRefresh && stored && this.now() - stored.fetchedAt < DAY &&
+        (position.type !== 'Stock' || stored.excerptVersion === 2) &&
         (position.type === 'Stock' || stored.identity === position.isin.trim().toUpperCase())) { documents.push(stored); continue; }
       try {
         const response = await this.requestFetch(url, { headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' },
@@ -272,6 +324,14 @@ export class PrimaryRiskResearch {
           && !(position.type === 'Bond' && plain.includes(position.isin.trim().slice(2)))) throw new Error('Instrument identity not confirmed');
         if (position.isin.trim().toUpperCase() === 'DE0008430026' && !/Munich Re|Münchener Rückversicherungs/i.test(plain))
           throw new Error('Issuer identity not confirmed');
+        if (position.isin.trim().toUpperCase() === 'DE0008232125' && !/Lufthansa Group|Deutsche Lufthansa AG/i.test(plain))
+          throw new Error('Issuer identity not confirmed');
+        if (position.isin.trim().toUpperCase() === 'CA03880B1040' && !/ARBOR METALS CORP\.?/i.test(plain))
+          throw new Error('Issuer identity not confirmed');
+        if (position.isin.trim().toUpperCase() === 'CA03880B1040'
+          && !(KNOWN_STOCK_REPORT_PERIOD(position.isin.trim().toUpperCase(), url) === '2026-04-30'
+            ? /April\s+30,?\s+2026/i.test(plain) : /October\s+31,?\s+2025/i.test(plain)))
+          throw new Error('Report period not confirmed');
         const excerpt = riskExcerpt(plain, position.type, position.isin.trim().toUpperCase() === 'DE0008430026');
         if (!excerpt) throw new Error('No risk evidence');
         if (position.type !== 'Stock' && !excerpt.toUpperCase().includes(position.isin.trim().toUpperCase())
@@ -281,6 +341,7 @@ export class PrimaryRiskResearch {
           ?? (position.type === 'Stock' ? null : productDocumentPeriod(plain, this.now()));
         const document: RiskDocument = { source: { title: filingDetails.get(url)?.title ?? url.split('/').pop() ?? 'Primärbericht', url }, excerpt,
           hash: createHash('sha256').update(data).digest('hex'), fetchedAt: this.now(), period,
+          ...(position.type === 'Stock' ? { excerptVersion: 2 } : {}),
           ...(position.type !== 'Stock' ? { identity: position.isin.trim().toUpperCase() } : {}) };
         this.cache.set(url, document);
         documents.push(document);

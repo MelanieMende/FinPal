@@ -111,6 +111,7 @@ export function validForecastOptimizationDetails(v: ForecastOptimizationDetails)
         && (v.robust.version === 2 && e.effectiveReturnPercent === undefined || v.robust.version === 3 && finite(e.effectiveReturnPercent))
         && e.uncertaintyPercent >= 0 && (e.coverage === null || finite(e.coverage) && e.coverage > 0))
       && Array.isArray(v.robust.stressChecks) && v.robust.stressChecks.length <= 110 && v.robust.stressChecks.every(s => s && typeof s.name === 'string' && finite(s.utilityImprovementEUR))
+      && (v.robust.baseUtilityImprovementEUR === undefined || finite(v.robust.baseUtilityImprovementEUR))
       && Array.isArray(v.robust.reviewReasons) && v.robust.reviewReasons.length <= 200 && v.robust.reviewReasons.every(s => typeof s === 'string' && s.length < 5000)
       && Array.isArray(v.robust.scenarioTrades) && v.robust.scenarioTrades.length <= 105 && v.robust.scenarioTrades.every(t => t && typeof t.key === 'string'
         && ['Kaufen', 'Verkaufen'].includes(t.action) && finite(t.amountEUR) && t.amountEUR > 0 && (t.targetPercent === null || finite(t.targetPercent) && t.targetPercent >= 0 && t.targetPercent <= 100.000001))
@@ -124,6 +125,7 @@ export function validForecastOptimizationDetails(v: ForecastOptimizationDetails)
           <= v.robust.cashOnlyComparison.availableCashEUR + .02
         && Array.isArray(v.robust.cashOnlyComparison.stressChecks) && v.robust.cashOnlyComparison.stressChecks.length <= 110
         && v.robust.cashOnlyComparison.stressChecks.every(s => s && typeof s.name === 'string' && finite(s.utilityImprovementEUR))
+        && (v.robust.cashOnlyComparison.baseUtilityImprovementEUR === undefined || finite(v.robust.cashOnlyComparison.baseUtilityImprovementEUR))
         && Array.isArray(v.robust.cashOnlyComparison.reviewReasons) && v.robust.cashOnlyComparison.reviewReasons.length <= 200
         && v.robust.cashOnlyComparison.reviewReasons.every(s => typeof s === 'string' && s.length < 5000))
       && (v.robust.concentration === undefined || !!v.robust.concentration && [v.robust.concentration.beforeLargestPercent, v.robust.concentration.scenarioLargestPercent].every(n => finite(n) && n >= 0 && n <= 100.000001)))

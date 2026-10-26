@@ -8,6 +8,7 @@ import { allRiskCheckNames, riskCheckLabels } from './assetRiskPolicy';
 export interface FundamentalRiskAssessment {
   key: string;
   status: 'assessed' | 'unknown';
+  decisionReadiness?: 'reviewed-uncertainty';
   materialRisks: string[];
   rationale: string;
   sources: AnalysisSource[];
@@ -20,6 +21,7 @@ export interface RobustModelDetails {
   covarianceShrinkage: number | null;
   estimates: { key: string; rawReturnPercent: number; adjustedReturnPercent: number; effectiveReturnPercent?: number; uncertaintyPercent: number; coverage: number | null }[];
   stressChecks: { name: string; utilityImprovementEUR: number }[];
+  baseUtilityImprovementEUR?: number;
   reviewReasons: string[];
   scenarioTrades: { key: string; action: 'Kaufen' | 'Verkaufen'; amountEUR: number; targetPercent: number | null }[];
   concentration?: { beforeLargestPercent: number; scenarioLargestPercent: number };
@@ -30,6 +32,7 @@ export interface RobustModelDetails {
     remainingCashEUR: number;
     scenarioTrades: RobustModelDetails['scenarioTrades'];
     stressChecks: RobustModelDetails['stressChecks'];
+    baseUtilityImprovementEUR?: number;
     reviewReasons: string[];
   };
 }
@@ -100,6 +103,8 @@ export function readFundamentalRisks(value: unknown, sources: AnalysisSource[]):
     && Array.isArray(v.sourceIndexes) && v.sourceIndexes.length <= 30 && v.sourceIndexes.every((i: unknown) => Number.isInteger(i) && Number(i) >= 0 && Number(i) < sources.length)
     && (v.status === 'unknown' || v.sourceIndexes.length > 0));
   return read.filter(v => read.filter(other => other.key === v.key).length === 1).map(v => ({ key: v.key, status: v.status,
+    ...(v.decisionReadiness === 'reviewed-uncertainty' && v.sourceIndexes.length > 0 && v.materialRisks.length === 0
+      ? { decisionReadiness: 'reviewed-uncertainty' as const } : {}),
     materialRisks: v.materialRisks, rationale: v.rationale, sources: v.sourceIndexes.map((i: number) => sources[i]) }));
 }
 
@@ -160,6 +165,7 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
         : request.profile.buyBudget,
       scenarioTrades: cashDetails.scenarioTrades,
       stressChecks: cashDetails.stressChecks,
+      baseUtilityImprovementEUR: cashDetails.baseUtilityImprovementEUR,
       reviewReasons: cashPlan.status === 'blocked' ? cashPlan.warnings.slice(-1) : cashDetails.reviewReasons,
     };
   }
@@ -202,9 +208,14 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
     if (trade.action === 'Kaufen') {
       const assessment = fundamentals.find(f => f.key === trade.key);
       if (!assessment) details.reviewReasons.push(`${trade.name}: In dieser Analyse fehlt eine belegte Prüfung wesentlicher Unternehmens- beziehungsweise Produktrisiken. Vorhandene Suchlinks allein sind keine inhaltliche Prüfung.`);
-      else if (assessment.status !== 'assessed') details.reviewReasons.push(`${trade.name}: Die Risikoprüfung ist noch nicht abgeschlossen. ${assessment.materialRisks.length ? `Bereits belegte Risiken: ${assessment.materialRisks.map(risk => riskLabels[risk] ?? risk).join(', ')}. ` : ''}${assessment.rationale}`);
+      else if (assessment.status !== 'assessed' && assessment.decisionReadiness !== 'reviewed-uncertainty') details.reviewReasons.push(`${trade.name}: Die Risikoprüfung ist noch nicht abgeschlossen. ${assessment.materialRisks.length ? `Bereits belegte Risiken: ${assessment.materialRisks.map(risk => riskLabels[risk] ?? risk).join(', ')}. ` : ''}${assessment.rationale}`);
       else if (assessment.materialRisks.length) details.reviewReasons.push(`${trade.name}: Belegte wesentliche Risiken (${assessment.materialRisks.map(risk => riskLabels[risk] ?? risk).join(', ')}): ${assessment.rationale}`);
     }
+  }
+  for (const trade of trades.filter(item => item.action === 'Kaufen')) {
+    const assessment = fundamentals.find(item => item.key === trade.key);
+    if (assessment?.decisionReadiness === 'reviewed-uncertainty' && !assessment.materialRisks.length)
+      plan.warnings.push(`${trade.name}: Primärberichte geprüft; verbleibende Unsicherheit ist in der Risikokachel dokumentiert.`);
   }
   if (plan.projectedCashEUR <= .01) details.reviewReasons.push('Die Umschichtung lässt keinen finanziellen Puffer für unbekannte Spreads oder Verkaufssteuern.');
   if (measured) {
@@ -220,6 +231,10 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
     const utility = (weights: number[], returns: number[], covariance: number[][], riskAversion: number) => weights.reduce((sum, weight, i) => sum + weight * returns[i]
       - riskAversion / 2 * weight * covariance[i].reduce((s, value, j) => s + value * weights[j], 0), 0);
     const positiveCorrelation = measured.covariance.map((row, i) => row.map((_value, j) => Math.sqrt(measured.covariance[i][i] * measured.covariance[j][j])));
+    details.baseUtilityImprovementEUR = total * (utility(after, mu, measured.covariance, lambda)
+      - utility(before, mu, measured.covariance, lambda)) - plan.feesEUR;
+    if (details.baseUtilityImprovementEUR <= 0)
+      details.reviewReasons.push('Die Umschichtung verbessert den Modellnutzen im Basisszenario nach Gebühren nicht gegenüber dem unveränderten Bestand.');
     const scenarios = [
       { name: 'Schwächere Prognosen', returns: mu.map((value, i) => value - Math.sign(after[i] - before[i]) * u[i]), matrix: measured.covariance, lambda },
       { name: 'Doppelte Risikoaversion', returns: mu, matrix: measured.covariance, lambda: lambda * 2 },
@@ -231,7 +246,7 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
     details.stressChecks = scenarios.map(s => ({ name: s.name, utilityImprovementEUR: total * (utility(after, s.returns, s.matrix, s.lambda) - utility(before, s.returns, s.matrix, s.lambda)) - plan.feesEUR }));
     for (const check of details.stressChecks.filter(s => s.utilityImprovementEUR <= 0)) {
       const amount = new Intl.NumberFormat('de-DE', { maximumFractionDigits: 2, minimumFractionDigits: 2 }).format(check.utilityImprovementEUR);
-      details.reviewReasons.push(`Prüfung erforderlich: Im Stress „${check.name}“ beträgt der Modellnutzen der Umschichtung gegenüber dem unveränderten Bestand nach Gebühren ${amount} EUR. Für ein stabiles Modellszenario muss dieser Vergleich in jedem geprüften Stressszenario über 0 EUR liegen. Der Betrag ist eine risikogewichtete Modellgröße, kein prognostizierter Geldverlust.`);
+      plan.warnings.push(`Stresshinweis: Im Szenario „${check.name}“ beträgt der relative Modellnutzen gegenüber dem unveränderten Bestand nach Gebühren ${amount} EUR. Das ist eine risikogewichtete Modellgröße, kein prognostizierter Geldverlust.`);
     }
   }
   details.decisionStatus = details.reviewReasons.length ? 'review-required' : 'stable-scenario';
@@ -251,9 +266,12 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
     accepted.optimization!.forecasts = plan.optimization!.forecasts;
     accepted.optimization!.robust = { ...details, decisionStatus: accepted.positions.some(p => p.amountEUR !== null) ? 'stable-scenario' : 'no-trades' };
     accepted.assumptions = plan.assumptions;
+    accepted.warnings = [...new Set([...accepted.warnings,
+      ...plan.warnings.filter(warning => warning.startsWith('Stresshinweis:')
+        || warning.includes('verbleibende Unsicherheit ist in der Risikokachel'))])];
     return accepted;
   }
   return plan;
 }
 
-export const robustAnalysisInstructions = ' Verwende das robuste Modell v3. Rohkursziele sind keine erwarteten sicheren Renditen. Liefere fundamentalRisks je Asset beziehungsweise neuem Kandidaten: key, status assessed oder unknown, materialRisks aus den für den Asset-Typ passenden Prüffeldern und nullbasierte sourceIndexes sowie rationale. Die fünf Unternehmensmerkmale loss-making, low-margin, financing, going-concern und regulatory gelten nur für Aktien; Fonds, ETFs, Anleihen und andere Produkte verwenden ihre eigene Prüfliste. assessed benötigt Belege; fehlende Angaben unknown lassen. Auch bei status unknown bereits belegte Risiken in materialRisks nennen und in rationale präzise die verbleibenden ungeprüften Merkmale angeben. Fehlende inhaltliche Auswertung vorhandener Primärquellen ist nicht gleichbedeutend mit öffentlich fehlenden Unternehmensdaten. low-margin nur bei belegtem erheblichem Margenproblem markieren, keine freie Zahlenschätzung. Belegte Verluste, Finanzierungsprobleme oder sonstige wesentliche Risiken dürfen nicht durch ein hohes Kursziel überstimmt werden. optimization.robust.decisionStatus review-required bedeutet Modellszenario mit offener Entscheidung: keine Kauf-/Verkaufsempfehlung und keinen plannedAmountEUR ausgeben. Abhängige Verkäufe dürfen einen zurückgestellten Kauf nicht finanzieren. Auch ein stable-scenario ist keine Ausführungsfreigabe; qualifizierte Gegenargumente, Steuern, Spread, Horizontabweichung und Konzentration können Halten/Prüfen rechtfertigen. Nenne Rohsignal, bereinigtes Signal und Unsicherheitsproxy getrennt. Wenn die größte Einzelposition im Szenario steigt, darf der Wechsel nicht pauschal als Konzentrationsabbau bezeichnet werden. Bestätige eine Modellaktion niemals allein, um einem berechneten Betrag zu entsprechen. Erkläre den Prüfstatus anhand der konkreten reviewReasons: Ein Stressvergleich von höchstens 0 EUR gegenüber unverändertem Bestand nach Gebühren erfordert Prüfung. Negative Modellnutzenwerte sind keine prognostizierten Geldverluste und keine Veränderung gegenüber dem Basisszenario. Die größte Positionsquote allein löst keinen automatischen Prüfstatus aus; es gibt keine feste Konzentrationssperrgrenze. Trenne zusätzliche Konzentrationshinweise von den tatsächlichen Auslösern. Keine festen Kategoriequoten einführen.';
+export const robustAnalysisInstructions = ' Verwende das robuste Modell v3. Rohkursziele sind keine erwarteten sicheren Renditen. Liefere fundamentalRisks je Asset beziehungsweise neuem Kandidaten: key, status assessed oder unknown, materialRisks aus den für den Asset-Typ passenden Prüffeldern und nullbasierte sourceIndexes sowie rationale. Die fünf Unternehmensmerkmale loss-making, low-margin, financing, going-concern und regulatory gelten nur für Aktien; Fonds, ETFs, Anleihen und andere Produkte verwenden ihre eigene Prüfliste. assessed benötigt Belege; fehlende Angaben unknown lassen. Auch bei status unknown bereits belegte Risiken in materialRisks nennen und in rationale präzise die verbleibenden ungeprüften Merkmale angeben. Fehlende inhaltliche Auswertung vorhandener Primärquellen ist nicht gleichbedeutend mit öffentlich fehlenden Unternehmensdaten. low-margin nur bei belegtem erheblichem Margenproblem markieren, keine freie Zahlenschätzung. Belegte Verluste, Finanzierungsprobleme oder sonstige wesentliche Risiken dürfen nicht durch ein hohes Kursziel überstimmt werden. optimization.robust.decisionStatus review-required bedeutet Modellszenario mit offener Entscheidung: keine Kauf-/Verkaufsempfehlung und keinen plannedAmountEUR ausgeben. Abhängige Verkäufe dürfen einen zurückgestellten Kauf nicht finanzieren. Auch ein stable-scenario ist keine Ausführungsfreigabe; qualifizierte Gegenargumente, Steuern, Spread, Horizontabweichung und Konzentration können Halten/Prüfen rechtfertigen. Nenne Rohsignal, bereinigtes Signal und Unsicherheitsproxy getrennt. Wenn die größte Einzelposition im Szenario steigt, darf der Wechsel nicht pauschal als Konzentrationsabbau bezeichnet werden. Bestätige eine Modellaktion niemals allein, um einem berechneten Betrag zu entsprechen. Erkläre den Prüfstatus anhand der konkreten reviewReasons: Ein nicht positiver Basisvergleich nach Gebühren erfordert Prüfung. Einzelne nicht positive Stressvergleiche sind Warnhinweise und allein kein Sperrgrund. Negative Modellnutzenwerte sind keine prognostizierten Geldverluste und keine Veränderung gegenüber dem Basisszenario. Die größte Positionsquote allein löst keinen automatischen Prüfstatus aus; es gibt keine feste Konzentrationssperrgrenze. Trenne zusätzliche Konzentrationshinweise von den tatsächlichen Auslösern. Keine festen Kategoriequoten einführen.';

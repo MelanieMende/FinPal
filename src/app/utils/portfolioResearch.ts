@@ -2,6 +2,14 @@ import type { AnalysisPosition } from './portfolioAnalysis';
 
 // Discovery pointers, not cached financial figures or a claim that this is the latest filing.
 const issuerHints: Record<string, { issuer: string; listing: string; sourceUrls: string[] }> = {
+  DE0008232125: {
+    issuer: 'Deutsche Lufthansa AG; Lufthansa Group',
+    listing: 'Xetra: LHA; ISIN laut Lufthansa Group Investor Relations',
+    sourceUrls: [
+      'https://investor-relations.lufthansagroup.com/fileadmin/downloads/en/financial-reports/interims-reports/LH-QR-2026-2-e.pdf',
+      'https://investor-relations.lufthansagroup.com/fileadmin/downloads/en/financial-reports/annual-reports/LH-AR-2025-e.pdf',
+    ],
+  },
   DE0008430026: {
     issuer: 'Münchener Rückversicherungs-Gesellschaft Aktiengesellschaft in München (Munich Re)',
     listing: 'Xetra: MUV2; Rückversicherer',
@@ -64,6 +72,8 @@ const issuerHints: Record<string, { issuer: string; listing: string; sourceUrls:
       'https://arbormetalscorp.com/news/',
       'https://www.sedarplus.ca/',
       'https://cdn.financialreports.eu/financialreports/media/filings/46989/2026/RNS/46989_rns_2026-06-10_705e6e40-5c45-419b-96c0-21acf3219846.pdf',
+      'https://cdn.financialreports.eu/financialreports/media/filings/46989/2026/RNS/46989_rns_2026-06-10_e4ebb3a3-86bd-496c-bbec-8c980d358494.pdf',
+      'https://cdn.financialreports.eu/financialreports/media/filings/46989/2026/RNS/46989_rns_2026-02-21_ac4032f4-a922-4eef-aac8-50a80bea9e26.pdf',
     ],
   },
 };

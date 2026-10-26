@@ -68,7 +68,7 @@ export function AssetResearchIndicator({ status, now }: { status?: AssetResearch
   const expires = status?.expiresAt ? Date.parse(status.expiresAt) : NaN;
   const reusable = Number.isFinite(fetched) && fetched <= now && now < expires;
   return <p data-testid="asset-research-status" className={`m-0 min-w-0 break-words text-xs ${reusable ? 'text-sky-200' : 'text-gray-400'}`}>
-    Online-Recherche: {reusable
+    Online-Recherche (Suchdaten, getrennt von Primärberichten): {reusable
       ? `Erfolgreich geladen am ${formatSyncTime(status!.fetchedAt)} · Wird bis ${formatSyncTime(status!.expiresAt)} wiederverwendet (24 Stunden).`
       : status ? 'Keine erfolgreichen Suchdaten der letzten 24 Stunden verfügbar. Wird ohne KI bei der Analyse geladen.'
         : 'Status der gespeicherten Online-Recherche nicht verfügbar.'}
@@ -575,11 +575,14 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                 if (!risk) return null;
                 return <details className="my-2 min-w-0 rounded border border-white/10 bg-slate-950/25 px-2 py-1 text-xs text-gray-300">
                   <summary className={risk.status === 'assessed' ? 'text-emerald-300' : 'text-amber-200'}>
-                    Unternehmens- und Produktrisiken: {risk.status === 'assessed' ? 'belegt geprüft' : 'Prüfung mit offenen Punkten'}
+                    Unternehmens- und Produktrisiken: {risk.status === 'assessed' ? 'belegt geprüft'
+                      : risk.decisionReadiness === 'reviewed-uncertainty' ? 'geprüft mit Restunsicherheit' : 'Prüfung mit offenen Punkten'}
                   </summary>
                   <p className="mb-1 whitespace-pre-wrap break-words">{risk.rationale}</p>
-                  {risk.sources.map(source => <a key={source.url} href={source.url} onClick={event => openSource(event, source.url)}
-                    className="mr-2 break-all text-indigo-300 underline">{source.title}</a>)}
+                  {!!risk.sources.length && <ul className="mb-1 mt-2 list-disc space-y-1 pl-4">
+                    {risk.sources.map(source => <li key={source.url}><a href={source.url} onClick={event => openSource(event, source.url)}
+                      className="break-all text-indigo-300 underline">{source.title}</a></li>)}
+                  </ul>}
                 </details>;
               })()}
               {executions[rec.assetId]?.status !== 'open' && executions[rec.assetId] && <p

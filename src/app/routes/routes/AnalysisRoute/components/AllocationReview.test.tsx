@@ -55,8 +55,9 @@ it('explains the stress threshold separately from a rising concentration without
   expect(review.getByText(/Schwächere Prognosen: Modellnutzen/)).toHaveTextContent('-102,51 €');
   expect(review.getByText(/Größte Einzelposition:/)).toHaveTextContent('28,6 %');
   expect(review.getByText(/Größte Einzelposition:/)).toHaveTextContent('löst allein keinen Prüfstatus aus');
-  expect(review.getByText(/Stressprüfung:/)).toHaveTextContent('höchstens 0 EUR');
-  expect(review.getByText(/Stressprüfung:/)).toHaveTextContent('kein prognostizierter Geldverlust');
+  expect(review.getByText(/Stressprüfung:/)).toHaveTextContent('Warnhinweis und allein kein Sperrgrund');
+  expect(review.getByText(/Stressprüfung:/)).toHaveTextContent('nicht positiver Basiswert');
+  expect(review.getByText(/Stressprüfung:/)).toHaveTextContent('keine prognostizierten Geldverluste');
   expect(review.getByText(/Prüfung erforderlich: Die Gründe/)).toHaveTextContent('gemeinsam zurückgestellt');
   const validation = within(screen.getByTestId('model-validation-review'));
   expect(validation.getByText('Fachliche Modellprüfung: Teilprüfung erfolgt, historischer Nachweis ausstehend')).toBeInTheDocument();

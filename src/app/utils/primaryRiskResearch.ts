@@ -33,9 +33,12 @@ const lufthansaReportPeriod = (url: string): string | null => {
   return annual ? `${annual[1]}-12-31` : null;
 };
 const SEC_CIK_BY_ISIN: Record<string, string> = {
+  US0530151036: '0000008670',
   US5801351017: '0000063908',
   US6092071058: '0001103982',
   US47759T1007: '0001481513',
+  DK0062498333: '0000353278',
+  US6701002056: '0000353278',
 };
 const ISSUER_HOST_BY_ISIN: Record<string, string> = {
   DE0008232125: 'investor-relations.lufthansagroup.com',
@@ -63,6 +66,11 @@ const PRODUCT_HOSTS = ['ishares.com', 'blackrock.com', 'vanguard.co.uk', 'vangua
   'apollo.com', 'treasurydirect.gov'];
 const officialProductHost = (host: string) => PRODUCT_HOSTS.some(domain => host === domain || host.endsWith(`.${domain}`));
 const keywordGroups = [
+  /Borrowings, current/ig,
+  /Novo Nordisk believes its financial resources are sufficient to meet its requirements for at least the next 12 months/ig,
+  /Aggregate maturities for 2025 debt balances/ig,
+  /operations may also be impacted by regulations affecting capital flows/ig,
+  /There were no material changes to the disclosure made in the Company's Annual Report/ig,
   /opportunities and risk report|net profit\/loss attributable to shareholders|liquid funds/ig,
   /ultimate outcome of these legal proceedings and regulatory and governmental matters/ig,
   /operating income margin|operating margin|EBIT margin/ig,
@@ -95,6 +103,21 @@ const productKeywords = [
   /concentration|holdings|sector|derivative|securities lending|hedg|currency|währung/ig,
   /custody|custodian|counterparty|protocol|governance|regulator|risk factor|risiken/ig,
 ];
+const qdveKeywords = [
+  /IE00B3WJKG14/ig,
+  /Das Anlagerisiko ist auf bestimmte Sektoren|Investment risk is concentrated in specific sectors/ig,
+  /The Manager is authorised in Ireland and regulated by the Central Bank of Ireland/ig,
+  /S&P 500 Capped 35\/20 Information Technology Index/ig,
+  /0\.15% of the value of your investment per year|Gesamtkostenquote/ig,
+  /Transaction costs\s+0\.00%/ig,
+  /Performance fees\s+There is no performance fee/ig,
+  /Anteilsklassenvermögen Per|Anzahl der Positionen Per|Portfolioallokation|Number of Holdings as of/ig,
+  /short-term secured lending of its investments|Wertpapierleihe Überblick/ig,
+  /financial derivative instruments|Product Structure|Produktstruktur/ig,
+  /shares on the secondary market[\s\S]{0,160}?prevailing market price|Sekundärmarkt/ig,
+  /prevailing market price[\s\S]{0,140}?may deviate from the value of the Shares/ig,
+  /Be aware of currency risk|Währungsrisiko|Share Class Currency|Währung der Reihe/ig,
+];
 const allowedDocumentUrl = (value: string, curated: Set<string>, issuerHost?: string, cik?: string | null) => {
   try {
     const url = new URL(value);
@@ -113,16 +136,18 @@ const decodeEntities = (value: string) => value.replace(/&(?:nbsp|amp|lt|gt|quot
   }
   return ({ '&nbsp;': ' ', '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&apos;': "'" } as Record<string, string>)[match.toLowerCase()] ?? ' ';
 });
-export function riskExcerpt(html: string, type: AnalysisPosition['type'] = 'Stock', insurance = false): string {
+export function riskExcerpt(html: string, type: AnalysisPosition['type'] = 'Stock', insurance = false, isin = ''): string {
   const plain = decodeEntities(html.replace(/<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
     .replace(/<\/(?:p|div|tr|table|h[1-6]|li)>/gi, '\n').replace(/<[^>]+>/g, ' '))
     .replace(/[ \t\r]+/g, ' ').replace(/\n\s*\n/g, '\n').trim();
   const found: string[] = [];
-  for (const pattern of insurance ? insuranceKeywords : type === 'Stock' ? keywordGroups : productKeywords) {
+  const qdve = type === 'ETF' && isin === 'IE00B3WJKG14';
+  for (const pattern of insurance ? insuranceKeywords : type === 'Stock' ? keywordGroups
+    : qdve ? [...qdveKeywords, ...productKeywords] : productKeywords) {
     pattern.lastIndex = 0;
     let match: RegExpExecArray | null;
     let count = 0;
-    while ((match = pattern.exec(plain)) && count < (type === 'Stock' ? 5 : 4)) {
+    while ((match = pattern.exec(plain)) && count < (qdve ? 1 : type === 'Stock' ? 5 : 4)) {
       const start = Math.max(0, match.index - 160);
       const end = Math.min(plain.length, match.index + 430);
       const fragment = plain.slice(start, end).trim();
@@ -140,8 +165,15 @@ function productDocumentPeriod(text: string, now: number): string | null {
   for (const match of text.matchAll(pattern)) {
     const value = match[1];
     const eu = /^(\d{1,2})[./](\d{1,2})[./](\d{4})$/.exec(value);
-    const parsed = Date.parse(eu ? `${eu[3]}-${eu[2].padStart(2, '0')}-${eu[1].padStart(2, '0')}` : value);
+    const parsed = Date.parse(eu ? `${eu[3]}-${eu[2].padStart(2, '0')}-${eu[1].padStart(2, '0')}`
+      : /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : `${value} UTC`);
     if (Number.isFinite(parsed) && parsed <= now + DAY && parsed > now - 3 * 365 * DAY) dates.push(parsed);
+  }
+  const germanMonths: Record<string, string> = { jan: '01', feb: '02', 'mär': '03', mrz: '03', apr: '04', mai: '05', jun: '06', jul: '07',
+    aug: '08', sep: '09', sept: '09', okt: '10', nov: '11', dez: '12' };
+  for (const match of text.matchAll(/\b(?:per|zum|stand)\s+(\d{1,2})\.(Jan|Feb|Mär|Mrz|Apr|Mai|Jun|Jul|Aug|Sept?|Okt|Nov|Dez)\.?(20\d{2})/gi)) {
+    const date = Date.parse(`${match[3]}-${germanMonths[match[2].toLowerCase()]}-${match[1].padStart(2, '0')}`);
+    if (Number.isFinite(date) && date <= now + DAY && date > now - 3 * 365 * DAY) dates.push(date);
   }
   return dates.length ? new Date(Math.max(...dates)).toISOString().slice(0, 10) : null;
 }
@@ -152,12 +184,28 @@ function secUrls(cik: string, value: SecSubmission): { url: string; title: strin
   if (!recent?.form || !recent.accessionNumber || !recent.primaryDocument) return [];
   const selected: { url: string; title: string; period: string | null }[] = [];
   const counts = new Map<string, number>();
+  if (cik === '0000353278') {
+    const financial = recent.form.findIndex((form, index) => form === '6-K'
+      && /^caq[1-4]20\d{2}\.htm$/i.test(recent.primaryDocument?.[index] ?? '')
+      && /^\d{4}-\d{2}-\d{2}$/.test(recent.reportDate?.[index] ?? '')
+      && /^\d{18}$/.test(recent.accessionNumber?.[index]?.replace(/-/g, '') ?? ''));
+    if (financial >= 0) {
+      const accession = recent.accessionNumber[financial].replace(/-/g, '');
+      selected.push({ url: `https://www.sec.gov/Archives/edgar/data/${Number(cik)}/${accession}/${recent.primaryDocument[financial]}`,
+        title: `SEC 6-K financial report ${recent.reportDate?.[financial]}`, period: recent.reportDate?.[financial] ?? null });
+      counts.set('6-K', 1);
+    }
+  }
   for (let index = 0; index < recent.form.length && selected.length < 3; index++) {
     const form = recent.form[index];
+    // Novo Nordisk files frequent 6-K notices (for example weekly buyback updates).
+    // Its periodized financial 6-K was selected above; keep those notices out of the mandatory risk-document set.
+    if (cik === '0000353278' && form === '6-K') continue;
     if (!['10-K', '10-Q', '20-F', '6-K'].includes(form) || (counts.get(form) ?? 0) >= (form === '6-K' ? 2 : 1)) continue;
     const accession = recent.accessionNumber[index]?.replace(/-/g, '');
     const document = recent.primaryDocument[index];
     if (!/^\d{18}$/.test(accession ?? '') || !/^[A-Za-z0-9._-]+\.(?:htm|html|pdf)$/i.test(document ?? '')) continue;
+    if (selected.some(filing => filing.url.endsWith(`/${accession}/${document}`))) continue;
     counts.set(form, (counts.get(form) ?? 0) + 1);
     selected.push({ url: `https://www.sec.gov/Archives/edgar/data/${Number(cik)}/${accession}/${document}`,
       title: `SEC ${form} ${recent.reportDate?.[index] ?? ''}`.trim(), period: recent.reportDate?.[index] ?? null });
@@ -260,6 +308,10 @@ export class PrimaryRiskResearch {
       } catch { if (signal?.aborted) throw signal.reason; }
     }
     if (position.type !== 'Stock') candidates.push(...[...curated].filter(url => officialProductHost(new URL(url).hostname)));
+    const curatedPaths = new Set([...curated].map(value => {
+      const url = new URL(value);
+      return `${url.origin}${url.pathname}`;
+    }));
     const identityHint = position.name.toLowerCase().split(/\W+/).find(word => word.length >= 5);
     if (position.type !== 'Stock' && position.isin.trim()) for (const hint of sourceHints
       .filter(hint => hint.url.toUpperCase().includes(position.isin.trim().toUpperCase()) ||
@@ -268,7 +320,8 @@ export class PrimaryRiskResearch {
       .slice(0, 30)) {
       try {
         const url = new URL(hint.url);
-        if (url.protocol === 'https:' && !url.username && !url.password && officialProductHost(url.hostname)) candidates.push(url.toString());
+        if (url.protocol === 'https:' && !url.username && !url.password && officialProductHost(url.hostname)
+          && !curatedPaths.has(`${url.origin}${url.pathname}`)) candidates.push(url.toString());
       } catch { /* Invalid discovery link. */ }
     }
     const gaps: string[] = [];
@@ -277,7 +330,9 @@ export class PrimaryRiskResearch {
     if (cik) {
       try {
         let filings = this.submissions.get(cik)?.filings;
-        if (forceRefresh || !filings || this.now() - this.submissions.get(cik)!.fetchedAt >= DAY) {
+        if (cik === '0000353278' && filings) filings = filings.filter(filing =>
+          /\/caq[1-4]20\d{2}\.htm$/i.test(filing.url) || /\/nvo-20\d{6}\.htm$/i.test(filing.url));
+        if (forceRefresh || !filings?.length || this.now() - this.submissions.get(cik)!.fetchedAt >= DAY) {
           const response = await this.requestFetch(`https://data.sec.gov/submissions/CIK${cik}.json`, {
             headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' },
             signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000),
@@ -301,7 +356,8 @@ export class PrimaryRiskResearch {
       || (position.type !== 'Stock' && officialProductHost(new URL(item).hostname))).slice(0, MAX_DOCUMENTS)) {
       const stored = this.cache.get(url);
       if (!forceRefresh && stored && this.now() - stored.fetchedAt < DAY &&
-        (position.type !== 'Stock' || stored.excerptVersion === 2) &&
+        (position.type !== 'Stock' || stored.excerptVersion === (['US5801351017', 'DK0062498333', 'US6701002056'].includes(position.isin.trim().toUpperCase()) ? 3 : 2)) &&
+        (position.isin.trim().toUpperCase() !== 'IE00B3WJKG14' || stored.excerptVersion === 3) &&
         (position.type === 'Stock' || stored.identity === position.isin.trim().toUpperCase())) { documents.push(stored); continue; }
       try {
         const response = await this.requestFetch(url, { headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' },
@@ -332,7 +388,7 @@ export class PrimaryRiskResearch {
           && !(KNOWN_STOCK_REPORT_PERIOD(position.isin.trim().toUpperCase(), url) === '2026-04-30'
             ? /April\s+30,?\s+2026/i.test(plain) : /October\s+31,?\s+2025/i.test(plain)))
           throw new Error('Report period not confirmed');
-        const excerpt = riskExcerpt(plain, position.type, position.isin.trim().toUpperCase() === 'DE0008430026');
+        const excerpt = riskExcerpt(plain, position.type, position.isin.trim().toUpperCase() === 'DE0008430026', position.isin.trim().toUpperCase());
         if (!excerpt) throw new Error('No risk evidence');
         if (position.type !== 'Stock' && !excerpt.toUpperCase().includes(position.isin.trim().toUpperCase())
           && !(position.type === 'Bond' && excerpt.includes(position.isin.trim().slice(2))))
@@ -341,7 +397,8 @@ export class PrimaryRiskResearch {
           ?? (position.type === 'Stock' ? null : productDocumentPeriod(plain, this.now()));
         const document: RiskDocument = { source: { title: filingDetails.get(url)?.title ?? url.split('/').pop() ?? 'Primärbericht', url }, excerpt,
           hash: createHash('sha256').update(data).digest('hex'), fetchedAt: this.now(), period,
-          ...(position.type === 'Stock' ? { excerptVersion: 2 } : {}),
+          ...(position.type === 'Stock' ? { excerptVersion: ['US5801351017', 'DK0062498333', 'US6701002056'].includes(position.isin.trim().toUpperCase()) ? 3 : 2 } : {}),
+          ...(position.isin.trim().toUpperCase() === 'IE00B3WJKG14' ? { excerptVersion: 3 } : {}),
           ...(position.type !== 'Stock' ? { identity: position.isin.trim().toUpperCase() } : {}) };
         this.cache.set(url, document);
         documents.push(document);

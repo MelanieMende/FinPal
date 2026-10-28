@@ -164,8 +164,8 @@ it('loads a local ETF history model for a new review candidate and passes the jo
   expect(correction.candidateMarketForecasts[0].riskHistory).toBeUndefined();
   expect(correction.allocationPlan.optimization.inputs.some((input: { key: string }) => input.key === 'new:IE00BF4RFH31')).toBe(true);
   expect(result.allocationPlan!.optimization!.forecasts.find(item => item.key === 'new:IE00BF4RFH31')?.riskHistory).toBeDefined();
-  expect(result.newAssetRecommendations[0].action).toBe('Prüfen');
-  expect(result.newAssetRecommendations[0].plannedAmountEUR ?? null).toBeNull();
+  expect(result.newAssetRecommendations?.[0].action).toBe('Prüfen');
+  expect(result.newAssetRecommendations?.[0].plannedAmountEUR ?? null).toBeNull();
   expect(service.getLastResult()?.report.allocationPlan).toEqual(result.allocationPlan);
   expect(provider.mock.calls.filter(([position]) => position.id === 0)).toHaveLength(1);
 });
@@ -214,9 +214,9 @@ it('reassesses new candidates with locally fetched EUR quotes and persists them 
   expect(correction.candidateMarketQuotes).toMatchObject([{ key: 'new:IE00BF4RFH31', quote: { price: 9.103, symbol: 'IUSN.DE', exchange: 'XETR' } }]);
   expect(correction.sources[1].url).toContain(candidate.isin);
   expect(body.text.format.schema.properties.newAssetRecommendations.items.properties.sourceIndexes.items.maximum).toBe(1);
-  expect(result.newAssetRecommendations[0]).toMatchObject({ action: 'Prüfen', symbol: 'WSML', marketQuote: { price: 9.103, currency: 'EUR', symbol: 'IUSN.DE' } });
-  expect(result.newAssetRecommendations[0].plannedAmountEUR ?? null).toBeNull();
-  expect(service.getLastResult()?.report.newAssetRecommendations[0].marketQuote).toEqual(result.newAssetRecommendations[0].marketQuote);
+  expect(result.newAssetRecommendations?.[0]).toMatchObject({ action: 'Prüfen', symbol: 'WSML', marketQuote: { price: 9.103, currency: 'EUR', symbol: 'IUSN.DE' } });
+  expect(result.newAssetRecommendations?.[0].plannedAmountEUR ?? null).toBeNull();
+  expect(service.getLastResult()?.report.newAssetRecommendations?.[0]?.marketQuote).toEqual(result.newAssetRecommendations?.[0]?.marketQuote);
   expect(quoteFetch).toHaveBeenCalledTimes(1);
   expect(request.positions[0].symbol).toBe('');
 });
@@ -229,7 +229,7 @@ it('continues the remaining analysis when candidate quotes cannot be fetched and
   service.saveKey('sk-testOnlyNotARealKey');
   const result = await service.analyze(request);
   expect(result.recommendations).toHaveLength(1);
-  expect(result.newAssetRecommendations[0].marketQuote).toBeNull();
+  expect(result.newAssetRecommendations?.[0].marketQuote).toBeNull();
   expect(result.infos).toEqual(expect.arrayContaining([expect.stringContaining('EUR-Kursabruf geprüft')]));
   expect(mockedFetch).toHaveBeenCalledTimes(2);
 });
@@ -278,8 +278,8 @@ it('accepts zero allocations from the schema without retrying or failing the ent
   const result = await service.analyze(request);
   expect(mockedFetch).toHaveBeenCalledTimes(2);
   expect(result.recommendations[0].plannedAmountEUR).toBeNull();
-  expect(result.newAssetRecommendations[0].plannedAmountEUR).toBeNull();
-  expect(result.fundingCheck.status).toBe('no-trades');
+  expect(result.newAssetRecommendations?.[0].plannedAmountEUR).toBeNull();
+  expect(result.fundingCheck!.status).toBe('no-trades');
   expect(service.getLastResult()?.report).toEqual(result);
   expect(zeroReport.recommendations[0].plannedAmountEUR).toBe(0);
 });
@@ -322,7 +322,7 @@ it('researches sourced outlooks and requests a profile-aware timing decision wit
   expect(JSON.parse(analysisBody.input[0].content).decisionContext).toMatchObject({ heldValueEUR: 1000,
     totalValueEUR: 2000, positions: [{ assetId: 1, shareIncludingCashPercent: 50 }],
   });
-  expect(result.allocationPlan.positions[0].amountEUR).toBe(amount);
+  expect(result.allocationPlan!.positions[0].amountEUR).toBe(amount);
   expect(analysisBody.instructions).not.toContain('beispielhaften EUR-Betrag');
   expect(analysisBody.instructions).toContain('12-Monats-Erwartungen');
   expect(result.allocationPlan.method).toBe('forecast-mean-variance-v1');

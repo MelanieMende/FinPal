@@ -46,6 +46,67 @@ it('checks current SEC filings, reuses downloaded documents for 24 hours and det
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });
 
+it('resolves ADP by its verified ISIN even when the stored listing symbol is not NASDAQ ADP', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-adp-filings-'));
+  const now = Date.parse('2026-10-27T10:00:00Z');
+  const fetcher = jest.fn(async (url: string) => url.includes('/submissions/')
+    ? new Response(JSON.stringify({ filings: { recent: {
+      form: ['10-K', '10-Q'],
+      accessionNumber: ['0000008670-26-000030', '0000008670-26-000019'],
+      primaryDocument: ['adp-20260630.htm', 'adp-20260331.htm'],
+      reportDate: ['2026-06-30', '2026-03-31'],
+    } } }))
+    : new Response('<html>AUTOMATIC DATA PROCESSING, INC. Net earnings $4,413.5 million. Cash and cash equivalents $4,230.1 million.</html>',
+      { headers: { 'content-type': 'text/html' } }));
+  try {
+    const position = { id: 65, name: 'ADP', isin: 'US0530151036', symbol: 'ADP.DE', type: 'Stock' } as AnalysisPosition;
+    const result = await new PrimaryRiskResearch(path.join(folder, 'documents.json'), fetcher as unknown as typeof fetch, () => now).collect(position);
+    expect(result.discoveryChecked).toBe(true);
+    expect(result.gaps).toEqual([]);
+    expect(result.documents[0]).toMatchObject({ period: '2026-06-30', source: { title: 'SEC 10-K 2026-06-30',
+      url: 'https://www.sec.gov/Archives/edgar/data/8670/000000867026000030/adp-20260630.htm' } });
+    expect(fetcher.mock.calls.some(([url]) => url === 'https://data.sec.gov/submissions/CIK0000008670.json')).toBe(true);
+    expect(fetcher.mock.calls.some(([url]) => url.includes('company_tickers.json'))).toBe(false);
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
+it('maps Novo Nordisk B shares and ADRs to the issuer and selects the financial 6-K ahead of newer notices', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-novo-filings-'));
+  const now = Date.parse('2026-10-27T10:00:00Z');
+  const fetcher = jest.fn(async (url: string) => url.includes('/submissions/')
+    ? new Response(JSON.stringify({ filings: { recent: {
+      form: ['6-K', '6-K', '20-F'],
+      accessionNumber: ['0001171843-26-005925', '0000353278-26-000023', '0000353278-26-000012'],
+      primaryDocument: ['f6k_090726.htm', 'caq22026.htm', 'nvo-20251231.htm'],
+      reportDate: ['2026-09-07', '2026-06-30', '2025-12-31'],
+    } } }))
+    : url.includes('f6k_090726.htm') ? new Response('', { status: 403 })
+    : new Response('<html>Novo Nordisk A/S. Net profit was DKK 69,546 million. Cash and cash equivalents were DKK 20,000 million.</html>',
+      { headers: { 'content-type': 'text/html' } }));
+  try {
+    for (const isin of ['DK0062498333', 'US6701002056']) {
+      const position = { id: 51, name: 'Novo Nordisk', isin, symbol: isin.startsWith('DK') ? 'NOVO-B.CO' : 'NVO', type: 'Stock' } as AnalysisPosition;
+      const result = await new PrimaryRiskResearch(path.join(folder, `${isin}.json`), fetcher as unknown as typeof fetch, () => now).collect(position);
+      expect(result.discoveryChecked).toBe(true);
+      expect(result.gaps).toEqual([]);
+      expect(result.documents[0]).toMatchObject({ period: '2026-06-30', source: { title: 'SEC 6-K financial report 2026-06-30' } });
+      expect(result.documents.map(document => document.source.title)).toContain('SEC 20-F 2025-12-31');
+      expect(result.documents[0].source.url).toBe('https://www.sec.gov/Archives/edgar/data/353278/000035327826000023/caq22026.htm');
+      if (isin === 'DK0062498333') {
+        const file = path.join(folder, `${isin}.json`);
+        const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+        saved.submissions[0].filings.push({ title: 'SEC 6-K 2026-09-07', period: '2026-09-07',
+          url: 'https://www.sec.gov/Archives/edgar/data/353278/000117184326005925/f6k_090726.htm' });
+        fs.writeFileSync(file, JSON.stringify(saved));
+        const reused = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
+        expect(reused.gaps).toEqual([]);
+        expect(reused.documents).toHaveLength(2);
+      }
+    }
+    expect(fetcher.mock.calls.some(([url]) => url.includes('f6k_090726.htm'))).toBe(false);
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
 it('accepts only issuer-hosted product documents for the exact ISIN and keeps them for 24 hours', async () => {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-product-documents-'));
   const now = Date.parse('2026-10-22T10:00:00Z');
@@ -69,6 +130,41 @@ it('accepts only issuer-hosted product documents for the exact ISIN and keeps th
     expect(wrong.discoveryChecked).toBe(false);
     expect(wrong.documents).toHaveLength(0);
     expect(wrong.gaps.length).toBeGreaterThan(0);
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
+it('loads the dated QDVE KID and current issuer facts for the exact share class', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-qdve-documents-'));
+  const now = Date.parse('2026-10-27T10:00:00Z');
+  const position = { id: 64, name: 'S&P 500 Information Technology', isin: 'IE00B3WJKG14', symbol: 'QDVE.DE', type: 'ETF' } as AnalysisPosition;
+  const product = '<html>ISIN IE00B3WJKG14. Anteilsklassenvermögen Per 23.Okt.2026 USD 19.506.058.168. Das Anlagerisiko ist auf bestimmte Sektoren, Länder, Währungen oder Unternehmen konzentriert. Anzahl der Positionen Per 23.Okt.2026 75. Portfolioallokation Halbleiter 40,07%. Produktstruktur Physisch. Deutsche Börse AG QDVE EUR.</html>';
+  const kid = 'Key Information Document. iShares S&P 500 Information Technology Sector UCITS ETF USD Accu ISIN: IE00B3WJKG14. The Manager is authorised in Ireland and regulated by the Central Bank of Ireland. The Fund tracks the S&P 500 Capped 35/20 Information Technology Index. This document is dated 03 September 2026. Management fees and other administrative or operating costs 0.15% of the value of your investment per year. Transaction costs 0.00%. Performance fees There is no performance fee for this product. The Fund may also engage in short-term secured lending of its investments to certain eligible third parties. The manager may use financial derivative instruments. Investors buy the shares on the secondary market at the then prevailing market price. The prevailing market price at which the shares trade on the secondary market may deviate from the value of the Shares. Be aware of currency risk.';
+  const fetcher = jest.fn(async (url: string) => new Response(url.includes('/literature/kiid/') ? kid : product,
+    { headers: { 'content-type': url.includes('/literature/kiid/') ? 'application/pdf' : 'text/html' } }));
+  try {
+    const file = path.join(folder, 'documents.json');
+    const oldKid = 'https://www.ishares.com/ch/professionals/en/literature/kiid/eu_priips-ishares-sp-500-information-technology-sector-ucits-etf-usd-acc-ch-ie00b3wjkg14-en.pdf';
+    const result = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position, undefined,
+      [{ title: 'Old iShares KID', url: oldKid }]);
+    expect(result.gaps).toEqual([]);
+    expect(result.documents).toHaveLength(2);
+    expect(result.documents.map(doc => doc.period)).toEqual(['2026-10-23', '2026-09-03']);
+    expect(result.documents[0].excerpt).toContain('Halbleiter 40,07%');
+    expect(result.documents[0].excerpt).toContain('Das Anlagerisiko ist auf bestimmte Sektoren');
+    expect(result.documents[1].excerpt).toContain('Transaction costs 0.00%');
+    expect(result.documents[1].excerpt).toContain('0.15% of the value of your investment per year');
+    expect(result.documents[1].excerpt).toContain('short-term secured lending');
+    expect(result.documents[1].excerpt).toContain('may deviate from the value of the Shares');
+    expect(result.documents[1].excerpt).toContain('regulated by the Central Bank of Ireland');
+    expect(result.documents[1].source.url).toContain('siteEntryPassthrough=true');
+    expect(result.documents.every(doc => doc.identity === position.isin && doc.excerptVersion === 3)).toBe(true);
+    expect(fetcher.mock.calls.some(([url]) => url === oldKid)).toBe(false);
+    const old = JSON.parse(fs.readFileSync(file, 'utf8'));
+    delete old.documents[0].excerptVersion;
+    fs.writeFileSync(file, JSON.stringify(old));
+    const calls = fetcher.mock.calls.length;
+    await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
+    expect(fetcher.mock.calls.length).toBe(calls + 1);
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });
 
@@ -206,6 +302,26 @@ it('prioritizes a current SEC filing conclusion about material legal impact', ()
   const excerpt = riskExcerpt(filing);
   expect(excerpt).toContain('will not materially harm our financial position');
   expect(excerpt).toContain('unfavorable resolutions could involve substantial fines');
+});
+
+it('retains McDonalds maturity schedule and conditional capital-flow wording in filing excerpts', () => {
+  const filing = `<html><p>${'Ordinary filing text. '.repeat(1200)}</p>
+    <p>Aggregate maturities for 2025 debt balances, before fair value adjustments and deferred debt costs, are as follows (in millions): 2026–$0; 2027–$3,201; 2028–$5,166.</p>
+    <p>Our operations may also be impacted by regulations affecting capital flows, financial markets or financial institutions, which can limit our ability to manage and deploy our liquidity or increase our funding costs. Any such events could have a material adverse effect on our business.</p></html>`;
+  const excerpt = riskExcerpt(filing);
+  expect(excerpt).toContain('2027–$3,201');
+  expect(excerpt).toContain('may also be impacted by regulations affecting capital flows');
+  expect(excerpt).toContain('Any such events could have a material adverse effect');
+});
+
+it('retains Novo Nordisks current borrowings and twelve-month funding statement', () => {
+  const filing = `<html><p>${'Other report text. '.repeat(1200)}</p>
+    <p>DKK million 30 Jun 2026 31 Dec 2025 Borrowings, non-current (121,794) (118,941) Borrowings, current (18,333) (12,017) Add-back of lease liabilities 8,622 8,572 Cash at bank 44,482 26,464.</p>
+    <p>Novo Nordisk believes its financial resources are sufficient to meet its requirements for at least the next 12 months.</p></html>`;
+  const excerpt = riskExcerpt(filing);
+  expect(excerpt).toContain('Borrowings, current (18,333)');
+  expect(excerpt).toContain('Cash at bank 44,482');
+  expect(excerpt).toContain('financial resources are sufficient');
 });
 
 it('rebuilds cached stock excerpts created before the earnings and margin extraction update', async () => {

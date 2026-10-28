@@ -24,7 +24,7 @@ const issuerHints: Record<string, { issuer: string; listing: string; sourceUrls:
     issuer: 'iShares S&P 500 Information Technology Sector UCITS ETF USD Acc', listing: 'Xetra: QDVE',
     sourceUrls: [
       'https://www.ishares.com/de/privatanleger/de/produkte/280510/ishares-sp-500-information-technology-sector-ucits-etf',
-      'https://www.ishares.com/ch/professionals/en/literature/kiid/eu_priips-ishares-sp-500-information-technology-sector-ucits-etf-usd-acc-ch-ie00b3wjkg14-en.pdf',
+      'https://www.ishares.com/ch/professionals/en/literature/kiid/eu_priips-ishares-sp-500-information-technology-sector-ucits-etf-usd-acc-ch-ie00b3wjkg14-en.pdf?siteEntryPassthrough=true&switchLocale=y',
     ],
   },
   IE00B8GKDB10: {

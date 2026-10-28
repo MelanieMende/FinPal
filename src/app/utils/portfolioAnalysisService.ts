@@ -619,6 +619,7 @@ export class PortfolioAnalysisService {
       const updatedRisk = riskForModel(record);
       const oldRisk = previous.report.fundamentalRisks?.find(item => item.key === updatedRisk.key);
       const changed = !oldRisk || oldRisk.status !== updatedRisk.status
+        || oldRisk.decisionReadiness !== updatedRisk.decisionReadiness
         || JSON.stringify(oldRisk.materialRisks) !== JSON.stringify(updatedRisk.materialRisks)
         || oldRisk.rationale !== updatedRisk.rationale;
       const recommendations = previous.report.recommendations.map(rec => rec.assetId !== asset.id || !changed ? rec : {

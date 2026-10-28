@@ -77,6 +77,108 @@ function munichReCashFromBalanceSheet(position: AnalysisPosition, documents: Ris
   }
   return null;
 }
+function mcdDebtMaturities(position: AnalysisPosition, documents: RiskDocument[]): RiskMetric | null {
+  if (position.type !== 'Stock' || position.isin.trim().toUpperCase() !== 'US5801351017') return null;
+  for (const [documentIndex, document] of documents.entries()) {
+    if (document.period !== '2025-12-31'
+      || !/^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/63908\/\d{18}\/mcd-20251231\.htm$/i.test(document.source.url)) continue;
+    const match = /Aggregate maturities for 2025 debt balances[\s\S]{0,200}?2027\s*[-–—]\s*\$?\s*([\d,]+)/i.exec(document.excerpt);
+    if (!match || !validQuote(match[0], document)) continue;
+    const value = Number(match[1].replace(/,/g, ''));
+    if (!Number.isSafeInteger(value) || value <= 0 || !quoteContainsValue(match[0], value)) continue;
+    return { name: 'debt-maturities', value, unit: 'Mio. USD', period: 'Stand 2025-12-31; Fälligkeit 2027', documentIndex, quote: match[0] };
+  }
+  return null;
+}
+const isNovoNordisk = (position: Pick<AnalysisPosition, 'isin' | 'type'>) => position.type === 'Stock'
+  && ['DK0062498333', 'US6701002056'].includes(position.isin.trim().toUpperCase());
+const novoFinancialReport = (document: RiskDocument) => /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/353278\/\d{18}\/caq[1-4]20\d{2}\.htm$/i.test(document.source.url)
+  && !!document.period;
+const novoAnnualReport = (document: RiskDocument) => /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/353278\/\d{18}\/nvo-20\d{6}\.htm$/i.test(document.source.url)
+  && !!document.period;
+function novoCurrentBorrowings(position: AnalysisPosition, documents: RiskDocument[]): RiskMetric | null {
+  if (!isNovoNordisk(position)) return null;
+  for (const [documentIndex, document] of documents.entries()) {
+    if (!novoFinancialReport(document)) continue;
+    const match = /Borrowings,\s*current\s+\(?\s*([\d,]+)\s*\)?/i.exec(document.excerpt);
+    if (!match || !validQuote(match[0], document)) continue;
+    const value = Number(match[1].replace(/,/g, ''));
+    if (!Number.isSafeInteger(value) || value <= 0) continue;
+    return { name: 'debt-maturities', value, unit: 'Mio. DKK',
+      period: `Stichtag ${document.period}; kurzfristige Kreditverbindlichkeiten`, documentIndex, quote: match[0] };
+  }
+  return null;
+}
+function qualifyNovoFinancing(position: AnalysisPosition, check: RiskCheck, documents: RiskDocument[]): RiskCheck {
+  if (!isNovoNordisk(position) || check.flag !== 'financing' || check.finding !== 'unknown') return check;
+  const annualIndex = documents.findIndex(document => novoAnnualReport(document)
+    && /Novo Nordisk believes its financial resources are sufficient to meet its requirements for at least the next 12 months/i.test(document.excerpt));
+  const borrowings = novoCurrentBorrowings(position, documents);
+  const current = borrowings && documents[borrowings.documentIndex];
+  const cashMatch = current && /Borrowings,\s*current\s+\(?\s*[\d,]+\s*\)?[\s\S]{0,200}?Cash at bank\s+([\d,]+)/i.exec(current.excerpt);
+  const cash = cashMatch ? Number(cashMatch[1].replace(/,/g, '')) : 0;
+  if (annualIndex < 0 || !borrowings || !Number.isSafeInteger(cash) || cash <= borrowings.value) return check;
+  const quote = /Novo Nordisk believes its financial resources are sufficient to meet its requirements for at least the next 12 months/i.exec(documents[annualIndex].excerpt)?.[0] ?? '';
+  if (!validQuote(quote, documents[annualIndex])) return check;
+  return { ...check, finding: 'no-risk', documentIndex: annualIndex, quote,
+    reason: `Stand ${current!.period}: ${cash} Mio. DKK Zahlungsmittel und ${borrowings.value} Mio. DKK kurzfristige Kreditverbindlichkeiten. Im Jahresbericht 2025 beurteilt Novo Nordisk seine Finanzmittel für mindestens zwölf Monate als ausreichend. Dies belegt keinen akuten Finanzierungsengpass, garantiert aber keine künftige Refinanzierung.` };
+}
+function qualifyQdveProductRisks(position: AnalysisPosition, check: RiskCheck, documents: RiskDocument[]): RiskCheck {
+  if (position.type !== 'ETF' || position.isin.trim().toUpperCase() !== 'IE00B3WJKG14') return check;
+  const kidIndex = documents.findIndex(document => document.period
+    && /^https:\/\/www\.ishares\.com\/ch\/professionals\/en\/literature\/kiid\/eu_priips-ishares-sp-500-information-technology-sector-ucits-etf-usd-acc-ch-ie00b3wjkg14-en\.pdf/i.test(document.source.url)
+    && document.excerpt.includes('IE00B3WJKG14'));
+  const kid = documents[kidIndex];
+  if (check.flag === 'costs' && check.finding === 'unknown' && kid) {
+    const charge = /0\.15%\s+of the value of your investment per year/i.exec(kid.excerpt)?.[0] ?? '';
+    if (/Transaction costs\s+0\.00%/i.test(kid.excerpt) && /Performance fees\s+There is no performance fee/i.test(kid.excerpt)
+      && validQuote(charge, kid)) return { ...check, finding: 'no-risk', documentIndex: kidIndex, quote: charge,
+        reason: `Das KID vom ${kid.period} weist 0,15 % jährliche Verwaltungs- und Betriebskosten, geschätzte interne Transaktionskosten von 0,00 % und keine Erfolgsgebühr aus. Brokergebühren und aktuelle Börsenspannen sind darin nicht enthalten.` };
+  }
+  if (check.flag === 'concentration' && check.finding !== 'risk') {
+    const productIndex = documents.findIndex(document => document.period
+      && /^https:\/\/www\.ishares\.com\/de\/privatanleger\/de\/produkte\/280510\//i.test(document.source.url)
+      && document.excerpt.includes('IE00B3WJKG14')
+      && /Das Anlagerisiko ist auf bestimmte Sektoren, Länder, Währungen oder Unternehmen konzentriert/i.test(document.excerpt));
+    const documentIndex = productIndex >= 0 ? productIndex : kid && /S&P 500 Capped 35\/20 Information Technology Index/i.test(kid.excerpt)
+      ? kidIndex : -1;
+    if (documentIndex < 0) return check;
+    const document = documents[documentIndex];
+    const quote = productIndex >= 0
+      ? /Das Anlagerisiko ist auf bestimmte Sektoren, Länder, Währungen oder Unternehmen konzentriert/i.exec(document.excerpt)?.[0] ?? ''
+      : /S&P 500 Capped 35\/20 Information Technology Index/i.exec(document.excerpt)?.[0] ?? '';
+    if (!validQuote(quote, document)) return check;
+    const sector = /Halbleiter\s+([\d,]+)\s*%?/i.exec(document.excerpt);
+    return { ...check, finding: 'risk', documentIndex, quote,
+      reason: `Stand ${document.period}: Die exakte Anteilsklasse ist auf den US-Informationstechnologiesektor konzentriert${sector ? `; Halbleiter machen ${sector[1]} % der ausgewiesenen Sektorallokation aus` : ''}. ${productIndex >= 0 ? 'Die Produktseite nennt diese Konzentration ausdrücklich als Risiko.' : 'Das KID belegt die sektorbezogene Indexzusammensetzung; eine aktuelle Gewichtung einzelner Unternehmen folgt daraus nicht.'} Das ist bei der Positionsgröße zu berücksichtigen.` };
+  }
+  if (check.flag === 'liquidity' && check.finding !== 'risk' && kid) {
+    const quote = /prevailing market price[\s\S]{0,140}?may deviate from the value of the Shares/i.exec(kid.excerpt)?.[0] ?? '';
+    if (/shares on the secondary market[\s\S]{0,160}?prevailing market price/i.test(kid.excerpt)
+      && validQuote(quote, kid)) return { ...check, finding: 'risk', documentIndex: kidIndex, quote,
+        reason: 'Das KID belegt den Sekundärmarkthandel für Privatanleger und weist ausdrücklich darauf hin, dass der Börsenpreis vom Anteilswert abweichen kann. Aktuelle Spreads und Handelsvolumen müssen vor einer Order separat geprüft werden.' };
+  }
+  if (check.flag === 'structure' && check.finding === 'unknown' && kid) {
+    const quote = /short-term secured lending of its investments to certain eligible third parties/i.exec(kid.excerpt)?.[0] ?? '';
+    if (/financial derivative instruments/i.test(kid.excerpt) && validQuote(quote, kid))
+      return { ...check, finding: 'risk', documentIndex: kidIndex, quote,
+        reason: 'Das KID erlaubt besicherte Wertpapierleihe und Finanzderivate auch für Anlagezwecke. Dies begründet potenzielle Gegenparteirisiken; die tatsächliche aktuelle Nutzung dieser Möglichkeiten ist damit nicht belegt.' };
+  }
+  if (check.flag === 'regulatory' && check.finding === 'unknown') {
+    const quote = /The Manager is authorised in Ireland and regulated by the Central Bank of Ireland/i.exec(kid?.excerpt ?? '')?.[0] ?? '';
+    if (validQuote(quote, kid)) return { ...check, finding: 'no-risk', documentIndex: kidIndex, quote,
+      reason: `Das KID vom ${kid.period} belegt die irische Zulassung und Aufsicht über die Verwaltungsgesellschaft der exakten Anteilsklasse. Es belegt keinen aktuellen aufsichtsrechtlichen Produktmangel; künftige regulatorische Änderungen oder nicht genannte Verfahren werden damit nicht ausgeschlossen.` };
+  }
+  return check;
+}
+function qualifyCheck(position: AnalysisPosition, check: RiskCheck, documents: RiskDocument[]): RiskCheck {
+  let qualified = qualifyMunichFinancingAndContinuity(position, check, documents);
+  qualified = qualifyMunichLegalRisk(position, qualified, documents);
+  qualified = qualifyMondelezLegalRisk(position, qualified, documents);
+  qualified = qualifyMcdRegulatoryRisk(position, qualified, documents);
+  qualified = qualifyNovoFinancing(position, qualified, documents);
+  return qualifyQdveProductRisks(position, qualified, documents);
+}
 const munichLegalRiskReason = '2025: Laufende Gerichts-, Aufsichts- und Schiedsverfahren; Munich Re erwartet keine erhebliche negative Wirkung. In den geprüften Auszügen fehlt eine Aktualisierung für 2026.';
 const munichLegalRiskReason2026 = 'Stand 30.06.2026: Laufende Verfahren aus dem Bericht 2025; Munich Re erwartet keine erhebliche negative Wirkung und erklärt die damaligen Risikoaussagen für unverändert gültig.';
 const munichAnnualReport = (document: RiskDocument) => document.period === '2025-12-31'
@@ -142,10 +244,41 @@ function qualifyMondelezLegalRisk(position: AnalysisPosition, check: RiskCheck, 
   return { ...check, finding: 'no-risk', documentIndex, quote,
     reason: 'Stand 30.06.2026: Laufende Gerichts- und Behördenverfahren bestehen. Das Management erwartet derzeit weder einzeln noch zusammen eine wesentliche Belastung von Finanzlage, Ergebnis oder Cashflow. Ungünstige Entscheidungen und erhebliche Sanktionen bleiben möglich.' };
 }
+const mcdConditionalRegulatoryReason = 'Der aktuelle 10-Q beschreibt mögliche Einschränkungen von Kapitalflüssen und höhere Finanzierungskosten. Ein konkreter eingetretener Schaden ist durch diese bedingte Risikowarnung nicht belegt; die regulatorische Exposition bleibt offen.';
+function qualifyMcdRegulatoryRisk(position: AnalysisPosition, check: RiskCheck, documents: RiskDocument[]): RiskCheck {
+  if (position.type !== 'Stock' || position.isin.trim().toUpperCase() !== 'US5801351017'
+    || check.flag !== 'regulatory' || (check.finding !== 'risk' && check.finding !== 'unknown')) return check;
+  const conditionalRisk = check.finding === 'risk' && /may also be impacted by regulations affecting capital flows/i.test(check.quote);
+  const conditionalUnknown = check.finding === 'unknown'
+    && /(?:Kapitalfl[uü]ss|capital flows)/i.test(check.reason)
+    && /(?:Exposition|möglich|potenziell|könn|may|could)/i.test(check.reason)
+    && !/(?:konkreter Verstoß|verhängte Sanktion|eingetretener Schaden|material sanction|actual violation)/i.test(check.reason);
+  if (!conditionalRisk && !conditionalUnknown) return check;
+  const documentIndex = documents.findIndex(document => document.period === '2026-06-30'
+    && /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/63908\/\d{18}\/mcd-20260630\.htm$/i.test(document.source.url)
+    && /Our operations may also be impacted by regulations affecting capital flows/i.test(document.excerpt)
+    && /Any such events could have a material adverse effect/i.test(document.excerpt));
+  if (documentIndex < 0 || !documents.some(document => document.period === '2025-12-31'
+    && /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/63908\/\d{18}\/mcd-20251231\.htm$/i.test(document.source.url))) return check;
+  const quote = /Our operations may also be impacted by regulations affecting capital flows, financial markets or financial institutions/i.exec(documents[documentIndex].excerpt)?.[0] ?? '';
+  if (!validQuote(quote, documents[documentIndex])) return check;
+  if (conditionalUnknown) {
+    if (check.reason === mcdConditionalRegulatoryReason && check.documentIndex === documentIndex && check.quote === quote) return check;
+    return { ...check, finding: 'unknown', documentIndex, quote, reason: mcdConditionalRegulatoryReason };
+  }
+  return { ...check, finding: 'no-risk', documentIndex, quote,
+    reason: 'Der aktuelle 10-Q beschreibt Einschränkungen von Kapitalflüssen als mögliches künftiges Risiko mit potenziell wesentlichen Folgen. Die zitierte bedingte Aussage belegt keinen bereits eingetretenen wesentlichen regulatorischen Schaden; die Exposition bleibt bestehen.' };
+}
 export function riskFingerprint(position: AnalysisPosition, set: RiskDocumentSet): string {
   return createHash('sha256').update(JSON.stringify({ policy: RISK_POLICY, isin: position.isin.trim().toUpperCase(),
-    type: position.type, documents: set.documents.map(doc => [doc.source.url, doc.hash,
+    type: position.type, ...(position.isin.trim().toUpperCase() === 'US5801351017' ? { mcdReviewVersion: 2 } : {}),
+    documents: set.documents.map(doc => [doc.source.url, doc.hash,
       isInsuranceStock(position) ? doc.excerptVersion ?? 0 : 0]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))) })).digest('hex');
+}
+function legacyMcdFingerprint(position: AnalysisPosition, set: RiskDocumentSet): string {
+  return createHash('sha256').update(JSON.stringify({ policy: RISK_POLICY, isin: position.isin.trim().toUpperCase(),
+    type: position.type, documents: set.documents.map(doc => [doc.source.url, doc.hash, 0])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0]))) })).digest('hex');
 }
 export function validateRiskAssessment(position: AnalysisPosition, set: RiskDocumentSet, response: unknown, now = Date.now(), key = String(position.id)): PrimaryRiskRecord {
   const value = response && typeof response === 'object' ? response as { checks?: unknown; metrics?: unknown } : {};
@@ -158,13 +291,12 @@ export function validateRiskAssessment(position: AnalysisPosition, set: RiskDocu
     if (!check || !['risk', 'no-risk', 'unknown'].includes(check.finding) || typeof check.reason !== 'string'
       || !check.reason.trim() || (check.finding !== 'unknown' && (!validQuote(check.quote, document)
         || !riskEvidenceTerms[flag].test(check.quote)))) {
-      const fallback = qualifyMunichFinancingAndContinuity(position,
+      const fallback = qualifyCheck(position,
         { flag, finding: 'unknown', reason: 'Kein überprüfbarer Befund mit Textstelle.', documentIndex: null, quote: '' }, set.documents);
       if (fallback.finding === 'unknown') gaps.push(`${flag}: ${fallback.reason}`);
       return fallback;
     }
-    const qualified = qualifyMondelezLegalRisk(position, qualifyMunichLegalRisk(position,
-      qualifyMunichFinancingAndContinuity(position, check, set.documents), set.documents), set.documents);
+    const qualified = qualifyCheck(position, check, set.documents);
     if (qualified.finding === 'unknown') gaps.push(`${flag}: ${qualified.reason.trim()}`);
     return { flag, finding: qualified.finding, reason: qualified.reason.trim().slice(0, 700),
       documentIndex: qualified.finding === 'unknown' && qualified === check ? null : qualified.documentIndex,
@@ -181,6 +313,10 @@ export function validateRiskAssessment(position: AnalysisPosition, set: RiskDocu
   if (!metrics.some(metric => metric.name === 'cash')) {
     const balanceSheetCash = munichReCashFromBalanceSheet(position, set.documents);
     if (balanceSheetCash) metrics.push(balanceSheetCash);
+  }
+  if (!metrics.some(metric => metric.name === 'debt-maturities')) {
+    const maturities = mcdDebtMaturities(position, set.documents) ?? novoCurrentBorrowings(position, set.documents);
+    if (maturities) metrics.push(maturities);
   }
   for (const name of riskMetricsForPosition(position)) {
     if (!metrics.some(metric => metric.name === name)) gaps.push(`${name}: Keine periodisierte Zahl mit überprüfbarer Textstelle.`);
@@ -211,6 +347,33 @@ export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessme
     && ['net-income', 'operating-margin', 'cash', 'debt-maturities'].every(name => record.metrics.some(metric => metric.name === name))
     && record.sources.some(source => /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/1103982\/\d{18}\/[^/]+\.htm$/i.test(source.url) && /10-Q/.test(source.title))
     && record.sources.some(source => /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/1103982\/\d{18}\/[^/]+\.htm$/i.test(source.url) && /10-K/.test(source.title));
+  const reviewedMcdUncertainty = record.isin === 'US5801351017' && record.status === 'unknown'
+    && materialRisks.length === 0 && record.checks.length === 5
+    && record.checks.every(check => (check.finding === 'no-risk' && check.documentIndex !== null && check.quote.trim().length >= 12)
+      || (check.flag === 'going-concern' && check.finding === 'unknown' && check.documentIndex === null
+        && /(?:keine|fehlt).*(?:ausdrücklich|Beurteilung|Aussage)/i.test(check.reason))
+      || (check.flag === 'regulatory' && check.finding === 'unknown' && check.documentIndex !== null
+        && check.quote.trim().length >= 12 && check.reason === mcdConditionalRegulatoryReason))
+    && record.gaps.some(gap => gap.startsWith('going-concern:'))
+    && record.gaps.every(gap => /^(?:going-concern|regulatory):/.test(gap))
+    && record.gaps.some(gap => gap.startsWith('regulatory:')) === record.checks.some(check => check.flag === 'regulatory' && check.finding === 'unknown')
+    && ['net-income', 'operating-margin', 'cash', 'debt-maturities'].every(name => record.metrics.some(metric => metric.name === name))
+    && record.sources.some(source => /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/63908\/\d{18}\/mcd-20260630\.htm$/i.test(source.url) && /10-Q/.test(source.title))
+    && record.sources.some(source => /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/63908\/\d{18}\/mcd-20251231\.htm$/i.test(source.url) && /10-K/.test(source.title));
+  const reviewedNovoUncertainty = ['DK0062498333', 'US6701002056'].includes(record.isin) && record.status === 'unknown'
+    && materialRisks.length === 0 && record.checks.length === 5
+    && record.checks.every(check => (check.finding === 'no-risk' && check.documentIndex !== null && check.quote.trim().length >= 12)
+      || (check.flag === 'going-concern' && check.finding === 'unknown' && check.documentIndex === null
+        && /(?:keine|fehlt).*(?:ausdrücklich|Beurteilung|Aussage)/i.test(check.reason))
+      || (check.flag === 'regulatory' && check.finding === 'unknown' && check.documentIndex === null
+        && /(?:Exposition|regulatorisch)/i.test(check.reason)
+        && /(?:bedingte|kein.*eingetreten.*Schaden|keine.*konkrete.*Beeinträchtigung)/i.test(check.reason)))
+    && record.gaps.some(gap => gap.startsWith('going-concern:'))
+    && record.gaps.some(gap => gap.startsWith('regulatory:'))
+    && record.gaps.every(gap => /^(?:going-concern|regulatory):/.test(gap))
+    && ['net-income', 'operating-margin', 'cash', 'debt-maturities'].every(name => record.metrics.some(metric => metric.name === name))
+    && record.sources.some(source => /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/353278\/\d{18}\/caq[1-4]20\d{2}\.htm$/i.test(source.url) && /6-K/.test(source.title))
+    && record.sources.some(source => /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/353278\/\d{18}\/nvo-20\d{6}\.htm$/i.test(source.url) && /20-F/.test(source.title));
   const shorten = (value: string, limit: number) => {
     if (value.length <= limit) return value;
     const candidate = value.slice(0, limit);
@@ -233,7 +396,7 @@ export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessme
   }
   if (visible.length < lines.length) visible.push(`Weitere ${lines.length - visible.length} Befunde im gespeicherten Prüfprotokoll.`);
   return { key: record.key, status: record.status,
-    ...(reviewedMunichUncertainty || reviewedMondelezUncertainty ? { decisionReadiness: 'reviewed-uncertainty' as const } : {}),
+    ...(reviewedMunichUncertainty || reviewedMondelezUncertainty || reviewedMcdUncertainty || reviewedNovoUncertainty ? { decisionReadiness: 'reviewed-uncertainty' as const } : {}),
     materialRisks, rationale: visible.join('\n'), sources: record.sources };
 }
 
@@ -258,17 +421,33 @@ export class PrimaryRiskAssessmentCache {
       const priorFingerprint = (version: number) => riskFingerprint(position, { ...set,
         documents: set.documents.map(document => ({ ...document,
           excerptVersion: document.excerptVersion === 2 ? version : document.excerptVersion })) });
-      const canMigrate = isInsuranceStock(position)
-        && (record.fingerprint === priorFingerprint(1) || record.fingerprint === priorFingerprint(0))
-        && record.checks.every(check => check.finding === 'unknown' || check.documentIndex !== null
-          && validQuote(check.quote, set.documents[check.documentIndex]))
+      const oldEvidenceStillVerifiable = record.checks.every(check => check.finding === 'unknown' || check.documentIndex !== null
+        && validQuote(check.quote, set.documents[check.documentIndex]))
         && record.metrics.every(metric => validQuote(metric.quote, set.documents[metric.documentIndex]));
+      const canMigrate = ((isInsuranceStock(position)
+        && (record.fingerprint === priorFingerprint(1) || record.fingerprint === priorFingerprint(0)))
+        || (position.isin.trim().toUpperCase() === 'US5801351017' && record.fingerprint === legacyMcdFingerprint(position, set)))
+        && oldEvidenceStillVerifiable;
       if (!canMigrate) return null;
       record = { ...record, fingerprint };
       this.set(record);
     }
-    const qualifiedChecks = record.checks.map(check => qualifyMondelezLegalRisk(position, qualifyMunichLegalRisk(position,
-      qualifyMunichFinancingAndContinuity(position, check, set.documents), set.documents), set.documents));
+    if (isNovoNordisk(position) && !set.gaps.length) {
+      const gaps = record.gaps.filter(gap => !/^Primärdokument konnte nicht aktuell geladen werden: https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/353278\/\d{18}\/f6k_[^/]+\.htm$/i.test(gap));
+      if (gaps.length !== record.gaps.length) {
+        record = { ...record, gaps, status: gaps.length ? 'unknown' : 'assessed' };
+        this.set(record);
+      }
+    }
+    if (position.type === 'ETF' && position.isin.trim().toUpperCase() === 'IE00B3WJKG14' && !set.gaps.length
+      && set.documents.some(document => /\/eu_priips-ishares-sp-500-information-technology-sector-ucits-etf-usd-acc-ch-ie00b3wjkg14-en\.pdf\?siteEntryPassthrough=true/.test(document.source.url))) {
+      const gaps = record.gaps.filter(gap => !/^Primärdokument konnte nicht aktuell geladen werden: https:\/\/www\.ishares\.com\/ch\/professionals\/en\/literature\/kiid\/eu_priips-ishares-sp-500-information-technology-sector-ucits-etf-usd-acc-ch-ie00b3wjkg14-en\.pdf$/.test(gap));
+      if (gaps.length !== record.gaps.length) {
+        record = { ...record, gaps, status: gaps.length ? 'unknown' : 'assessed' };
+        this.set(record);
+      }
+    }
+    const qualifiedChecks = record.checks.map(check => qualifyCheck(position, check, set.documents));
     if (qualifiedChecks.some((check, index) => check !== record.checks[index])) {
       const changedFlags = new Set(qualifiedChecks.filter((check, index) => check !== record!.checks[index]).map(check => check.flag));
       const gaps = record.gaps.filter(gap => !changedFlags.has(gap.split(':', 1)[0] as RiskCheckName));
@@ -282,6 +461,14 @@ export class PrimaryRiskAssessmentCache {
       if (cash) {
         const gaps = record.gaps.filter(gap => !gap.startsWith('cash:'));
         record = { ...record, metrics: [...record.metrics, cash], gaps, status: gaps.length ? 'unknown' : 'assessed' };
+        this.set(record);
+      }
+    }
+    if (!record.metrics.some(metric => metric.name === 'debt-maturities')) {
+      const maturities = mcdDebtMaturities(position, set.documents) ?? novoCurrentBorrowings(position, set.documents);
+      if (maturities) {
+        const gaps = record.gaps.filter(gap => !gap.startsWith('debt-maturities:'));
+        record = { ...record, metrics: [...record.metrics, maturities], gaps, status: gaps.length ? 'unknown' : 'assessed' };
         this.set(record);
       }
     }

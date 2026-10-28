@@ -14,7 +14,8 @@ const indicators: Record<AssetRecommendation['action'], { icon: IconName; color:
 export default function AssetAnalysisIndicator({ assetId }: { assetId: number }) {
   const report = useAppSelector(state => state.portfolioAnalysis.lastResult ?? state.portfolioAnalysis.result);
   const execution = useAppSelector(selectRecommendationExecutions)[assetId];
-  const recommendation = report?.recommendations.find(rec => rec.assetId === assetId);
+  if (!report) return <span className="text-slate-500" title="Keine KI-Empfehlung vorhanden" aria-label="Keine KI-Empfehlung vorhanden">—</span>;
+  const recommendation = report.recommendations.find(rec => rec.assetId === assetId);
   if (!recommendation) return <span className="text-slate-500" title="Keine KI-Empfehlung vorhanden" aria-label="Keine KI-Empfehlung vorhanden">—</span>;
   if (execution?.status === 'done') return <span
     role="img"

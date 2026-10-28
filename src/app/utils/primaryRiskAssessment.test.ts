@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import type { AnalysisPosition } from './portfolioAnalysis';
@@ -40,6 +41,114 @@ it('requires document text for every claimed finding and periodized metric', () 
     metric.name === 'cash' ? { ...metric, value: 9 } : metric) });
   expect(wrongNumber.status).toBe('unknown');
   expect(wrongNumber.gaps).toContain('cash: Keine periodisierte Zahl mit überprüfbarer Textstelle.');
+});
+
+it('uses McDonalds filed debt schedule and keeps a conditional regulatory risk distinct from a current event', () => {
+  const quarter = { ...document, source: { title: 'SEC 10-Q 2026-06-30',
+    url: 'https://www.sec.gov/Archives/edgar/data/63908/000006390826000073/mcd-20260630.htm' }, period: '2026-06-30',
+  excerpt: 'Net income was $2,362 million. Operating margin was 46.2 percent. Cash and cash equivalents were $822 million. Our operations may also be impacted by regulations affecting capital flows, financial markets or financial institutions, which can limit our ability to manage and deploy our liquidity or increase our funding costs. Any such events could have a material adverse effect on our business.' };
+  const annual = { ...document, source: { title: 'SEC 10-K 2025-12-31',
+    url: 'https://www.sec.gov/Archives/edgar/data/63908/000006390826000035/mcd-20251231.htm' },
+  excerpt: 'Available cash and borrowing capacity should meet foreseeable requirements. Aggregate maturities for 2025 debt balances, before fair value adjustments and deferred debt costs, are as follows (in millions): 2026–$0; 2027–$3,201; 2028–$5,166; 2029–$3,637; 2030–$3,011; Thereafter–$25,130.' };
+  const filing: RiskDocumentSet = { documents: [quarter, annual], discoveryChecked: true, gaps: [] };
+  const answer = { checks: [
+    { flag: 'loss-making', finding: 'no-risk', reason: 'Positive Q2 earnings.', documentIndex: 0, quote: 'Net income was $2,362 million.' },
+    { flag: 'low-margin', finding: 'no-risk', reason: 'High H1 margin.', documentIndex: 0, quote: 'Operating margin was 46.2 percent.' },
+    { flag: 'financing', finding: 'no-risk', reason: 'Management sees adequate funding.', documentIndex: 1, quote: 'Available cash and borrowing capacity should meet foreseeable requirements.' },
+    { flag: 'going-concern', finding: 'unknown', reason: 'Keine ausdrückliche unternehmensbezogene Aussage.', documentIndex: null, quote: '' },
+    { flag: 'regulatory', finding: 'risk', reason: 'Mögliche künftige Kapitalflussregeln können Kosten erhöhen.', documentIndex: 0,
+      quote: 'Our operations may also be impacted by regulations affecting capital flows, financial markets or financial institutions' },
+  ], metrics: [
+    { name: 'net-income', value: 2362, unit: 'Mio. USD', period: 'Q2 2026', documentIndex: 0, quote: 'Net income was $2,362 million.' },
+    { name: 'operating-margin', value: 46.2, unit: '%', period: 'H1 2026', documentIndex: 0, quote: 'Operating margin was 46.2 percent.' },
+    { name: 'cash', value: 822, unit: 'Mio. USD', period: '2026-06-30', documentIndex: 0, quote: 'Cash and cash equivalents were $822 million.' },
+  ] };
+  const reviewed = validateRiskAssessment(position, filing, answer);
+  expect(reviewed.checks.find(check => check.flag === 'regulatory')?.finding).toBe('no-risk');
+  expect(reviewed.checks.find(check => check.flag === 'going-concern')?.finding).toBe('unknown');
+  expect(reviewed.metrics.find(metric => metric.name === 'debt-maturities')).toMatchObject({ value: 3201, unit: 'Mio. USD', period: 'Stand 2025-12-31; Fälligkeit 2027' });
+  expect(reviewed.gaps).toEqual(expect.arrayContaining([expect.stringMatching(/^going-concern:/)]));
+  expect(riskForModel(reviewed)).toMatchObject({ decisionReadiness: 'reviewed-uncertainty', materialRisks: [] });
+  const conditionalUnknown = validateRiskAssessment(position, filing, { ...answer, checks: answer.checks.map(check =>
+    check.flag === 'regulatory' ? { ...check, finding: 'unknown', documentIndex: null, quote: '',
+      reason: 'Es verbleibt eine regulatorische Exposition gegenüber Beschränkungen von Kapitalflüssen und möglichen höheren Finanzierungskosten.' } : check) });
+  expect(conditionalUnknown.checks.find(check => check.flag === 'regulatory')).toMatchObject({ finding: 'unknown', documentIndex: 0 });
+  expect(conditionalUnknown.gaps).toEqual(expect.arrayContaining([expect.stringMatching(/^regulatory:/)]));
+  expect(riskForModel(conditionalUnknown)).toMatchObject({ decisionReadiness: 'reviewed-uncertainty', materialRisks: [] });
+  const unsupportedUnknown = validateRiskAssessment(position, filing, { ...answer, checks: answer.checks.map(check =>
+    check.flag === 'regulatory' ? { ...check, finding: 'unknown', documentIndex: null, quote: '',
+      reason: 'Ein aktueller konkreter Verstoß kann noch nicht beurteilt werden.' } : check) });
+  expect(riskForModel(unsupportedUnknown).decisionReadiness).toBeUndefined();
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-mcd-upgrade-'));
+  try {
+    const oldFingerprint = createHash('sha256').update(JSON.stringify({ policy: 'asset-type-primary-review-v5',
+      isin: position.isin, type: position.type, documents: filing.documents.map(doc => [doc.source.url, doc.hash, 0])
+        .sort((a, b) => String(a[0]).localeCompare(String(b[0]))) })).digest('hex');
+    const legacy = { ...reviewed, fingerprint: oldFingerprint, metrics: reviewed.metrics.filter(metric => metric.name !== 'debt-maturities'),
+      checks: reviewed.checks.map(check => check.flag === 'regulatory' ? { ...check, finding: 'risk' as const, documentIndex: 0,
+        quote: answer.checks[4].quote } : check), gaps: [...reviewed.gaps, 'debt-maturities: missing'] };
+    const file = path.join(folder, 'assessment.json');
+    new PrimaryRiskAssessmentCache(file).set(legacy);
+    const migrated = new PrimaryRiskAssessmentCache(file).get(position, filing);
+    expect(migrated?.fingerprint).toBe(riskFingerprint(position, filing));
+    expect(migrated?.checks.find(check => check.flag === 'regulatory')?.finding).toBe('no-risk');
+    expect(migrated?.metrics.find(metric => metric.name === 'debt-maturities')?.value).toBe(3201);
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+  expect(riskForModel({ ...reviewed, gaps: [...reviewed.gaps, 'cash: missing'] }).decisionReadiness).toBeUndefined();
+  const noSchedule = validateRiskAssessment(position, { ...filing, documents: [quarter, { ...annual, excerpt: 'Available cash and borrowing capacity should meet foreseeable requirements.' }] }, answer);
+  expect(noSchedule.gaps).toEqual(expect.arrayContaining([expect.stringMatching(/^debt-maturities:/)]));
+  expect(riskForModel(noSchedule).decisionReadiness).toBeUndefined();
+  const currentEvent = validateRiskAssessment(position, { ...filing, documents: [{ ...quarter, excerpt: quarter.excerpt + ' A regulator imposed a material sanction.' }, annual] },
+    { ...answer, checks: answer.checks.map(check => check.flag === 'regulatory' ? { ...check, quote: 'A regulator imposed a material sanction.', reason: 'A current material regulatory sanction.' } : check) });
+  expect(currentEvent.checks.find(check => check.flag === 'regulatory')?.finding).toBe('risk');
+  expect(riskForModel(currentEvent).decisionReadiness).toBeUndefined();
+});
+
+it('uses Novo Nordisks current borrowing classification and explicit liquidity outlook', () => {
+  const novo = { ...position, id: 52, name: 'Novo Nordisk', isin: 'DK0062498333', symbol: 'NOVO-B.CO' };
+  const quarter = { ...document, period: '2026-06-30', source: { title: 'SEC 6-K financial report 2026-06-30',
+    url: 'https://www.sec.gov/Archives/edgar/data/353278/000035327826000023/caq22026.htm' },
+  excerpt: 'Net profit 20,989 DKK million. Operating margin 34.5%. Borrowings, non-current (121,794) (118,941) Borrowings, current (18,333) (12,017) Add-back of lease liabilities 8,622 8,572 Cash at bank 44,482 26,464.' };
+  const annual = { ...document, period: '2025-12-31', source: { title: 'SEC 20-F 2025-12-31',
+    url: 'https://www.sec.gov/Archives/edgar/data/353278/000035327826000012/nvo-20251231.htm' },
+  excerpt: 'Novo Nordisk believes its financial resources are sufficient to meet its requirements for at least the next 12 months.' };
+  const documents: RiskDocumentSet = { documents: [quarter, annual], discoveryChecked: true, gaps: [] };
+  const answer = { checks: [
+    { flag: 'loss-making', finding: 'no-risk', reason: 'Positive result.', documentIndex: 0, quote: 'Net profit 20,989 DKK million.' },
+    { flag: 'low-margin', finding: 'no-risk', reason: 'Positive margin.', documentIndex: 0, quote: 'Operating margin 34.5%.' },
+    { flag: 'financing', finding: 'unknown', reason: 'Cash and borrowings need review.', documentIndex: null, quote: '' },
+    { flag: 'going-concern', finding: 'unknown', reason: 'Keine ausdrückliche Beurteilung.', documentIndex: null, quote: '' },
+    { flag: 'regulatory', finding: 'unknown', reason: 'Regulatorische Exposition bleibt; bedingte Warnungen belegen keinen eingetretenen Schaden.', documentIndex: null, quote: '' },
+  ], metrics: [
+    { name: 'net-income', value: 20989, unit: 'Mio. DKK', period: 'Q2 2026', documentIndex: 0, quote: 'Net profit 20,989 DKK million.' },
+    { name: 'operating-margin', value: 34.5, unit: '%', period: 'Q2 2026', documentIndex: 0, quote: 'Operating margin 34.5%.' },
+    { name: 'cash', value: 44482, unit: 'Mio. DKK', period: '2026-06-30', documentIndex: 0, quote: 'Cash at bank 44,482' },
+  ] };
+  const reviewed = validateRiskAssessment(novo, documents, answer);
+  expect(reviewed.checks.find(check => check.flag === 'financing')).toMatchObject({ finding: 'no-risk', documentIndex: 1 });
+  expect(reviewed.metrics.find(metric => metric.name === 'debt-maturities')).toMatchObject({ value: 18333, unit: 'Mio. DKK', period: 'Stichtag 2026-06-30; kurzfristige Kreditverbindlichkeiten' });
+  expect(reviewed.gaps).not.toEqual(expect.arrayContaining([expect.stringMatching(/^debt-maturities:|^financing:/)]));
+  expect(riskForModel(reviewed).decisionReadiness).toBe('reviewed-uncertainty');
+  expect(riskForModel({ ...reviewed, gaps: [...reviewed.gaps, 'cash: missing'] }).decisionReadiness).toBeUndefined();
+  expect(riskForModel({ ...reviewed, checks: reviewed.checks.map(check => check.flag === 'regulatory'
+    ? { ...check, finding: 'risk' as const } : check) }).decisionReadiness).toBeUndefined();
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-novo-upgrade-'));
+  try {
+    const file = path.join(folder, 'assessment.json');
+    const legacy = { ...reviewed, checks: reviewed.checks.map(check => check.flag === 'financing'
+      ? { ...check, finding: 'unknown' as const, documentIndex: null, quote: '' } : check),
+      metrics: reviewed.metrics.filter(metric => metric.name !== 'debt-maturities'),
+      gaps: [...reviewed.gaps, 'financing: offen', 'debt-maturities: offen',
+        'Primärdokument konnte nicht aktuell geladen werden: https://www.sec.gov/Archives/edgar/data/353278/000117184326006813/f6k_102626.htm'] };
+    new PrimaryRiskAssessmentCache(file).set(legacy);
+    const refreshed = new PrimaryRiskAssessmentCache(file).get(novo, documents);
+    expect(refreshed?.checks.find(check => check.flag === 'financing')?.finding).toBe('no-risk');
+    expect(refreshed?.metrics.find(metric => metric.name === 'debt-maturities')?.value).toBe(18333);
+    expect(refreshed?.gaps).toEqual(reviewed.gaps);
+    expect(riskForModel(refreshed!).decisionReadiness).toBe('reviewed-uncertainty');
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+  const noOutlook = validateRiskAssessment(novo, { ...documents, documents: [quarter, { ...annual, excerpt: 'Financial risks are disclosed.' }] }, answer);
+  expect(noOutlook.checks.find(check => check.flag === 'financing')?.finding).toBe('unknown');
 });
 
 it('reads parenthesized losses as negative figures in filing evidence', () => {
@@ -105,6 +214,52 @@ it('requires relevant exact document quotes for each ETF check and reuses the sa
     expect(new PrimaryRiskAssessmentCache(file).get(etf, etfSet)?.status).toBe('assessed');
     expect(new PrimaryRiskAssessmentCache(file).get({ ...etf, type: 'Fund' }, etfSet)).toBeNull();
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
+it('records QDVE sector concentration and secondary-market access from its current issuer documents', () => {
+  const etf = { id: 64, name: 'S&P 500 Information Technology', isin: 'IE00B3WJKG14', symbol: 'QDVE.DE', type: 'ETF' } as AnalysisPosition;
+  const product = { ...document, period: '2026-10-23', source: { title: 'iShares QDVE',
+    url: 'https://www.ishares.com/de/privatanleger/de/produkte/280510/ishares-sp-500-information-technology-sector-ucits-etf' },
+  excerpt: 'ISIN IE00B3WJKG14. Das Anlagerisiko ist auf bestimmte Sektoren, Länder, Währungen oder Unternehmen konzentriert. Portfolioallokation. Halbleiter 40,07. Anzahl der Positionen 75.' };
+  const kid = { ...document, period: '2026-09-03', source: { title: 'iShares KID',
+    url: 'https://www.ishares.com/ch/professionals/en/literature/kiid/eu_priips-ishares-sp-500-information-technology-sector-ucits-etf-usd-acc-ch-ie00b3wjkg14-en.pdf?siteEntryPassthrough=true&switchLocale=y' },
+  excerpt: 'ISIN: IE00B3WJKG14. The Manager is authorised in Ireland and regulated by the Central Bank of Ireland. The Fund tracks the S&P 500 Capped 35/20 Information Technology Index. Management fees and other administrative or operating costs 0.15% of the value of your investment per year. Transaction costs 0.00%. Performance fees There is no performance fee for this product. The Fund may also engage in short-term secured lending of its investments to certain eligible third parties. The investment manager may use financial derivative instruments. Investors who are not authorised participants can generally only buy or sell the shares on the secondary market (e.g. via a broker on a stock exchange) at the then prevailing market price. The prevailing market price at which the shares trade on the secondary market may deviate from the value of the Shares.' };
+  const sourceSet: RiskDocumentSet = { documents: [product, kid], discoveryChecked: true, gaps: [] };
+  const response = { checks: riskChecksFor('ETF').map(flag => ({ flag, finding: 'unknown', reason: 'Kein überprüfbarer Befund mit Textstelle.', documentIndex: null as number | null, quote: '' })), metrics: [] as unknown[] };
+  const record = validateRiskAssessment(etf, sourceSet, response);
+  expect(record.checks.find(check => check.flag === 'concentration')).toMatchObject({ finding: 'risk', documentIndex: 0 });
+  expect(record.checks.find(check => check.flag === 'costs')).toMatchObject({ finding: 'no-risk', documentIndex: 1 });
+  expect(record.checks.find(check => check.flag === 'liquidity')).toMatchObject({ finding: 'risk', documentIndex: 1 });
+  expect(record.checks.find(check => check.flag === 'structure')).toMatchObject({ finding: 'risk', documentIndex: 1 });
+  expect(record.checks.find(check => check.flag === 'regulatory')).toMatchObject({ finding: 'no-risk', documentIndex: 1 });
+  expect(record.gaps.some(gap => /^(?:costs|concentration|liquidity|structure|regulatory):/.test(gap))).toBe(false);
+  const invalidQuotes = validateRiskAssessment(etf, sourceSet, { checks: riskChecksFor('ETF').map(flag => ({
+    flag, finding: 'no-risk', reason: 'Unbelegte Aussage.', documentIndex: 0, quote: 'Diese Textstelle existiert nicht.',
+  })), metrics: [] });
+  expect(invalidQuotes.checks.find(check => check.flag === 'costs')?.finding).toBe('no-risk');
+  expect(invalidQuotes.checks.find(check => check.flag === 'concentration')?.finding).toBe('risk');
+  expect(invalidQuotes.checks.find(check => check.flag === 'liquidity')?.finding).toBe('risk');
+  expect(invalidQuotes.checks.find(check => check.flag === 'structure')?.finding).toBe('risk');
+  expect(invalidQuotes.checks.find(check => check.flag === 'regulatory')?.finding).toBe('no-risk');
+  const kidOnly = validateRiskAssessment(etf, { ...sourceSet, documents: [kid] }, response);
+  expect(kidOnly.checks.find(check => check.flag === 'concentration')).toMatchObject({ finding: 'risk', documentIndex: 0 });
+  expect(kidOnly.checks.find(check => check.flag === 'regulatory')).toMatchObject({ finding: 'no-risk', documentIndex: 0 });
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-qdve-upgrade-'));
+  try {
+    const file = path.join(folder, 'assessment.json');
+    new PrimaryRiskAssessmentCache(file).set({ ...record, checks: record.checks.map(check => ['costs', 'concentration', 'liquidity', 'structure', 'regulatory'].includes(check.flag)
+      ? { ...check, finding: 'unknown' as const, documentIndex: null, quote: '' } : check),
+    gaps: [...record.gaps, 'costs: offen', 'concentration: offen', 'liquidity: offen', 'structure: offen', 'regulatory: offen',
+      'Primärdokument konnte nicht aktuell geladen werden: https://www.ishares.com/ch/professionals/en/literature/kiid/eu_priips-ishares-sp-500-information-technology-sector-ucits-etf-usd-acc-ch-ie00b3wjkg14-en.pdf'] });
+    const refreshed = new PrimaryRiskAssessmentCache(file).get(etf, sourceSet);
+    expect(refreshed?.checks.find(check => check.flag === 'concentration')?.finding).toBe('risk');
+    expect(refreshed?.checks.find(check => check.flag === 'costs')?.finding).toBe('no-risk');
+    expect(refreshed?.checks.find(check => check.flag === 'liquidity')?.finding).toBe('risk');
+    expect(refreshed?.checks.find(check => check.flag === 'structure')?.finding).toBe('risk');
+    expect(refreshed?.checks.find(check => check.flag === 'regulatory')?.finding).toBe('no-risk');
+    expect(refreshed?.gaps).toEqual(record.gaps);
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+  expect(validateRiskAssessment({ ...etf, isin: 'IE00OTHER' }, sourceSet, response).checks.find(check => check.flag === 'concentration')?.finding).toBe('unknown');
 });
 
 it('uses insurance capital and underwriting evidence for Munich Re instead of an operating margin', () => {

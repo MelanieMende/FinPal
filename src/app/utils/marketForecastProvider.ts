@@ -4,6 +4,7 @@ import type { AnalysisPosition } from './portfolioAnalysis';
 import type { ReturnForecast } from './portfolioForecastOptimization';
 import { validReturnForecast } from './portfolioForecastOptimization';
 import { etfHistoricalForecast } from './etfHistoricalForecast';
+import { treasuryBondScenario, type TreasuryCurveDay } from './treasuryBondForecast';
 
 type YahooSummary = {
   financialData?: { targetMeanPrice?: number; targetLowPrice?: number; targetHighPrice?: number; currentPrice?: number; numberOfAnalystOpinions?: number };
@@ -24,8 +25,8 @@ export type MarketForecastProvider = (position: AnalysisPosition, options?: Mark
 type ConsensusCache = { targetPrice: number; targetLowPrice?: number; targetHighPrice?: number; analystCount: number; referencePrice: number; currency: string; referenceTime: number; fetchedAt: number; targetDate: string };
 type VolatilityCache = NonNullable<ReturnType<typeof annualizedHistoricalVolatility>> & { fetchedAt: number; refreshAfter: number; riskHistory?: ReturnForecast['riskHistory'] };
 type CryptoModelCache = NonNullable<ReturnType<typeof cryptoHistoricalForecast>> & { currency: string; fetchedAt: number; refreshAfter: number; targetDate: string; riskHistory?: ReturnForecast['riskHistory'] };
-type CacheEntry = { consensus?: ConsensusCache; volatility?: VolatilityCache; crypto?: CryptoModelCache; etf?: ReturnForecast; evidenceVersion?: 2 };
-type ProviderConfig = { cacheFile?: string; now?: () => number };
+type CacheEntry = { consensus?: ConsensusCache; volatility?: VolatilityCache; crypto?: CryptoModelCache; etf?: ReturnForecast; bond?: ReturnForecast; evidenceVersion?: 2 };
+type ProviderConfig = { cacheFile?: string; now?: () => number; requestFetch?: typeof fetch };
 
 const day = 86400000;
 export const MARKET_FORECAST_CONSENSUS_TTL_MS = day;
@@ -165,13 +166,93 @@ async function euroRiskHistory(client: YahooForecastClient, symbol: string, quot
   return closes.length >= 181 ? { currency: 'EUR', closes, sources } : undefined;
 }
 
+const treasuryCurveUrl = (year: number) => `https://home.treasury.gov/resource-center/data-chart-center/interest-rates/pages/xml?data=daily_treasury_yield_curve&field_tdr_date_value=${year}`;
+function treasuryCurveRows(xml: string): Array<Omit<TreasuryCurveDay, 'usdEur'>> {
+  const field = (entry: string, name: string) => new RegExp(`<d:${name}(?:\\s[^>]*)?>([^<]*)<\\/d:${name}>`, 'i').exec(entry)?.[1]?.trim();
+  return [...xml.matchAll(/<entry(?:\s[^>]*)?>([\s\S]*?)<\/entry>/gi)].flatMap((match) => {
+    const date = field(match[1], 'NEW_DATE')?.slice(0, 10) ?? '';
+    const tenYear = Number(field(match[1], 'BC_10YEAR'));
+    const twentyYear = Number(field(match[1], 'BC_20YEAR'));
+    return /^\d{4}-\d{2}-\d{2}$/.test(date) && tenYear > 0 && twentyYear > 0
+      ? [{ date, tenYear, twentyYear }] : [];
+  });
+}
+
 /** Builds a complete forecast and persistently reuses consensus and volatility until their respective refresh times. */
 export function createYahooMarketForecastProvider(client: YahooForecastClient, config: ProviderConfig | (() => number) = {}): MarketForecastProvider {
   const now = typeof config === 'function' ? config : config.now ?? Date.now;
+  const requestFetch = typeof config === 'function' ? undefined : config.requestFetch;
   const cache = new MarketForecastCache(typeof config === 'function' ? undefined : config.cacheFile);
   return async (position, options = {}) => {
     const rawSymbol = position.symbol.trim().toUpperCase();
     const symbol = position.type === 'Crypto' && rawSymbol && !rawSymbol.includes('-') ? `${rawSymbol}-EUR` : rawSymbol;
+    if (position.type === 'Bond' && position.isin.trim().toUpperCase() === 'US912810SQ22') {
+      const fetchedAt = now(), quote = position.quote, cached = cache.get('bond:US912810SQ22').bond;
+      const quoteTime = Date.parse(quote?.quoteAsOf ?? '');
+      if (quote?.source !== 'boerse-frankfurt' || quote.exchange !== 'XFRA' || quote.tradedInPercent !== true
+        || quote.originalCurrency !== 'USD' || !positive(quote.originalPrice)
+        || position.bondHolding?.source !== 'user-confirmed' || position.bondHolding.currency !== 'USD'
+        || position.bondHolding.quantityConflict || !Number.isFinite(quoteTime) || quoteTime > fetchedAt
+        || fetchedAt - quoteTime > 7 * day) return null;
+      const reusable = (value: ReturnForecast | undefined): value is ReturnForecast => !!value
+        && value.model?.kind === 'bond-curve-v1' && value.referencePrice === quote.originalPrice
+        && value.referencePriceAsOf === quote.quoteAsOf && validReturnForecast(value, fetchedAt)
+        && fetchedAt - Date.parse(value.publishedAt) <= MARKET_FORECAST_FALLBACK_MAX_AGE_MS;
+      if (!options.forceRefresh && reusable(cached) && fetchedAt - Date.parse(cached.publishedAt) < day)
+        return { ...cached, dataStatus: 'fresh-cache', dataAgeHours: (fetchedAt - Date.parse(cached.publishedAt)) / 3600000 };
+      try {
+        const loadCurve = requestFetch ?? globalThis.fetch;
+        if (!loadCurve) throw new Error('Treasury fetch unavailable');
+        const years = [new Date(fetchedAt).getUTCFullYear() - 1, new Date(fetchedAt).getUTCFullYear()];
+        const pages = await Promise.all(years.map(async year => {
+          const url = treasuryCurveUrl(year);
+          const controller = new AbortController();
+          const timeout = setTimeout(() => controller.abort(), 12000);
+          try {
+            const response = await loadCurve(url, { headers: { 'User-Agent': 'FinPal Desktop/1.0 (bond forecast)' }, signal: controller.signal });
+            if (!response.ok || new URL(response.url || url).hostname !== 'home.treasury.gov'
+              || Number(response.headers.get('content-length')) > 3_000_000) throw new Error('Treasury curve unavailable');
+            const xml = await response.text();
+            if (xml.length > 3_000_000) throw new Error('Treasury curve too large');
+            return treasuryCurveRows(xml);
+          } finally { clearTimeout(timeout); }
+        }));
+        const fxChart = await client.chart('USDEUR=X', { period1: new Date(fetchedAt - 430 * day),
+          period2: new Date(fetchedAt), interval: '1d', events: 'history', return: 'array' });
+        const fx = new Map(fxChart.quotes.filter(row => positive(row.close) && Number.isFinite(instant(row.date)))
+          .map(row => [new Date(instant(row.date)).toISOString().slice(0, 10), row.close!]));
+        const rows = pages.flat().map(row => ({ ...row, usdEur: fx.get(row.date) ?? NaN }));
+        const scenario = treasuryBondScenario(quote.originalPrice, new Date(quoteTime).toISOString().slice(0, 10), rows);
+        if (!scenario) throw new Error('Incomplete bond scenario');
+        const curveSources = years.map(year => ({ title: `U.S. Treasury daily par yield curve ${year}`,
+          url: treasuryCurveUrl(year) }));
+        const fxSource = { title: 'Yahoo Finance USD/EUR daily history', url: 'https://finance.yahoo.com/quote/USDEUR%3DX/history/' };
+        const quoteSource = { title: `Börse Frankfurt clean price for ${position.isin}`,
+          url: `https://api.boerse-frankfurt.de/v1/data/price_information/single?isin=${position.isin}` };
+        const termSource = { title: 'U.S. Treasury offering announcement, CUSIP 912810SQ2',
+          url: 'https://www.treasurydirect.gov/instit/annceresult/press/preanre/2020/A_20201015_1.pdf' };
+        const forecast: ReturnForecast = { key: String(position.id), publisher: 'FinPal Treasury-Zinskurven-Szenario',
+          publishedAt: new Date(fetchedAt).toISOString(), targetDate: new Date(quoteTime + 365 * day).toISOString(), horizonMonths: 12,
+          referencePrice: quote.originalPrice, referencePriceAsOf: quote.quoteAsOf, targetPrice: scenario.targetClean,
+          expectedTotalReturnPercent: scenario.expectedTotalReturnPercent, currency: 'USD',
+          annualVolatilityPercent: scenario.annualVolatilityPercent, volatilityAsOf: scenario.volatilityAsOf,
+          volatilityLookbackDays: scenario.volatilityLookbackDays, scenarioReturns: scenario.scenarioReturns,
+          uncertainty: { method: 'bond-curve-scenario', historyYears: scenario.historyYears },
+          model: { kind: 'bond-curve-v1', observations: scenario.riskHistory.length, couponPercent: 1.125,
+            maturityDate: '2040-08-15', priceBasis: 'clean', referenceDirty: scenario.referenceDirty },
+          riskHistory: { currency: 'EUR', closes: scenario.riskHistory, sources: [...curveSources, fxSource, quoteSource] },
+          dataStatus: 'live', dataAgeHours: 0,
+          assumptions: `Lokales Szenario für CUSIP 912810SQ2: aktueller Frankfurt-Clean-Price ${quote.originalPrice} % am ${quote.quoteAsOf}; Kupon 1,125 % mit Zahlungen am 15.02. und 15.08. bis 15.08.2040. Dirty-Einstieg = Clean Price plus modellierte Stückzinsen. 12-Monats-Basis: unveränderte Treasury-Parzinskurve, ein Jahr Roll-down und konstanter, aus dem aktuellen Preis abgeleiteter Abstand zur Kurve; alle Kupons zählen zur Gesamtrendite. Konstanter USD/EUR-Kurs nur im Basisszenario. 2.000 deterministische 20-Tage-Blockpfade aus gemeinsamen historischen Zinskurven- und USD/EUR-Änderungen für P10/Median/P90; keine kalibrierten Wahrscheinlichkeiten. Die EUR-Risikohistorie sind theoretische Tageswerte mit Kupon-Cashflows, keine gehandelten Kurse dieser ISIN. Tagesvolumen, Spread, Steuern und Ausführungskosten sind nicht enthalten.`,
+          forecastSources: [termSource, quoteSource, ...curveSources], volatilitySources: [...curveSources, fxSource] };
+        if (!validReturnForecast(forecast, fetchedAt)) throw new Error('Invalid bond scenario');
+        try { cache.set('bond:US912810SQ22', { bond: forecast }); } catch { /* Valid result survives cache failure. */ }
+        return forecast;
+      } catch {
+        if (reusable(cached)) return { ...cached, dataStatus: 'stale-fallback',
+          dataAgeHours: (fetchedAt - Date.parse(cached.publishedAt)) / 3600000 };
+        return null;
+      }
+    }
     if (position.type === 'ETF' && symbol) {
       const fetchedAt = now(), cacheKey = `etf:${symbol}`, cached = cache.get(cacheKey);
       const currency = position.quote?.originalCurrency ?? position.currency;

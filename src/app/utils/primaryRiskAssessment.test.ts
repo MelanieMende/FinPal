@@ -75,6 +75,26 @@ it('uses McDonalds filed debt schedule and keeps a conditional regulatory risk d
   expect(conditionalUnknown.checks.find(check => check.flag === 'regulatory')).toMatchObject({ finding: 'unknown', documentIndex: 0 });
   expect(conditionalUnknown.gaps).toEqual(expect.arrayContaining([expect.stringMatching(/^regulatory:/)]));
   expect(riskForModel(conditionalUnknown)).toMatchObject({ decisionReadiness: 'reviewed-uncertainty', materialRisks: [] });
+  const displayedOpen = validateRiskAssessment(position, filing, { ...answer, checks: answer.checks.map(check =>
+    check.flag === 'going-concern' ? { ...check, reason: 'Kein überprüfbarer Befund mit Textstelle.' }
+      : check.flag === 'regulatory' ? { ...check, finding: 'unknown', documentIndex: null, quote: '',
+        reason: 'Der aktuelle 10-Q beschreibt mögliche Einschränkungen von Kapitalflüssen und höhere Finanzierungskosten. Ein konkreter eingetretener Schaden ist nicht belegt; die Exposition bleibt offen.' } : check) });
+  expect(displayedOpen.checks.find(check => check.flag === 'going-concern')?.reason).toContain('Aktuellen 10-Q und Jahresbericht geprüft');
+  expect(displayedOpen.checks.find(check => check.flag === 'regulatory')).toMatchObject({ finding: 'unknown', documentIndex: 0 });
+  expect(riskForModel(displayedOpen)).toMatchObject({ decisionReadiness: 'reviewed-uncertainty', materialRisks: [] });
+  expect(riskForModel({ ...displayedOpen, gaps: [...displayedOpen.gaps, 'cash: fehlt'] }).decisionReadiness).toBeUndefined();
+  const missingAnnual = validateRiskAssessment(position, { ...filing, documents: [quarter] }, { ...answer, checks: answer.checks.map(check =>
+    check.flag === 'going-concern' ? { ...check, reason: 'Kein überprüfbarer Befund mit Textstelle.' } : check) });
+  expect(riskForModel(missingAnnual).decisionReadiness).toBeUndefined();
+  const continuityWarning = validateRiskAssessment(position, { ...filing, documents: [
+    { ...quarter, excerpt: `${quarter.excerpt} There is substantial doubt about our ability to continue as a going concern.` }, annual,
+  ] }, { ...answer, checks: answer.checks.map(check => check.flag === 'going-concern'
+    ? { ...check, reason: 'Kein überprüfbarer Befund mit Textstelle.' } : check) });
+  expect(riskForModel(continuityWarning).decisionReadiness).toBeUndefined();
+  const actualRegulatoryDamage = validateRiskAssessment(position, filing, { ...answer, checks: answer.checks.map(check =>
+    check.flag === 'regulatory' ? { ...check, finding: 'unknown', documentIndex: null, quote: '',
+      reason: 'Kapitalflüsse sind betroffen; ein eingetretener Schaden wurde festgestellt.' } : check) });
+  expect(riskForModel(actualRegulatoryDamage).decisionReadiness).toBeUndefined();
   const unsupportedUnknown = validateRiskAssessment(position, filing, { ...answer, checks: answer.checks.map(check =>
     check.flag === 'regulatory' ? { ...check, finding: 'unknown', documentIndex: null, quote: '',
       reason: 'Ein aktueller konkreter Verstoß kann noch nicht beurteilt werden.' } : check) });
@@ -260,6 +280,32 @@ it('records QDVE sector concentration and secondary-market access from its curre
     expect(refreshed?.gaps).toEqual(record.gaps);
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
   expect(validateRiskAssessment({ ...etf, isin: 'IE00OTHER' }, sourceSet, response).checks.find(check => check.flag === 'concentration')?.finding).toBe('unknown');
+});
+
+it('uses VGWD KID costs and supervision plus diversified factsheet holdings', () => {
+  const etf = { id: 72, name: 'FTSE All-World High Dividend Yield USD', isin: 'IE00B8GKDB10', symbol: 'VGWD.DE', type: 'ETF' } as AnalysisPosition;
+  const factsheet = { ...document, period: '2026-09-30', source: { title: 'Vanguard Factsheet',
+    url: 'https://fund-docs.vanguard.com/FTSE_All-World_High_Dividend_Yield_UCITS_ETF_USD_Distributing_9506_NETH_INT_EN.pdf' },
+  excerpt: 'IE00B8GKDB10. Data as at 30 September 2026. Top 10 approximately equals 12.9% of net assets. Number of stocks 2,440. Weighted exposure Financials 29.8%.' };
+  const kid = { ...document, period: '2026-09-29', source: { title: 'Vanguard KID',
+    url: 'https://fund-docs.vanguard.com/ie00b8gkdb10_priipskid_en.pdf' },
+  excerpt: 'Product: Vanguard FTSE All-World High Dividend Yield UCITS ETF (the "Fund") - (USD) Distributing Shares. IE00B8GKDB10. This Key Information Document is dated 29/09/2026. The Fund is authorised in Ireland and has been registered for sale in other EEA Member States. VGIL is authorised in EEA Member States and regulated by the Central Bank. The Fund may engage in short term secured lending of its investments to certain eligible third parties. The Fund may use derivatives in order to reduce risk or cost. Management fees and other administrative or operating costs 0.29% of the value of your investment p.a. Transaction costs 0.04% of the value of your investment per year. Performance fees There is no performance fee for this Fund.' };
+  const sourceSet: RiskDocumentSet = { documents: [factsheet, kid], discoveryChecked: true, gaps: [] };
+  const result = validateRiskAssessment(etf, sourceSet, null);
+  expect(result.checks.find(check => check.flag === 'identity')).toMatchObject({ finding: 'no-risk', documentIndex: 1 });
+  expect(result.checks.find(check => check.flag === 'costs')).toMatchObject({ finding: 'no-risk', documentIndex: 1 });
+  expect(result.checks.find(check => check.flag === 'concentration')).toMatchObject({ finding: 'no-risk', documentIndex: 0 });
+  expect(result.checks.find(check => check.flag === 'structure')).toMatchObject({ finding: 'risk', documentIndex: 1 });
+  expect(result.checks.find(check => check.flag === 'regulatory')).toMatchObject({ finding: 'no-risk', documentIndex: 1 });
+  expect(result.gaps.some(gap => /^(?:identity|costs|concentration|structure|regulatory):/.test(gap))).toBe(false);
+  const concentrated = validateRiskAssessment(etf, { ...sourceSet, documents: [{ ...factsheet,
+    excerpt: factsheet.excerpt.replace('12.9%', '35.0%') }, kid] }, null);
+  expect(concentrated.checks.find(check => check.flag === 'concentration')?.finding).toBe('unknown');
+  const withoutKid = validateRiskAssessment(etf, { ...sourceSet, documents: [factsheet] }, null);
+  expect(withoutKid.checks.find(check => check.flag === 'identity')?.finding).toBe('unknown');
+  expect(withoutKid.checks.find(check => check.flag === 'costs')?.finding).toBe('unknown');
+  expect(withoutKid.checks.find(check => check.flag === 'structure')?.finding).toBe('unknown');
+  expect(withoutKid.checks.find(check => check.flag === 'regulatory')?.finding).toBe('unknown');
 });
 
 it('uses insurance capital and underwriting evidence for Munich Re instead of an operating margin', () => {
@@ -460,7 +506,7 @@ it('keeps Mondelez legal uncertainty visible without blocking solely on a review
   const mondelez = { ...position, id: 17, name: 'Mondelez', isin: 'US6092071058', symbol: 'MDLZ' };
   const quarter = { ...document, period: '2026-06-30', source: { title: 'SEC 10-Q 2026-06-30',
     url: 'https://www.sec.gov/Archives/edgar/data/1103982/000162828026050179/mdlz-20260630.htm' },
-    excerpt: 'Net earnings attributable to Mondelez International $ 1,548. Operating income margin was 20.8 percent. Cash and cash equivalents $ 1,716. Current portion of long-term debt maturities $ 2,663. The ultimate outcome of these legal proceedings and regulatory and governmental matters, individually and in the aggregate, will not materially harm our financial position, results of operations or cash flows. However, unfavorable resolutions could involve substantial fines.' };
+    excerpt: 'Net earnings attributable to Mondelez International $ 1,548. Operating income margin was 20.8 percent. Cash and cash equivalents $ 1,716. Current portion of long-term debt 2,663. The ultimate outcome of these legal proceedings and regulatory and governmental matters, individually and in the aggregate, will not materially harm our financial position, results of operations or cash flows. However, unfavorable resolutions could involve substantial fines.' };
   const annual = { ...document, period: '2025-12-31', source: { title: 'SEC 10-K 2025-12-31',
     url: 'https://www.sec.gov/Archives/edgar/data/1103982/000162828026012345/mdlz-20251231.htm' } };
   const documents: RiskDocumentSet = { documents: [quarter, annual], discoveryChecked: true, gaps: [] };
@@ -482,6 +528,50 @@ it('keeps Mondelez legal uncertainty visible without blocking solely on a review
   expect(reviewed.checks.find(check => check.flag === 'regulatory')?.reason).toContain('Sanktionen bleiben möglich');
   expect(reviewed.status).toBe('unknown');
   expect(riskForModel(reviewed)).toMatchObject({ decisionReadiness: 'reviewed-uncertainty', materialRisks: [] });
+  const incomplete = validateRiskAssessment(mondelez, documents, { ...answer,
+    checks: answer.checks.map(check => check.flag === 'regulatory'
+      ? { ...check, finding: 'unknown', reason: 'Verfahren und regulatorische Untersuchungen bleiben offen.', documentIndex: null, quote: '' } : check),
+    metrics: answer.metrics.filter(metric => metric.name !== 'debt-maturities') });
+  expect(incomplete.checks.find(check => check.flag === 'regulatory')).toMatchObject({ finding: 'no-risk', documentIndex: 0 });
+  expect(incomplete.metrics.find(metric => metric.name === 'debt-maturities')).toMatchObject({ value: 2663, period: expect.stringContaining('2026-06-30') });
+  expect(riskForModel(incomplete)).toMatchObject({ decisionReadiness: 'reviewed-uncertainty', materialRisks: [] });
+  const q3Text = (text: string) => text.replace(/1,548/g, '1,305').replace(/20\.8/g, '17.6')
+    .replace(/1,716/g, '1,628').replace(/2,663/g, '1,739');
+  const q3 = { ...quarter, period: '2026-09-30', hash: 'q3-hash', excerpt: q3Text(quarter.excerpt),
+    source: { title: 'SEC 10-Q 2026-09-30', url: 'https://www.sec.gov/Archives/edgar/data/1103982/000162828026068256/mdlz-20260930.htm' } };
+  const q3Set = { ...documents, documents: [quarter, q3, annual] };
+  const q3Answer = { checks: answer.checks.map(check => check.flag === 'regulatory'
+    ? { ...check, finding: 'unknown', reason: 'Verfahren und mögliche Sanktionen bleiben offen.', documentIndex: null, quote: '' }
+    : { ...check, documentIndex: check.documentIndex === null ? null : 1, quote: q3Text(check.quote) }),
+  metrics: answer.metrics.filter(metric => metric.name !== 'debt-maturities').map(metric => ({ ...metric, documentIndex: 1,
+    value: ({ 'net-income': 1305, 'operating-margin': 17.6, cash: 1628 } as Record<string, number>)[metric.name],
+    period: 'Q3 2026', quote: q3Text(metric.quote) })) };
+  const q3Reviewed = validateRiskAssessment(mondelez, q3Set, q3Answer);
+  expect(q3Reviewed.checks.find(check => check.flag === 'regulatory')).toMatchObject({ finding: 'no-risk', documentIndex: 1,
+    reason: expect.stringContaining('Stand 2026-09-30') });
+  expect(q3Reviewed.metrics.find(metric => metric.name === 'debt-maturities')).toMatchObject({ value: 1739, documentIndex: 1 });
+  expect(riskForModel(q3Reviewed).decisionReadiness).toBe('reviewed-uncertainty');
+  const changedQ3 = { ...q3, excerpt: q3.excerpt.replace('will not materially harm our financial position, results of operations or cash flows', 'may materially harm our financial position') };
+  const changedReview = validateRiskAssessment(mondelez, { ...q3Set, documents: [quarter, changedQ3, annual] }, q3Answer);
+  expect(changedReview.checks.find(check => check.flag === 'regulatory')?.finding).toBe('unknown');
+  expect(riskForModel(changedReview).decisionReadiness).toBeUndefined();
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-mondelez-risk-'));
+  try {
+    const cache = new PrimaryRiskAssessmentCache(path.join(folder, 'risk.json'));
+    const oldQuarter = { ...quarter, excerpt: quarter.excerpt
+      .replace('Current portion of long-term debt 2,663.', '')
+      .replace(/The ultimate outcome of these legal proceedings[\s\S]*?substantial fines\./, 'Regulatory matters remain under review.') };
+    const oldSet = { ...documents, documents: [oldQuarter, annual] };
+    const old = validateRiskAssessment(mondelez, oldSet, { ...answer,
+      checks: answer.checks.map(check => check.flag === 'regulatory'
+        ? { ...check, finding: 'unknown', reason: 'Regulatorische Verfahren bleiben offen.', documentIndex: null, quote: '' } : check),
+      metrics: answer.metrics.filter(metric => metric.name !== 'debt-maturities') });
+    cache.set(old);
+    const repaired = cache.get(mondelez, documents)!;
+    expect(repaired.metrics.find(metric => metric.name === 'debt-maturities')?.value).toBe(2663);
+    expect(repaired.checks.find(check => check.flag === 'regulatory')?.finding).toBe('no-risk');
+    expect(riskForModel(repaired).decisionReadiness).toBe('reviewed-uncertainty');
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
   const noCurrentConclusion = validateRiskAssessment(mondelez, { ...documents, documents: [{ ...quarter,
     excerpt: quarter.excerpt.replace('will not materially harm our financial position, results of operations or cash flows', 'may harm our financial position') }, annual] }, answer);
   expect(noCurrentConclusion.checks.find(check => check.flag === 'regulatory')?.finding).toBe('risk');

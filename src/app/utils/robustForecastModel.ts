@@ -71,17 +71,21 @@ export function estimateEuroCovariance(forecasts: ReturnForecast[]) {
 
 export function conservativeForecast(f: ReturnForecast, current: number) {
   const evidence = f.uncertainty;
-  const raw = evidence?.method === 'historical-bootstrap' && f.scenarioReturns
+  const raw = evidence?.method === 'bond-curve-scenario' && f.model?.kind === 'bond-curve-v1'
+    ? (f.expectedTotalReturnPercent ?? NaN) / 100
+    : evidence?.method === 'historical-bootstrap' && f.scenarioReturns
     ? (f.referencePrice * (1 + f.scenarioReturns.median / 100) / current - 1) : f.targetPrice / current - 1;
   const count = evidence?.method === 'analyst-consensus' ? evidence.analystCount : undefined;
-  const years = evidence?.method === 'historical-bootstrap' ? evidence.historyYears : undefined;
+  const years = evidence?.method === 'historical-bootstrap' || evidence?.method === 'bond-curve-scenario' ? evidence.historyYears : undefined;
   const coverage = count ?? years ?? null;
   // Analyst count is a coverage proxy, NOT a count of statistically independent opinions.
-  const coverageWeight = count ? count / (count + ANALYST_COVERAGE_PRIOR) : evidence?.method === 'historical-bootstrap' ? 1 : .5;
+  const coverageWeight = count ? count / (count + ANALYST_COVERAGE_PRIOR)
+    : evidence?.method === 'historical-bootstrap' || evidence?.method === 'bond-curve-scenario' ? 1 : .5;
   const weight = ROBUST_SIGNAL_WEIGHT * coverageWeight;
   const dispersion = evidence?.method === 'analyst-consensus' && evidence.targetLowPrice && evidence.targetHighPrice
     ? (evidence.targetHighPrice - evidence.targetLowPrice) / (2 * current)
-    : evidence?.method === 'historical-bootstrap' && f.scenarioReturns ? (f.scenarioReturns.p90 - f.scenarioReturns.p10) / 200 : null;
+    : (evidence?.method === 'historical-bootstrap' || evidence?.method === 'bond-curve-scenario') && f.scenarioReturns
+      ? (f.scenarioReturns.p90 - f.scenarioReturns.p10) / 200 : null;
   const sigma = f.annualVolatilityPercent / 100;
   const uncertainty = weight * Math.max(dispersion ?? sigma, sigma / Math.sqrt(Math.max(1, coverage ?? 1)));
   const adjusted = raw * weight;
@@ -132,13 +136,18 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
     const position = request.positions.find(p => String(p.id) === f.key);
     const price = position?.quote?.originalPrice ?? position?.price ?? currentCandidateQuote(f)?.price ?? f.referencePrice;
     if (position && ((position.quote?.originalCurrency ?? position.currency) !== f.currency || price <= 0
-      || position.quote?.tradedInPercent || position.quote?.unitFactor && position.quote.unitFactor !== 1)) return [];
+      || f.model?.kind !== 'bond-curve-v1' && (position.quote?.tradedInPercent
+        || position.quote?.unitFactor && position.quote.unitFactor !== 1))) return [];
     return [conservativeForecast(f, price)];
   });
   const adjusted = [...supplied.values()].map((f): ReturnForecast => {
     const estimate = estimates.find(e => e.key === f.key);
     const quote = currentCandidateQuote(f);
-    return !estimate ? f : { ...f, uncertainty: undefined, model: undefined, targetPrice: (request.positions.find(p => String(p.id) === f.key)?.quote?.originalPrice
+    return !estimate ? f : { ...f,
+      uncertainty: f.model?.kind === 'bond-curve-v1' ? f.uncertainty : undefined,
+      model: f.model?.kind === 'bond-curve-v1' ? f.model : undefined,
+      ...(f.model?.kind === 'bond-curve-v1' ? { expectedTotalReturnPercent: estimate.effectiveReturnPercent } : {}),
+      targetPrice: (request.positions.find(p => String(p.id) === f.key)?.quote?.originalPrice
       ?? request.positions.find(p => String(p.id) === f.key)?.price ?? quote?.price ?? f.referencePrice) * (1 + estimate.effectiveReturnPercent! / 100),
       referencePrice: quote?.price ?? f.referencePrice, referencePriceAsOf: quote?.quoteAsOf ?? f.referencePriceAsOf };
   });
@@ -185,7 +194,7 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
   if ([...supplied.values()].some(f => f.model?.kind === 'etf-history-v1')) {
     plan.assumptions.push('ETF-Historienmodelle verwenden bereinigte Kurse als historischen Renditeproxy mit Ausschüttungs-/Splitbereinigung. Keine veröffentlichte Kursprognose und keine kalibrierten Zukunftswahrscheinlichkeiten; historische Renditen werden einmal zu 75 % gegen null geschrumpft. Künftige Ausschüttungen nicht zusätzlich addieren. Neue ETFs werden anhand ihres belegten EUR-Börsenkurses mit Beständen, Liquidität, Gebühren und Risiken gemeinsam modelliert; auch ein Nullbetrag ist ein berechnetes Ergebnis.');
     plan.assumptions = plan.assumptions.map(text => text.startsWith('Cashrendite =')
-      ? 'Cashrendite = 0 als Vergleichsannahme. ETF-Modelle enthalten historische Ausschüttungsbereinigung als Renditeproxy, keine separate künftige Ausschüttungsprognose. Andere Dividenden, Zinsen, Steuern und Spreads fehlen; kein vollständiges Total-Return-Optimum.' : text);
+      ? 'Cashrendite = 0 als Vergleichsannahme. Anleihemodelle enthalten Kupons und modellierte Stückzinsen; ETF-Modelle historische Ausschüttungsbereinigung als Renditeproxy. Andere Dividenden, Zinsen, Steuern und Spreads fehlen; kein vollständiges Total-Return-Optimum.' : text);
     plan.warnings = plan.warnings.map(text => text.startsWith('Steuern, Spreads, Ausschüttungen')
       ? 'Steuern, Spreads, separate künftige Ausschüttungen und unbekannte externe Vermögenswerte sind nicht im Optimierungsziel enthalten. Historische ETF-Ausschüttungsbereinigung ist ein Renditeproxy.' : text);
   }

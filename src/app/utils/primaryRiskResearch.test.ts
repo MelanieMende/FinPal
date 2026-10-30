@@ -168,6 +168,29 @@ it('loads the dated QDVE KID and current issuer facts for the exact share class'
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });
 
+it('loads the exact VGWD KID alongside its current issuer factsheet', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-vgwd-documents-'));
+  const position = { id: 72, name: 'FTSE All-World High Dividend Yield USD', isin: 'IE00B8GKDB10', symbol: 'VGWD.DE', type: 'ETF' } as AnalysisPosition;
+  const product = '<html>ISIN IE00B8GKDB10. Marktwert Per 27. Okt. 2026. Anzahl Aktien 2.440. Gesamtkostenquote 0,29 %.</html>';
+  const factsheet = 'Vanguard FTSE All-World High Dividend Yield UCITS ETF (USD) Distributing. IE00B8GKDB10. Data as at 30 September 2026. Top 10 approximately equals 12.9% of net assets. Number of stocks 2,440. Weighted exposure Financials 29.8%.';
+  const kid = 'Key Information Document. Product: Vanguard FTSE All-World High Dividend Yield UCITS ETF (the "Fund") - (USD) Distributing Shares. IE00B8GKDB10. This Key Information Document is dated 29/09/2026. The Fund is authorised in Ireland and has been registered for sale in other EEA Member States. VGIL is authorised in EEA Member States and regulated by the Central Bank. The Fund may engage in short term secured lending of its investments to certain eligible third parties. The Fund may use derivatives in order to reduce risk or cost. Management fees and other administrative or operating costs 0.29% of the value of your investment p.a. Transaction costs 0.04% of the value of your investment per year. Performance fees There is no performance fee for this Fund.';
+  const fetcher = jest.fn(async (url: string) => new Response(url.endsWith('_priipskid_en.pdf') ? kid
+    : url.endsWith('_NETH_INT_EN.pdf') ? factsheet : product,
+  { headers: { 'content-type': url.endsWith('.pdf') ? 'application/pdf' : 'text/html' } }));
+  try {
+    const documents = await new PrimaryRiskResearch(path.join(folder, 'documents.json'), fetcher as unknown as typeof fetch,
+      () => Date.parse('2026-10-28T10:00:00Z')).collect(position);
+    expect(documents.gaps).toEqual([]);
+    expect(documents.documents).toHaveLength(3);
+    expect(documents.documents.map(doc => doc.period)).toContain('2026-09-29');
+    expect(documents.documents.find(doc => doc.source.url.endsWith('_priipskid_en.pdf'))?.excerpt).toContain('0.04% of the value');
+    expect(documents.documents.find(doc => doc.source.url.endsWith('_priipskid_en.pdf'))?.excerpt).toContain('(USD) Distributing Shares');
+    expect(documents.documents.find(doc => doc.source.url.endsWith('_priipskid_en.pdf'))?.excerpt).toContain('short term secured lending');
+    expect(documents.documents.find(doc => doc.source.url.endsWith('_NETH_INT_EN.pdf'))?.excerpt).toContain('Top 10 approximately equals');
+    expect(documents.documents.every(doc => doc.identity === position.isin && doc.excerptVersion === 2)).toBe(true);
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
 it('loads Munich Re issuer reports for its German ISIN and reuses their dated excerpts', async () => {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-munich-documents-'));
   const now = Date.parse('2026-10-22T10:00:00Z');
@@ -229,6 +252,72 @@ it('loads Lufthansa interim and annual reports for its verified German ISIN', as
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });
 
+it('loads Rheinmetall half-year and annual issuer reports for its verified ISIN', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-rheinmetall-documents-'));
+  const now = Date.parse('2026-10-28T10:00:00Z');
+  const position = { id: 77, name: 'Rheinmetall', isin: 'DE0007030009', symbol: 'RHM.DE', type: 'Stock' } as AnalysisPosition;
+  const report = 'Rheinmetall AG and Rheinmetall Group. Earnings after taxes 295 EUR million. Operating result margin 15.0 percent. Cash and cash equivalents 255 EUR million. Financial liabilities and debt maturities. Update to the opportunities and risks.';
+  const fetcher = jest.fn(async () => new Response(report, { headers: { 'content-type': 'application/pdf' } }));
+  try {
+    const file = path.join(folder, 'documents.json');
+    const first = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
+    expect(first.discoveryChecked).toBe(true);
+    expect(first.gaps).toEqual([]);
+    expect(first.documents.map(doc => doc.period)).toEqual(['2026-06-30', '2025-12-31']);
+    expect(first.documents.map(doc => doc.source.url)).toEqual(knownResearchSources(position));
+    expect(first.documents[0].excerpt).toContain('Earnings after taxes');
+    expect(first.documents[0].excerpt).toContain('Operating result margin');
+    expect(first.documents.every(doc => doc.excerptVersion === 3)).toBe(true);
+    const second = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
+    expect(second.documents).toHaveLength(2);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    const wrong = await new PrimaryRiskResearch(path.join(folder, 'wrong.json'),
+      jest.fn(async () => new Response(report.replaceAll('Rheinmetall', 'Unrelated'),
+        { headers: { 'content-type': 'application/pdf' } })) as unknown as typeof fetch, () => now).collect(position);
+    expect(wrong.discoveryChecked).toBe(false);
+    expect(wrong.documents).toHaveLength(0);
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
+it('uses a verified Treasury reopening when the original auction PDF is unavailable', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-treasury-bond-'));
+  const position = { id: 90, name: 'US-Staatsanleihen 1,125 % bis 15.08.2040',
+    isin: 'US912810SQ22', symbol: 'A281P1', type: 'Bond' } as AnalysisPosition;
+  const fetcher = jest.fn(async (url: string) => {
+    if (url.endsWith('/R_20200819_3.pdf')) return new Response('', { status: 503 });
+    if (url.endsWith('/A_20201015_1.pdf')) return new Response('TREASURY OFFERING ANNOUNCEMENT. CUSIP Number 912810SQ2. Interest Rate 1-1/8%. Interest Payment Dates February 15 and August 15. Maturity Date August 15, 2040. Issue Date November 02, 2020.',
+      { headers: { 'content-type': 'application/pdf' } });
+    if (url.includes('/research-center/')) return new Response('Treasury marketable securities are direct obligations of the U.S. government that can be bought and sold in the secondary market.');
+    if (url.endsWith('/marketable-securities/')) return new Response('Treasury marketable securities are backed by the full faith and credit of the United States government.');
+    return new Response('To sell a Treasury marketable security before it matures, work through a bank, broker, or dealer.');
+  });
+  try {
+    const file = path.join(folder, 'documents.json');
+    const first = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch,
+      () => Date.parse('2026-10-29T10:00:00Z')).collect(position);
+    expect(first.discoveryChecked).toBe(true);
+    expect(first.gaps).toEqual([]);
+    expect(first.documents).toHaveLength(4);
+    expect(first.documents[0].period).toBe('2020-10-15');
+    expect(first.documents[0].excerpt).toContain('Interest Payment Dates February 15 and August 15');
+    expect(first.documents[1].excerpt).toContain('direct obligations');
+    expect(first.documents[2].excerpt).toContain('full faith and credit');
+    expect(first.documents[3].excerpt).toContain('bank, broker, or dealer');
+    expect(first.documents.every(document => document.identity === position.isin)).toBe(true);
+    expect(first.documents.every(document => document.source.title.trim().length > 0)).toBe(true);
+    const second = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch,
+      () => Date.parse('2026-10-29T10:00:00Z')).collect(position);
+    expect(second.documents).toHaveLength(4);
+    expect(fetcher).toHaveBeenCalledTimes(5);
+    const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+    saved.documents.find((entry: { source: { url: string } }) => entry.source.url.endsWith('/marketable-securities/')).source.title = '';
+    fs.writeFileSync(file, JSON.stringify(saved));
+    const repaired = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch,
+      () => Date.parse('2026-10-29T10:00:00Z')).collect(position);
+    expect(repaired.documents.every(document => document.source.title.trim().length > 0)).toBe(true);
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
 it('prefers a newly published Lufthansa interim report from the issuer index', async () => {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-lufthansa-new-report-'));
   const now = Date.parse('2026-11-04T10:00:00Z');
@@ -283,6 +372,23 @@ it('prioritizes Munich Re disclosures about actual legal and regulatory proceedi
   expect(liquidity).toContain('maturity bands');
 });
 
+it('retains Rheinmetall earnings, liquidity and risk conclusions in a long report', () => {
+  const report = `Rheinmetall Group. ${'General financial risk and cash management information. '.repeat(900)}
+    Earnings after taxes 295 EUR million for the first half of 2026.
+    Operating result margin 15.0 percent for the first half of 2026.
+    Cash and cash equivalents 255 EUR million at June 30, 2026.
+    Net financial debt 2,722 EUR million at June 30, 2026.
+    There are no existential risks to the Rheinmetall Group.
+    The opportunities and risks relating to the expected development of the Rheinmetall Group are described in the annual report.`;
+  const excerpt = riskExcerpt(report, 'Stock', false, 'DE0007030009');
+  expect(excerpt.length).toBeLessThanOrEqual(18000);
+  expect(excerpt).toContain('Earnings after taxes 295');
+  expect(excerpt).toContain('Operating result margin 15.0');
+  expect(excerpt).toContain('Cash and cash equivalents 255');
+  expect(excerpt).toContain('Net financial debt 2,722');
+  expect(excerpt).toContain('There are no existential risks');
+});
+
 it('extracts issuer net earnings and reported operating margin from SEC filings', () => {
   const filing = `<html><body><h2>Condensed Consolidated Statements of Earnings</h2>
     <p>For the Six Months Ended June 30, 2026</p>
@@ -301,7 +407,18 @@ it('prioritizes a current SEC filing conclusion about material legal impact', ()
   const filing = `<html><p>${'Regulatory matters are described. '.repeat(80)}</p><p>At present we believe that the ultimate outcome of these legal proceedings and regulatory and governmental matters, individually and in the aggregate, will not materially harm our financial position, results of operations or cash flows. However, legal proceedings and regulatory and governmental matters are subject to inherent uncertainties, and unfavorable resolutions could involve substantial fines.</p></html>`;
   const excerpt = riskExcerpt(filing);
   expect(excerpt).toContain('will not materially harm our financial position');
-  expect(excerpt).toContain('unfavorable resolutions could involve substantial fines');
+  expect(excerpt).toMatch(/unfavorable resolutions could involve substantial fines/i);
+});
+
+it('keeps Mondelēz current debt and the legal materiality conclusion in the primary excerpt', () => {
+  const filing = `<html><table><tr><td>Short-term borrowings</td><td>2,327</td></tr>
+    <tr><td>Current portion of long-term debt</td><td>2,663</td></tr></table>
+    <p>At present we believe that the ultimate outcome of these legal proceedings and regulatory and governmental matters, individually and in the aggregate, will not materially harm our financial position, results of operations or cash flows.</p>
+    <p>Unfavorable resolutions could involve substantial fines.</p></html>`;
+  const excerpt = riskExcerpt(filing, 'Stock', false, 'US6092071058');
+  expect(excerpt).toMatch(/Current portion of long-term debt\s+2,663/);
+  expect(excerpt).toContain('will not materially harm our financial position');
+  expect(excerpt).toMatch(/unfavorable resolutions could involve substantial fines/i);
 });
 
 it('retains McDonalds maturity schedule and conditional capital-flow wording in filing excerpts', () => {
@@ -336,13 +453,13 @@ it('rebuilds cached stock excerpts created before the earnings and margin extrac
     const file = path.join(folder, 'documents.json');
     const research = new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now);
     const first = await research.collect(position);
-    expect(first.documents[0].excerptVersion).toBe(2);
+    expect(first.documents[0].excerptVersion).toBe(3);
     const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
     delete saved.documents[0].excerptVersion;
     saved.documents[0].excerpt = 'Old excerpt';
     fs.writeFileSync(file, JSON.stringify(saved));
     const second = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
     expect(second.documents[0].excerpt).toContain('Net earnings attributable');
-    expect(second.documents[0].excerptVersion).toBe(2);
+    expect(second.documents[0].excerptVersion).toBe(3);
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });

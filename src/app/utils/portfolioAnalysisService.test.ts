@@ -34,7 +34,7 @@ const research = { status: 'completed', output: [
 const structured = { status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(report) }] }] };
 const apiResponsesWithUnavailableDocuments = (...responses: Response[]) => {
   const queue = [...responses];
-  return jest.fn(async (url: string, _options?: RequestInit) => url.includes('/v1/responses')
+  return jest.fn(async (url: RequestInfo | URL, _options?: RequestInit) => String(url).includes('/v1/responses')
     ? queue.shift() ?? new Response('', { status: 500 })
     : new Response('', { status: 404 }));
 };
@@ -309,7 +309,7 @@ it('researches sourced outlooks and requests a profile-aware timing decision wit
   const result = await service.analyze(saleRequest);
   expect(result.recommendations[0].tradeDecision).toEqual(tradeDecisionFixture);
   expect(service.getLastResult()?.report.recommendations[0].tradeDecision).toEqual(tradeDecisionFixture);
-  const researchBody = JSON.parse(mockedFetch.mock.calls[0][1].body);
+  const researchBody = JSON.parse(mockedFetch.mock.calls[0][1]!.body as string);
   const analysisBody = JSON.parse(mockedFetch.mock.calls[1][1].body);
   expect(researchBody.instructions).toContain('Veröffentlichungsdatum, Zeithorizont');
   expect(researchBody.input[0].content).not.toContain('shares');
@@ -325,8 +325,8 @@ it('researches sourced outlooks and requests a profile-aware timing decision wit
   expect(result.allocationPlan!.positions[0].amountEUR).toBe(amount);
   expect(analysisBody.instructions).not.toContain('beispielhaften EUR-Betrag');
   expect(analysisBody.instructions).toContain('12-Monats-Erwartungen');
-  expect(result.allocationPlan.method).toBe('forecast-mean-variance-v1');
-  expect(result.allocationPlan.optimization.status).toBe('converged');
+  expect(result.allocationPlan!.method).toBe('forecast-mean-variance-v1');
+  expect(result.allocationPlan!.optimization!.status).toBe('converged');
 });
 
 it('does not accept a legacy source link as a completed corporate risk review', async () => {
@@ -389,11 +389,11 @@ it('uses structured market forecasts in the local optimizer without requiring AI
     structuredResponse(optimizedReport), structuredResponse(optimizedReport));
   const service = new PortfolioAnalysisService(dir, mockedFetch, undefined, marketProvider); service.saveKey('sk-testOnlyNotARealKey');
   const result = await service.analyze(forecastRequest);
-  const analysisInput = JSON.parse(JSON.parse(mockedFetch.mock.calls.filter(([url]) => url.includes('/v1/responses'))[1][1]!.body as string).input[0].content);
+  const analysisInput = JSON.parse(JSON.parse(mockedFetch.mock.calls.filter(([url]) => String(url).includes('/v1/responses'))[1][1]!.body as string).input[0].content);
   expect(marketProvider).toHaveBeenCalledWith(forecastRequest.positions[0], { forceRefresh: true });
   expect(analysisInput.marketForecasts).toEqual([forecast]);
   expect(analysisInput.portfolio.refreshMarketForecasts).toBeUndefined();
-  expect(result.allocationPlan.optimization).toMatchObject({ status: 'converged', forecasts: [forecast] });
+  expect(result.allocationPlan!.optimization).toMatchObject({ status: 'converged', forecasts: [forecast] });
   expect(result.sources).toEqual(expect.arrayContaining(forecast.forecastSources));
 });
 
@@ -435,7 +435,7 @@ it('ignores irrelevant hold and review allocations while retaining valid buy amo
   };
   const result = validateAnalysisResult(input, request, [{ title: 'Source', url: 'https://example.com' }], true);
   expect(result.recommendations[0].plannedAmountEUR).toBeNull();
-  expect(result.newAssetRecommendations[0].plannedAmountEUR).toBeNull();
+  expect(result.newAssetRecommendations?.[0].plannedAmountEUR).toBeNull();
   expect(result.warnings.join(' ')).toContain('ignoriert');
   expect(input.recommendations[0].plannedAmountEUR).toBe(100);
 });
@@ -523,9 +523,9 @@ it('reuses full-portfolio research for the selected asset, preserves the portfol
   expect(result.recommendations[1]).toEqual(original.recommendations[1]);
   expect(original.recommendations[0].executionBaseline).toEqual({ shares: 2, transactionIds: [10] });
   expect(result.recommendations[0].executionBaseline).toEqual({ shares: 2, transactionIds: [10, 11] });
-  expect(result.recommendations[0].tradeDecision.holdCase).toContain('[1]');
-  expect(result.recommendations[0].tradeDecision.scenarios[0].sourceIndexes).toEqual([1]);
-  expect(result.recommendations[0].tradeDecision.scenarios[2].implication).toContain('[1]');
+  expect(result.recommendations[0]?.tradeDecision?.holdCase).toContain('[1]');
+  expect(result.recommendations[0].tradeDecision?.scenarios[0]?.sourceIndexes).toEqual([1]);
+  expect(result.recommendations[0].tradeDecision?.scenarios[2]?.implication).toContain('[1]');
   expect(result.recommendations[0]).toMatchObject({ rationale: 'Fresh recommendation [1]', sourceIndexes: [1], warnings: expect.arrayContaining(['Single asset warning']), updatedAt: expect.any(String) });
   expect(result.sources[1].url).toBe('https://example.com/report');
   expect(new PortfolioAnalysisService(dir, mockedFetch).getLastResult()).toEqual({ report: result, snapshot: originalSnapshot, provider: 'api' });
@@ -572,7 +572,7 @@ it('encrypts the API key and researches sources before generating a structured r
   expect(fs.readFileSync(path.join(dir, 'portfolio-ai-key.bin'), 'utf8')).not.toContain(key);
   const result = await service.analyze(request);
   expect(result.sources).toEqual([{ title: 'Emittent', url: 'https://example.com/report' }]);
-  const researchBody = JSON.parse(mockedFetch.mock.calls[0][1].body);
+  const researchBody = JSON.parse(mockedFetch.mock.calls[0][1]!.body as string);
   const analysisBody = JSON.parse(mockedFetch.mock.calls[1][1].body);
   expect(researchBody).toMatchObject({ store: false, tool_choice: 'required', tools: [{ type: 'web_search' }] });
   expect(researchBody.input[0].content).not.toContain('shares');
@@ -776,16 +776,16 @@ it('rejects new ideas with missing identity, missing sources, invalid actions or
 });
 
 it('passes Arbor filing discovery hints to research before analyzing the position', async () => {
-  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research))).mockResolvedValueOnce(new Response(JSON.stringify(structured)));
+  const mockedFetch = apiResponsesWithUnavailableDocuments(new Response(JSON.stringify(research)), new Response(JSON.stringify(structured)));
   const service = new PortfolioAnalysisService(dir, mockedFetch);
   service.saveKey('sk-testOnlyNotARealKey');
   await service.analyze({ ...request, positions: [{ ...request.positions[0], name: 'Arbor Metals', isin: 'CA03880B1040', symbol: 'CA03880B1040.SG' }] });
-  const researchBody = JSON.parse(mockedFetch.mock.calls[0][1].body);
+  const researchBody = JSON.parse(mockedFetch.mock.calls[0][1]!.body as string);
   const researchInput = JSON.parse(researchBody.input[0].content);
   expect(researchInput.securities[0]).toMatchObject({ id: 1, discoveryHints: { issuer: 'Arbor Metals Corp.' } });
   expect(researchInput.securities[0].discoveryHints.sourceUrls).toContain('https://www.sedarplus.ca/');
   expect(researchInput.securities[0]).not.toHaveProperty('shares');
-  expect(mockedFetch).toHaveBeenCalledTimes(2);
+  expect(mockedFetch.mock.calls.filter(([url]) => String(url).includes('/v1/responses'))).toHaveLength(2);
 });
 
 it('researches the exact Treasury bond and retains its valuation evidence without forcing an action', async () => {
@@ -801,7 +801,7 @@ it('researches the exact Treasury bond and retains its valuation evidence withou
   const mockedFetch = apiResponsesWithUnavailableDocuments(new Response(JSON.stringify(research)), new Response(JSON.stringify(structured)));
   const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
   const result = await service.analyze(bondRequest);
-  const apiCalls = mockedFetch.mock.calls.filter(([url]) => url.includes('/v1/responses'));
+  const apiCalls = mockedFetch.mock.calls.filter(([url]) => String(url).includes('/v1/responses'));
   const researchBody = JSON.parse(apiCalls[0][1]!.body as string);
   const security = JSON.parse(researchBody.input[0].content).securities[0];
   expect(security.discoveryHints.issuer).toContain('912810SQ2');
@@ -820,7 +820,7 @@ it('researches the exact Treasury bond and retains its valuation evidence withou
   expect(analysisBody.instructions).toContain('widersprüchlichen Bestandseinheiten weiterhin Prüfen');
   expect(analysisBody.instructions).toContain('nicht automatisch fehlende Webbelege');
   expect(result.warnings).not.toContain('Die wirtschaftliche Währungsrisiko-Allokation ist nicht hinterlegt. Kurswährungen bilden insbesondere bei Fonds und ETFs keine belastbare Risiko-Allokation ab.');
-  expect(result.infos.some(info => info.includes('Lokale Währungsangaben'))).toBe(true);
+  expect(result.infos?.some(info => info.includes('Lokale Währungsangaben'))).toBe(true);
   expect(result.recommendations[0].action).toBe('Halten');
 });
 
@@ -851,13 +851,13 @@ it('runs one targeted forecast recovery, merges citations and caches the complet
   expect(analysisBody.instructions).toContain('nicht allein deshalb Prüfen wählen');
   expect(input.sources).toEqual([{ index: 0, title: 'Emittent', url: 'https://example.com/report' },
     { index: 1, title: 'Risikodaten', url: 'https://example.com/risk' }]);
-  expect(result.allocationPlan.status).toBe('blocked');
-  expect(result.allocationPlan.optimization.expectedGainEUR).toBeNull();
-  expect(result.allocationPlan.positions[0]).toMatchObject({ action: 'Halten', amountEUR: null });
-  expect(result.infos.some(info => info.includes('Geprüft:'))).toBe(true);
+  expect(result.allocationPlan?.status).toBe('blocked');
+  expect(result.allocationPlan?.optimization?.expectedGainEUR).toBeNull();
+  expect(result.allocationPlan!.positions[0]).toMatchObject({ action: 'Halten', amountEUR: null });
+  expect(result.infos?.some(info => info.includes('Geprüft:'))).toBe(true);
   expect(service.getLastResult()?.report.allocationPlan?.optimization?.reviewedUnavailableKeys).toEqual(['1']);
   const cachedResult = await service.analyze(request);
-  expect(cachedResult.allocationPlan.optimization.reviewedUnavailableKeys).toEqual(['1']);
+  expect(cachedResult.allocationPlan?.optimization?.reviewedUnavailableKeys).toEqual(['1']);
   expect(mockedFetch).toHaveBeenCalledTimes(4);
 });
 
@@ -870,17 +870,17 @@ it('reuses successful primary research despite uncited forecast recovery without
     .mockResolvedValueOnce(new Response(JSON.stringify(structured)));
   const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
   const result = await service.analyze(request);
-  expect(result.allocationPlan.status).toBe('blocked');
+  expect(result.allocationPlan?.status).toBe('blocked');
   expect(result.sources).toHaveLength(1);
   const input = JSON.parse(JSON.parse(mockedFetch.mock.calls[2][1].body).input[0].content);
   expect(input.research).not.toContain('Unbelegte Prognose');
-  expect(result.allocationPlan.optimization.reviewedUnavailableKeys).toEqual([]);
+  expect(result.allocationPlan?.optimization?.reviewedUnavailableKeys).toEqual([]);
   const retried = await service.analyze(request);
   expect(mockedFetch).toHaveBeenCalledTimes(4);
-  expect(retried.allocationPlan.status).toBe('blocked');
+  expect(retried.allocationPlan?.status).toBe('blocked');
   const retriedInput = JSON.parse(JSON.parse(mockedFetch.mock.calls[3][1].body).input[0].content);
   expect(retriedInput.research).toContain('keine zusätzlichen belegten Daten');
-  expect(retried.allocationPlan.optimization.reviewedUnavailableKeys).toEqual([]);
+  expect(retried.allocationPlan?.optimization?.reviewedUnavailableKeys).toEqual([]);
 });
 
 it('reports activity when stream bytes arrive', async () => {
@@ -1300,9 +1300,9 @@ it.each([true, false])('keeps ELTIF NAV evidence and broker age separate through
   const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
   try {
     const result = await service.analyze(eltifRequest);
-    const input = JSON.parse(mockedFetch.mock.calls.filter(([url]) => url.includes('/v1/responses'))[1][1]!.body as string);
+    const input = JSON.parse(mockedFetch.mock.calls.filter(([url]) => String(url).includes('/v1/responses'))[1][1]!.body as string);
     expect(JSON.parse(input.input[0].content).quoteFreshness[0]).toMatchObject({ status: 'nav-unverified', brokerTickStatus: 'old' });
-    expect(result.infos.join(' ')).toContain('Broker-Tick');
+    expect((result.infos ?? []).join(' ')).toContain('Broker-Tick');
     expect(result.warnings.join(' ')).not.toContain('Assets 32:');
     expect(result.warnings.some(message => message.includes('NAV-Aktualit\u00e4t ungekl\u00e4rt'))).toBe(!evidenced);
     expect(service.getLastResult()?.report.recommendations[0].navEvidence).toEqual(navEvidence);

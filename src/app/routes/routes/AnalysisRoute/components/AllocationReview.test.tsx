@@ -153,6 +153,15 @@ it('explains why a strict crypto forecast remains unavailable after refreshing',
   expect(screen.getByText(/belastbare Modellrendite und Volatilität/)).toBeInTheDocument();
 });
 
+it('explains the requirements when the local Treasury forecast is unavailable', () => {
+  const r = { ...request, positions: [{ ...request.positions[0], type: 'Bond' as const,
+    name: 'US Treasury 2040', isin: 'US912810SQ22', symbol: 'A281P1' }] };
+  const plan = buildForecastAllocation(r);
+  render(<AssetOptimizationDetails plan={plan} allocationKey="1" assetType="Bond" />);
+  expect(screen.getByText('Unverändert: Anleiheprognose fehlt')).toBeInTheDocument();
+  expect(screen.getByText(/aktuellen Clean-Price in USD von Börse Frankfurt/)).toBeInTheDocument();
+});
+
 it('labels a calculated partial optimization and its frozen position coverage', () => {
   const r = { ...request, priceUpdatedAt: new Date(Date.now()).toISOString(), positions: [
     { ...request.positions[0], type: 'Stock' as const },

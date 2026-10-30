@@ -536,6 +536,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
           </div>}
           {result.allocationPlan?.method === 'forecast-mean-variance-v1' && !result.allocationPlan.optimization?.robust && <p className="text-sm text-amber-300">Diese gespeicherte Analyse verwendet das alte Modell. Für Unsicherheitsgewichtung, gemessene Kovarianzen und die neue Entscheidungsprüfung bitte die Gesamtanalyse erneut starten.</p>}
           {stale && <p role="status" className="text-amber-300 text-sm">Portfolio, Kurse oder Anlageprofil haben sich seit dieser Analyse geändert. Bitte neu analysieren.</p>}
+          {result.riskReviewUpdatedAt && <p className="text-sm text-amber-200">Die Risikoprüfung wurde nach dem KI-Analysetext aktualisiert. Das robuste Modellszenario unten wurde neu berechnet; Zusammenfassung und Einzelbegründungen stammen noch aus der früheren Analyse. Für eine neue Handlungsempfehlung die Gesamtanalyse erneut starten.</p>}
           <p className="text-sm text-gray-200 whitespace-pre-wrap">{result.summary}</p>
           <AnalysisMessages infos={result.infos} warnings={result.warnings} />
           <AllocationReview plan={result.allocationPlan} />

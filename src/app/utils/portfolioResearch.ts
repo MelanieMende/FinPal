@@ -2,6 +2,14 @@ import type { AnalysisPosition } from './portfolioAnalysis';
 
 // Discovery pointers, not cached financial figures or a claim that this is the latest filing.
 const issuerHints: Record<string, { issuer: string; listing: string; sourceUrls: string[] }> = {
+  DE0007030009: {
+    issuer: 'Rheinmetall AG; Rheinmetall Group',
+    listing: 'Xetra: RHM; ISIN laut Rheinmetall Investor Relations',
+    sourceUrls: [
+      'https://ir.rheinmetall.com/media/document/1bbcaadf-0e67-45bc-80df-bba822823824/assets/DE0007030009-Q2-2026-EQ-E-00.pdf',
+      'https://ir.rheinmetall.com/media/document/214a8f96-a9e5-4296-9a89-e2b65122d258/assets/Rheinmetall-Annual-Report-2025.pdf',
+    ],
+  },
   DE0008232125: {
     issuer: 'Deutsche Lufthansa AG; Lufthansa Group',
     listing: 'Xetra: LHA; ISIN laut Lufthansa Group Investor Relations',
@@ -32,6 +40,7 @@ const issuerHints: Record<string, { issuer: string; listing: string; sourceUrls:
     sourceUrls: [
       'https://global.vanguard.com/de-de/investment-products/etf/equities/9506/ftse-all-world-high-dividend-yield-ucits-etf-usd-distributing',
       'https://fund-docs.vanguard.com/FTSE_All-World_High_Dividend_Yield_UCITS_ETF_USD_Distributing_9506_NETH_INT_EN.pdf',
+      'https://fund-docs.vanguard.com/ie00b8gkdb10_priipskid_en.pdf',
     ],
   },
   US5801351017: {
@@ -56,6 +65,10 @@ const issuerHints: Record<string, { issuer: string; listing: string; sourceUrls:
       'https://www.boerse-stuttgart.de/en/products/bonds/stuttgart/a281p1-united-states-of-america-dl-notes-2020-40/',
       'https://api.boerse-frankfurt.de/v1/data/price_information/single?isin=US912810SQ22',
       'https://www.treasurydirect.gov/instit/annceresult/press/preanre/2020/R_20200819_3.pdf',
+      'https://www.treasurydirect.gov/instit/annceresult/press/preanre/2020/A_20201015_1.pdf',
+      'https://www.treasurydirect.gov/research-center/history-of-marketable-securities/',
+      'https://www.treasurydirect.gov/marketable-securities/',
+      'https://www.treasurydirect.gov/marketable-securities/selling-marketable-securities/',
     ],
   },
   LU3170240538: {

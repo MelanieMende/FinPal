@@ -90,6 +90,27 @@ function mcdDebtMaturities(position: AnalysisPosition, documents: RiskDocument[]
   }
   return null;
 }
+const mondelezQuarter = (document: RiskDocument) => !!document.period
+  && /^\d{4}-\d{2}-\d{2}$/.test(document.period) && Number.isFinite(Date.parse(document.period))
+  && new RegExp(`^https://www\\.sec\\.gov/Archives/edgar/data/1103982/\\d{18}/mdlz-${document.period.replace(/-/g, '')}\\.htm$`, 'i').test(document.source.url)
+  && /SEC 10-Q/i.test(document.source.title);
+const latestMondelezQuarterIndex = (documents: RiskDocument[]) => documents.map((document, index) => ({ document, index }))
+  .filter(({ document }) => mondelezQuarter(document))
+  .sort((a, b) => b.document.period!.localeCompare(a.document.period!))[0]?.index ?? -1;
+function mondelezCurrentDebt(position: AnalysisPosition, documents: RiskDocument[]): RiskMetric | null {
+  if (position.type !== 'Stock' || position.isin.trim().toUpperCase() !== 'US6092071058') return null;
+  const documentIndex = latestMondelezQuarterIndex(documents);
+  const document = documents[documentIndex];
+  if (document) {
+    const match = /Current portion of long-term debt\s+\$?\s*([\d,]+)/i.exec(document.excerpt);
+    if (!match || !validQuote(match[0], document)) return null;
+    const value = Number(match[1].replace(/,/g, ''));
+    if (!Number.isSafeInteger(value) || value <= 0 || !quoteContainsValue(match[0], value)) return null;
+    return { name: 'debt-maturities', value, unit: 'Mio. USD',
+      period: `Stichtag ${document.period}; kurzfristig fälliger Anteil langfristiger Schulden`, documentIndex, quote: match[0] };
+  }
+  return null;
+}
 const isNovoNordisk = (position: Pick<AnalysisPosition, 'isin' | 'type'>) => position.type === 'Stock'
   && ['DK0062498333', 'US6701002056'].includes(position.isin.trim().toUpperCase());
 const novoFinancialReport = (document: RiskDocument) => /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/353278\/\d{18}\/caq[1-4]20\d{2}\.htm$/i.test(document.source.url)
@@ -171,13 +192,63 @@ function qualifyQdveProductRisks(position: AnalysisPosition, check: RiskCheck, d
   }
   return check;
 }
+function qualifyVgwdProductRisks(position: AnalysisPosition, check: RiskCheck, documents: RiskDocument[]): RiskCheck {
+  if (position.type !== 'ETF' || position.isin.trim().toUpperCase() !== 'IE00B8GKDB10' || check.finding !== 'unknown') return check;
+  const kidIndex = documents.findIndex(document => document.period
+    && /^https:\/\/fund-docs\.vanguard\.com\/ie00b8gkdb10_priipskid_en\.pdf$/i.test(document.source.url)
+    && document.excerpt.includes('IE00B8GKDB10'));
+  const kid = documents[kidIndex];
+  if (check.flag === 'identity' && kid) {
+    const quote = /Vanguard FTSE All-World High Dividend Yield UCITS ETF/i.exec(kid.excerpt)?.[0] ?? '';
+    if (validQuote(quote, kid) && /\(USD\) Distributing Shares/i.test(kid.excerpt))
+      return { ...check, finding: 'no-risk', documentIndex: kidIndex, quote,
+        reason: `Das KID vom ${kid.period} benennt den Vanguard FTSE All-World High Dividend Yield UCITS ETF, die ausschüttende USD-Anteilsklasse und die exakte ISIN IE00B8GKDB10. Ein Identitätswiderspruch ist in diesen Primärdaten nicht erkennbar; VGWD.DE ist die EUR-Börsennotierung derselben Anteilsklasse.` };
+  }
+  if (check.flag === 'costs' && kid) {
+    const ongoing = /0\.29% of the value of your investment p\.a\./i.exec(kid.excerpt)?.[0] ?? '';
+    const transactions = /0\.04% of the value of your investment per year/i.exec(kid.excerpt)?.[0] ?? '';
+    if (validQuote(ongoing, kid) && validQuote(transactions, kid)
+      && /There is no performance fee for this Fund/i.test(kid.excerpt))
+      return { ...check, finding: 'no-risk', documentIndex: kidIndex, quote: ongoing,
+        reason: `Das KID vom ${kid.period} weist 0,29 % laufende Verwaltungs- und Betriebskosten sowie geschätzte interne Transaktionskosten von 0,04 % pro Jahr aus; eine Erfolgsgebühr fällt nicht an. Brokergebühren und Börsenspannen sind nicht enthalten.` };
+  }
+  if (check.flag === 'concentration') {
+    const factsheetIndex = documents.findIndex(document => document.period
+      && /^https:\/\/fund-docs\.vanguard\.com\/FTSE_All-World_High_Dividend_Yield_UCITS_ETF_USD_Distributing_9506_NETH_INT_EN\.pdf$/i.test(document.source.url)
+      && document.excerpt.includes('IE00B8GKDB10'));
+    const factsheet = documents[factsheetIndex];
+    const topTen = factsheet && /Top 10 approximately equals\s+([\d.]+)% of net assets/i.exec(factsheet.excerpt);
+    const holdings = factsheet && /Number of stocks\s+([\d,]+)/i.exec(factsheet.excerpt);
+    const topTenPercent = topTen ? Number(topTen[1]) : NaN;
+    const holdingCount = holdings ? Number(holdings[1].replace(/,/g, '')) : NaN;
+    if (factsheet && topTen && holdings && validQuote(topTen[0], factsheet)
+      && Number.isFinite(topTenPercent) && topTenPercent <= 20 && holdingCount >= 1000)
+      return { ...check, finding: 'no-risk', documentIndex: factsheetIndex, quote: topTen[0],
+        reason: `Stand ${factsheet.period}: ${holdingCount} Aktien; die zehn größten Positionen machen zusammen ${topTenPercent} % des Fondsvermögens aus. Eine starke Konzentration auf einzelne Unternehmen ist damit nicht belegt. Dividendenstil sowie Länder- und Sektorgewichte bleiben eigenständige Expositionen.` };
+  }
+  if (check.flag === 'structure' && kid) {
+    const quote = /The Fund may engage in short\s+term secured lending of its investments/i.exec(kid.excerpt)?.[0] ?? '';
+    if (validQuote(quote, kid) && /The Fund may use derivatives/i.test(kid.excerpt))
+      return { ...check, finding: 'risk', documentIndex: kidIndex, quote,
+        reason: 'Das KID erlaubt dem physisch anlegenden Fonds besicherte Wertpapierleihe und den Einsatz von Derivaten. Daraus können Gegenpartei- und Derivaterisiken entstehen. Eine tatsächliche aktuelle Nutzung oder ein eingetretener Verlust ist damit nicht belegt.' };
+  }
+  if (check.flag === 'regulatory' && kid) {
+    const quote = /The Fund is authorised in Ireland and has been registered for sale in other EEA Member States/i.exec(kid.excerpt)?.[0] ?? '';
+    if (validQuote(quote, kid) && /regulated by the Central Bank/i.test(kid.excerpt))
+      return { ...check, finding: 'no-risk', documentIndex: kidIndex, quote,
+        reason: `Das KID vom ${kid.period} belegt die Zulassung des Fonds in Irland, die Registrierung für den Vertrieb in weiteren EWR-Staaten und die Aufsicht der Central Bank of Ireland über die Verwaltungsgesellschaft. Das schließt künftige regulatorische Änderungen oder nicht genannte Verfahren nicht aus.` };
+  }
+  return check;
+}
 function qualifyCheck(position: AnalysisPosition, check: RiskCheck, documents: RiskDocument[]): RiskCheck {
   let qualified = qualifyMunichFinancingAndContinuity(position, check, documents);
   qualified = qualifyMunichLegalRisk(position, qualified, documents);
   qualified = qualifyMondelezLegalRisk(position, qualified, documents);
   qualified = qualifyMcdRegulatoryRisk(position, qualified, documents);
+  qualified = qualifyMcdContinuity(position, qualified, documents);
   qualified = qualifyNovoFinancing(position, qualified, documents);
-  return qualifyQdveProductRisks(position, qualified, documents);
+  qualified = qualifyQdveProductRisks(position, qualified, documents);
+  return qualifyVgwdProductRisks(position, qualified, documents);
 }
 const munichLegalRiskReason = '2025: Laufende Gerichts-, Aufsichts- und Schiedsverfahren; Munich Re erwartet keine erhebliche negative Wirkung. In den geprüften Auszügen fehlt eine Aktualisierung für 2026.';
 const munichLegalRiskReason2026 = 'Stand 30.06.2026: Laufende Verfahren aus dem Bericht 2025; Munich Re erwartet keine erhebliche negative Wirkung und erklärt die damaligen Risikoaussagen für unverändert gültig.';
@@ -231,28 +302,43 @@ function qualifyMunichLegalRisk(position: AnalysisPosition, check: RiskCheck, do
 }
 function qualifyMondelezLegalRisk(position: AnalysisPosition, check: RiskCheck, documents: RiskDocument[]): RiskCheck {
   if (position.type !== 'Stock' || position.isin.trim().toUpperCase() !== 'US6092071058'
-    || check.flag !== 'regulatory' || check.finding !== 'risk'
-    || !/erwartet.*(?:keine|nicht).*wesentlich|keine wesentliche|nicht wesentlich|not materially|no material/i.test(check.reason)) return check;
-  const documentIndex = documents.findIndex(document => document.period === '2026-06-30'
-    && /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/1103982\/\d{18}\/[^/]+\.htm$/i.test(document.source.url)
-    && /ultimate outcome of these legal proceedings and regulatory and governmental matters/i.test(document.excerpt)
-    && /will not materially harm our financial position, results of operations or cash flows/i.test(document.excerpt)
-    && /unfavorable resolutions could involve substantial fines/i.test(document.excerpt));
-  if (documentIndex < 0) return check;
-  const quote = /legal proceedings and regulatory and governmental matters, individually and in the aggregate, will not materially harm our financial position, results of operations or cash flows/i.exec(documents[documentIndex].excerpt)?.[0] ?? '';
-  if (!validQuote(quote, documents[documentIndex])) return check;
+    || check.flag !== 'regulatory' || (check.finding !== 'risk' && check.finding !== 'unknown')
+    || /(?:eingetretene|verhängte|bereits gezahlte)\s+(?:wesentliche\s+)?(?:Sanktion|Strafe|Geldbuße)|actual material (?:fine|penalty|loss)/i.test(check.reason)) return check;
+  const documentIndex = latestMondelezQuarterIndex(documents);
+  const document = documents[documentIndex];
+  if (!document || !/ultimate outcome of these legal proceedings and regulatory and governmental matters/i.test(document.excerpt)
+    || !/unfavorable resolutions could involve substantial fines/i.test(document.excerpt)) return check;
+  const quote = /legal proceedings and regulatory and governmental matters, individually and in the aggregate, will not materially harm our financial position, results of operations or cash flows/i.exec(document.excerpt)?.[0] ?? '';
+  if (!validQuote(quote, document)) return check;
   return { ...check, finding: 'no-risk', documentIndex, quote,
-    reason: 'Stand 30.06.2026: Laufende Gerichts- und Behördenverfahren bestehen. Das Management erwartet derzeit weder einzeln noch zusammen eine wesentliche Belastung von Finanzlage, Ergebnis oder Cashflow. Ungünstige Entscheidungen und erhebliche Sanktionen bleiben möglich.' };
+    reason: `Stand ${document.period}: Laufende Gerichts- und Behördenverfahren bestehen. Das Management erwartet derzeit weder einzeln noch zusammen eine wesentliche Belastung von Finanzlage, Ergebnis oder Cashflow. Ungünstige Entscheidungen und erhebliche Sanktionen bleiben möglich.` };
 }
 const mcdConditionalRegulatoryReason = 'Der aktuelle 10-Q beschreibt mögliche Einschränkungen von Kapitalflüssen und höhere Finanzierungskosten. Ein konkreter eingetretener Schaden ist durch diese bedingte Risikowarnung nicht belegt; die regulatorische Exposition bleibt offen.';
+const mcdContinuityOpen = 'Aktuellen 10-Q und Jahresbericht geprüft: Eine ausdrückliche unternehmensbezogene Aussage zu wesentlichen Fortführungsunsicherheiten ist in den verfügbaren Auszügen nicht belegt. Das bleibt eine offene Restunsicherheit.';
+function qualifyMcdContinuity(position: AnalysisPosition, check: RiskCheck, documents: RiskDocument[]): RiskCheck {
+  if (position.type !== 'Stock' || position.isin.trim().toUpperCase() !== 'US5801351017'
+    || check.flag !== 'going-concern' || check.finding !== 'unknown') return check;
+  const quarter = documents.some(document => document.period === '2026-06-30'
+    && /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/63908\/\d{18}\/mcd-20260630\.htm$/i.test(document.source.url));
+  const annual = documents.some(document => document.period === '2025-12-31'
+    && /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/63908\/\d{18}\/mcd-20251231\.htm$/i.test(document.source.url));
+  if (!quarter || !annual) return check;
+  if (documents.some(document => /(?:there is substantial doubt|material uncertainty exists|going.concern qualification|doubt about our ability to continue)/i.test(document.excerpt))) return check;
+  if (check.reason === mcdContinuityOpen && check.documentIndex === null && !check.quote) return check;
+  if (!/Kein überprüfbarer Befund mit Textstelle|(?:keine|fehlt).*(?:ausdrückliche|Beurteilung|Aussage)|(?:no|missing) (?:explicit|specific) (?:going.concern|statement)/i.test(check.reason)) return check;
+  return { ...check, reason: mcdContinuityOpen, documentIndex: null, quote: '' };
+}
 function qualifyMcdRegulatoryRisk(position: AnalysisPosition, check: RiskCheck, documents: RiskDocument[]): RiskCheck {
   if (position.type !== 'Stock' || position.isin.trim().toUpperCase() !== 'US5801351017'
     || check.flag !== 'regulatory' || (check.finding !== 'risk' && check.finding !== 'unknown')) return check;
   const conditionalRisk = check.finding === 'risk' && /may also be impacted by regulations affecting capital flows/i.test(check.quote);
+  const actualDamageClaim = /eingetretener Schaden/i.test(check.reason)
+    && !/(?:kein|keinen|nicht|ohne)[^.!?]{0,65}eingetretener Schaden/i.test(check.reason)
+    && !/eingetretener Schaden[^.!?]{0,65}(?:nicht belegt|nicht nachgewiesen)/i.test(check.reason);
   const conditionalUnknown = check.finding === 'unknown'
     && /(?:Kapitalfl[uü]ss|capital flows)/i.test(check.reason)
     && /(?:Exposition|möglich|potenziell|könn|may|could)/i.test(check.reason)
-    && !/(?:konkreter Verstoß|verhängte Sanktion|eingetretener Schaden|material sanction|actual violation)/i.test(check.reason);
+    && !actualDamageClaim && !/(?:konkreter Verstoß|verhängte Sanktion|material sanction|actual violation)/i.test(check.reason);
   if (!conditionalRisk && !conditionalUnknown) return check;
   const documentIndex = documents.findIndex(document => document.period === '2026-06-30'
     && /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/63908\/\d{18}\/mcd-20260630\.htm$/i.test(document.source.url)
@@ -272,6 +358,8 @@ function qualifyMcdRegulatoryRisk(position: AnalysisPosition, check: RiskCheck, 
 export function riskFingerprint(position: AnalysisPosition, set: RiskDocumentSet): string {
   return createHash('sha256').update(JSON.stringify({ policy: RISK_POLICY, isin: position.isin.trim().toUpperCase(),
     type: position.type, ...(position.isin.trim().toUpperCase() === 'US5801351017' ? { mcdReviewVersion: 2 } : {}),
+    ...(position.type === 'Bond' && position.isin.trim().toUpperCase() === 'US912810SQ22'
+      ? { treasuryContextVersion: 1, nominalCurrency: position.bondHolding?.source === 'user-confirmed' ? position.bondHolding.currency : null } : {}),
     documents: set.documents.map(doc => [doc.source.url, doc.hash,
       isInsuranceStock(position) ? doc.excerptVersion ?? 0 : 0]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))) })).digest('hex');
 }
@@ -315,7 +403,8 @@ export function validateRiskAssessment(position: AnalysisPosition, set: RiskDocu
     if (balanceSheetCash) metrics.push(balanceSheetCash);
   }
   if (!metrics.some(metric => metric.name === 'debt-maturities')) {
-    const maturities = mcdDebtMaturities(position, set.documents) ?? novoCurrentBorrowings(position, set.documents);
+    const maturities = mcdDebtMaturities(position, set.documents) ?? mondelezCurrentDebt(position, set.documents)
+      ?? novoCurrentBorrowings(position, set.documents);
     if (maturities) metrics.push(maturities);
   }
   for (const name of riskMetricsForPosition(position)) {
@@ -351,7 +440,7 @@ export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessme
     && materialRisks.length === 0 && record.checks.length === 5
     && record.checks.every(check => (check.finding === 'no-risk' && check.documentIndex !== null && check.quote.trim().length >= 12)
       || (check.flag === 'going-concern' && check.finding === 'unknown' && check.documentIndex === null
-        && /(?:keine|fehlt).*(?:ausdrücklich|Beurteilung|Aussage)/i.test(check.reason))
+        && check.reason === mcdContinuityOpen)
       || (check.flag === 'regulatory' && check.finding === 'unknown' && check.documentIndex !== null
         && check.quote.trim().length >= 12 && check.reason === mcdConditionalRegulatoryReason))
     && record.gaps.some(gap => gap.startsWith('going-concern:'))
@@ -465,7 +554,8 @@ export class PrimaryRiskAssessmentCache {
       }
     }
     if (!record.metrics.some(metric => metric.name === 'debt-maturities')) {
-      const maturities = mcdDebtMaturities(position, set.documents) ?? novoCurrentBorrowings(position, set.documents);
+      const maturities = mcdDebtMaturities(position, set.documents) ?? mondelezCurrentDebt(position, set.documents)
+        ?? novoCurrentBorrowings(position, set.documents);
       if (maturities) {
         const gaps = record.gaps.filter(gap => !gap.startsWith('debt-maturities:'));
         record = { ...record, metrics: [...record.metrics, maturities], gaps, status: gaps.length ? 'unknown' : 'assessed' };

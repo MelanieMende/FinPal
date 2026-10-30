@@ -23,6 +23,30 @@ it('continues the evidenced sleeve and accepts holding a reviewed unavailable po
   expect(validPortfolioAllocation(plan)).toBe(true);
 });
 
+it('uses the verified bond total return rather than clean-price appreciation as optimizer input', () => {
+  const r = request();
+  const asOf = new Date(Date.now() - 86400000).toISOString();
+  r.positions[0] = { ...r.positions[0], type: 'Bond', isin: 'US912810SQ22', currency: 'EUR', price: 55.8,
+    bondHolding: { nominal: 1000, currency: 'USD', purchaseAccruedInterestEUR: 0, source: 'user-confirmed',
+      transactions: [{ id: 1, date: asOf, nominal: 1000, accruedInterestEUR: 0 }] },
+    quote: { source: 'boerse-frankfurt', exchange: 'XFRA', tradedInPercent: true, originalPrice: 62,
+      originalCurrency: 'USD', valuationCurrency: 'EUR', quoteAsOf: asOf, fetchedAt: asOf,
+      convertedAt: asOf, fxRateToEUR: .9, fxSource: 'test', fxAsOf: asOf, fxFetchedAt: asOf } };
+  const forecast = returnForecastFixture('1', { publisher: 'FinPal Treasury-Zinskurven-Szenario',
+    currency: 'USD', referencePrice: 62, referencePriceAsOf: asOf, targetPrice: 63,
+    expectedTotalReturnPercent: 3.5, scenarioReturns: { p10: -10, median: 4, p90: 16 },
+    uncertainty: { method: 'bond-curve-scenario', historyYears: 1 },
+    model: { kind: 'bond-curve-v1', observations: 260, couponPercent: 1.125,
+      maturityDate: '2040-08-15', priceBasis: 'clean', referenceDirty: 62.2 } });
+  const plan = buildForecastAllocation(r, [forecast]);
+  expect(plan.optimization.inputs[0].expectedReturnPercent).toBeCloseTo(3.5);
+  expect(plan.optimization.inputs[0].expectedReturnPercent).not.toBeCloseTo((63 / 62 - 1) * 100);
+  expect(plan.optimization.unresolvedKeys).toEqual([]);
+  const movedQuote = buildForecastAllocation({ ...r, positions: [{ ...r.positions[0], quote: { ...r.positions[0].quote!, originalPrice: 61 } }] }, [forecast]);
+  expect(movedQuote.optimization.inputs).toEqual([]);
+  expect(movedQuote.positions[0].action).toBe('Prüfen');
+});
+
 it('finishes forecast review without fabricating an optimum when no forecast is available', () => {
   const plan = buildForecastAllocation(request(), [], [], undefined, undefined, ['1']);
   expect(plan.status).toBe('blocked'); // Only the mathematical optimization is unavailable.

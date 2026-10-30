@@ -20,12 +20,13 @@ export function AssetOptimizationDetails({ plan, allocationKey, assetType, onOpe
   const robust = plan?.optimization?.robust;
   const estimate = robust?.estimates.find(e => e.key === allocationKey);
   const scenarioTrade = robust?.scenarioTrades.find(t => t.key === allocationKey);
-  const sourceLabel = reviewedUnavailable ? 'Geprüft: Prognosedaten nicht verfügbar'
+  const sourceLabel = assetType === 'Bond' && !forecast ? 'Unverändert: Anleiheprognose fehlt'
+    : reviewedUnavailable ? 'Geprüft: Prognosedaten nicht verfügbar'
     : robust?.decisionStatus === 'review-required' && scenarioTrade ? 'Modellszenario: Entscheidung offen'
     : position.source === 'user-confirmed' ? 'Innerhalb eigener bestätigter Zielvorgaben'
     : position.source === 'cash-holding' ? 'Bestehender Cash-Equivalent-Bestand'
       : position.source === 'forecast-optimization' ? plan?.status === 'blocked' ? 'Optimierung ungeklärt'
-        : position.action === 'Prüfen' ? 'Unverändert: Prognosedaten fehlen' : 'Aus Kurserwartung und Risiko optimiert'
+        : position.action === 'Prüfen' ? assetType === 'Bond' ? 'Unverändert: Anleiheprognose fehlt' : 'Unverändert: Prognosedaten fehlen' : 'Aus Kurserwartung und Risiko optimiert'
         : 'Aus Anlageprofil abgeleitet';
 
   return <section aria-label={`Prognose und Zielgewichtung ${position.name}`} className="my-3 min-w-0 space-y-2 rounded border border-sky-400/20 bg-sky-500/5 p-3 text-xs text-gray-300">
@@ -40,12 +41,13 @@ export function AssetOptimizationDetails({ plan, allocationKey, assetType, onOpe
           ? `Datenquelle: gültiger lokaler Cache · ${forecast.dataAgeHours?.toFixed(1) ?? '0,0'} Stunden alt`
           : `Datenquelle: letzter gültiger Cache nach Abruffehler · ${forecast.dataAgeHours?.toFixed(1) ?? '0,0'} Stunden alt`}
       </p>}
-      <p className="m-0">{forecast.model?.kind === 'etf-history-v1' ? 'Modell-Referenzwert (kein veröffentlichtes Kursziel)' : 'Kursziel'}: {new Intl.NumberFormat('de-DE', { maximumFractionDigits: 4 }).format(forecast.targetPrice)} {forecast.currency} · {robust ? 'Bereinigte Modellrendite' : 'Erwartete Kursrendite'}: {percent(input?.expectedReturnPercent ?? null)}</p>
+      <p className="m-0">{forecast.model?.kind === 'bond-curve-v1' ? 'Modell-Clean-Price nach 12 Monaten (% vom Nennwert)' : forecast.model?.kind === 'etf-history-v1' ? 'Modell-Referenzwert (kein veröffentlichtes Kursziel)' : 'Kursziel'}: {new Intl.NumberFormat('de-DE', { maximumFractionDigits: 4 }).format(forecast.targetPrice)} {forecast.model?.kind === 'bond-curve-v1' ? '%' : forecast.currency} · {forecast.model?.kind === 'bond-curve-v1' ? robust ? 'Bereinigte Gesamtrendite inkl. Kupon' : 'Erwartete Gesamtrendite inkl. Kupon' : robust ? 'Bereinigte Modellrendite' : 'Erwartete Kursrendite'}: {percent(input?.expectedReturnPercent ?? null)}</p>
+      {forecast.model?.kind === 'bond-curve-v1' && <p className="m-0 text-sky-200">Lokales Anleihe-Zinskurvenmodell: Kupon {percent(forecast.model.couponPercent)} · Fälligkeit {forecast.model.maturityDate} · aktueller Dirty-Price {new Intl.NumberFormat('de-DE', { maximumFractionDigits: 4 }).format(forecast.model.referenceDirty)} % vom Nennwert. Modellierte EUR-Risikoreihe und Zins-/Währungsszenarien; keine ausführbare Kursprognose.</p>}
       {forecast.model?.kind === 'etf-history-v1' && <p className="m-0 text-sky-200">Lokales ETF-Historienmodell: {forecast.model.observations} bereinigte Tageskurse über {forecast.model.historyYears.toFixed(2)} Jahre · 2.000 Bootstrap-Pfade · 252 Handelstage · 20-Tage-Blöcke. Historische Szenarien, keine kalibrierten Zukunftswahrscheinlichkeiten. Ausschüttungen nicht zusätzlich addieren.</p>}
       {estimate && <p className="m-0">Rohsignal: {percent(estimate.rawReturnPercent)} · Nach Grundgewichtung: {percent(estimate.adjustedReturnPercent)}{estimate.effectiveReturnPercent !== undefined ? ` · Konfidenzgewichtet: ${percent(estimate.effectiveReturnPercent)}` : ''} · Unsicherheitsproxy: {percent(estimate.uncertaintyPercent)} (keine Wahrscheinlichkeit).</p>}
       {forecast.uncertainty?.method === 'analyst-consensus' && <p className="m-0">Analystenabdeckung: {forecast.uncertainty.analystCount ?? 'Unbekannt'} · Kurszielspanne: {forecast.uncertainty.targetLowPrice ?? 'Unbekannt'} bis {forecast.uncertainty.targetHighPrice ?? 'Unbekannt'} {forecast.currency}. Wenige Analysten oder breite Spannen schwächen das Signal.</p>}
       {forecast.scenarioReturns && <p className="m-0">Historisches Bootstrap-Szenarioband: P10 {percent(forecast.scenarioReturns.p10)} · Median {percent(forecast.scenarioReturns.median)} · P90 {percent(forecast.scenarioReturns.p90)}</p>}
-      <p className="m-0">Annualisierte historische Volatilität: {percent(forecast.annualVolatilityPercent)} · Kurswährung {forecast.currency} · Stand {forecast.volatilityAsOf.slice(0, 10)} · Fenster {forecast.volatilityLookbackDays} Tage</p>
+      <p className="m-0">Annualisierte historische {forecast.model?.kind === 'bond-curve-v1' ? 'Modellvolatilität in EUR' : 'Volatilität'}: {percent(forecast.annualVolatilityPercent)} · Kurswährung {forecast.currency} · Stand {forecast.volatilityAsOf.slice(0, 10)} · Fenster {forecast.volatilityLookbackDays} Tage</p>
       <details><summary className="cursor-pointer text-gray-400">Quellen und Prognoseannahmen</summary>
         <div className="mt-2 min-w-0 space-y-1 break-words">
           <p className="m-0">{forecast.assumptions}</p>
@@ -56,7 +58,9 @@ export function AssetOptimizationDetails({ plan, allocationKey, assetType, onOpe
         </div>
       </details>
     </div>}
-    {!forecast && plan?.method === 'forecast-mean-variance-v1' && <p className={`m-0 ${reviewedUnavailable ? 'text-sky-200' : 'text-amber-200'}`}>{reviewedUnavailable
+    {!forecast && plan?.method === 'forecast-mean-variance-v1' && <p className={`m-0 ${reviewedUnavailable ? 'text-sky-200' : 'text-amber-200'}`}>{assetType === 'Bond'
+      ? 'Für diese Anleihe liegt keine vollständige lokale 12-Monats-Prognose vor. Das Treasury-Modell benötigt die exakt verifizierte Emission, einen aktuellen Clean-Price in USD von Börse Frankfurt, bestätigten USD-Nennwert, aktuelle Treasury-Zinskurven und passende USD/EUR-Tagesdaten. Andere Anleihen benötigen ein eigenes verifiziertes Laufzeit- und Kuponmodell. Die Position bleibt unverändert.'
+      : reviewedUnavailable
       ? 'Hinweis: Die gezielte Nachrecherche ist abgeschlossen. Vollständige belegte 12-Monats-Prognose- und Volatilitätsdaten sind nicht verfügbar. Die weitere Analyse läuft ohne diese Eingaben weiter; für diese Position wird kein optimierter Handelsbetrag berechnet.'
       : assetType === 'Crypto'
       ? 'Für das lokale Krypto-Modell fehlen mindestens drei Jahre vollständige tägliche Kurse oder eine passende Kurswährung. Ohne belastbare Modellrendite und Volatilität bleibt die Position eingefroren.'
@@ -95,7 +99,7 @@ export default function AllocationReview({ plan }: { plan?: PortfolioAllocation 
       <p className="m-0">{robust ? robust.covarianceStatus === 'measured-eur'
         ? `Robustes Modell v${robust.version}: gemessene EUR-Kovarianzen aus ${robust.observations} gemeinsamen Renditeintervallen; Schrumpfung ${percent((robust.covarianceShrinkage ?? 0) * 100)}.`
         : `Robustes Modell v${robust.version}: Gemeinsame EUR-Kurshistorien fehlen; keine bestätigte Umschichtung.`
-        : 'Altes Modellszenario: angenommener Gleichlauf (+1), keine gemessenen Korrelationen. Für das robuste Modell bitte neu analysieren.'} ETF-Historienmodelle nutzen ausschüttungsbereinigte Renditeproxies; andere Dividenden, Zinsen, Steuern und Spreads sind nicht enthalten.</p>
+        : 'Altes Modellszenario: angenommener Gleichlauf (+1), keine gemessenen Korrelationen. Für das robuste Modell bitte neu analysieren.'} ETF-Historienmodelle nutzen ausschüttungsbereinigte Renditeproxies; das Anleihemodell enthält Kupons und modellierte Stückzinsen. Andere Dividenden, Zinsen, Steuern und Spreads sind nicht enthalten.</p>
       {robust && <section aria-label="Robustheit und Entscheidungsprüfung" className="min-w-0 space-y-2 break-words">
         <p className="m-0 font-bold">{robust.decisionStatus === 'review-required' ? 'Modellszenario mit offener Entscheidung' : robust.decisionStatus === 'no-trades' ? 'Keine wirtschaftlich belastbare Umschichtung im Modell' : robust.stressChecks.some(check => check.utilityImprovementEUR <= 0) ? 'Basisszenario positiv; Stressrisiken ausgewiesen' : 'In den geprüften Szenarien stabil; keine Ausführungsfreigabe'}</p>
         {robust.baseUtilityImprovementEUR !== undefined && <p className="m-0">Basisszenario: relativer Modellnutzen gegenüber unverändertem Bestand nach Gebühren {euros(robust.baseUtilityImprovementEUR)}. Das ist keine prognostizierte Wertentwicklung.</p>}

@@ -62,6 +62,7 @@ export interface AssetRecommendation {
 }
 export interface PortfolioAnalysisResult {
   mode?: 'ai' | 'local';
+  riskReviewUpdatedAt?: string;
   fundamentalRisks?: import('./robustForecastModel').FundamentalRiskAssessment[];
   allocationPlan?: import('./portfolioAllocation').PortfolioAllocation;
   fundingCheck?: import('./portfolioFunding').FundingCheck;

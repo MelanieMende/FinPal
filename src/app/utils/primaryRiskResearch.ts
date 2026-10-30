@@ -22,6 +22,15 @@ export interface RiskDocumentSet {
 const DAY = 24 * 60 * 60 * 1000;
 const MAX_BYTES = 16_000_000;
 const MAX_DOCUMENTS = 4;
+const TREASURY_BOND_ISIN = 'US912810SQ22';
+const TREASURY_OFFERING_2020 = 'https://www.treasurydirect.gov/instit/annceresult/press/preanre/2020/A_20201015_1.pdf';
+const treasuryAuctionUrl = (url: string) => /^https:\/\/www\.treasurydirect\.gov\/instit\/annceresult\/press\/preanre\/2020\/(?:R_20200819_3|A_20201015_1)\.pdf$/i.test(url);
+const treasuryGeneralUrl = (url: string) => [
+  'https://www.treasurydirect.gov/research-center/history-of-marketable-securities/',
+  'https://www.treasurydirect.gov/marketable-securities/',
+  'https://www.treasurydirect.gov/marketable-securities/selling-marketable-securities/',
+].includes(url);
+const RHEINMETALL_ANNUAL_2025 = 'https://ir.rheinmetall.com/media/document/214a8f96-a9e5-4296-9a89-e2b65122d258/assets/Rheinmetall-Annual-Report-2025.pdf';
 const munichAnnualLegalReport = (url: string) => url.includes('/2025-annual-report/MunichRe-Group-Annual-Report-2025-en.pdf');
 const munichHalfYearRiskUpdateReport = (url: string) => url.includes('/2026-half-year-financial-report/MunichRe-Half-Year-Financial-Report-2026-en.pdf');
 const munichRiskExcerptReport = (url: string) => munichAnnualLegalReport(url) || munichHalfYearRiskUpdateReport(url);
@@ -41,12 +50,18 @@ const SEC_CIK_BY_ISIN: Record<string, string> = {
   US6701002056: '0000353278',
 };
 const ISSUER_HOST_BY_ISIN: Record<string, string> = {
+  DE0007030009: 'ir.rheinmetall.com',
   DE0008232125: 'investor-relations.lufthansagroup.com',
   DE0008430026: 'www.munichre.com',
   US47759T1007: 'ir.jinkosolar.com',
   CA03880B1040: 'arbormetalscorp.com',
 };
 const KNOWN_STOCK_REPORT_PERIOD = (isin: string, url: string): string | null => {
+  if (isin === 'DE0007030009') {
+    if (url === 'https://ir.rheinmetall.com/media/document/1bbcaadf-0e67-45bc-80df-bba822823824/assets/DE0007030009-Q2-2026-EQ-E-00.pdf') return '2026-06-30';
+    if (url === RHEINMETALL_ANNUAL_2025) return '2025-12-31';
+    return null;
+  }
   if (isin === 'CA03880B1040') {
     if (url.endsWith('/46989_rns_2026-06-10_705e6e40-5c45-419b-96c0-21acf3219846.pdf')
       || url.endsWith('/46989_rns_2026-06-10_e4ebb3a3-86bd-496c-bbec-8c980d358494.pdf')) return '2026-04-30';
@@ -81,6 +96,22 @@ const keywordGroups = [
   /going concern|substantial doubt/ig,
   /legal proceedings|regulator|tariff|trade restriction|anti.dump|forced labor/ig,
 ];
+const mondelezKeywords = [
+  /Current portion of long-term debt/ig,
+  /ultimate outcome of these legal proceedings and regulatory and governmental matters/ig,
+  /unfavorable resolutions could involve substantial fines/ig,
+];
+const rheinmetallKeywords = [
+  /Earnings after taxes/ig,
+  /Earnings attributable to Rheinmetall AG shareholders/ig,
+  /Operating result margin/ig,
+  /Cash and cash equivalents/ig,
+  /Net financial debt|Net liquidity/ig,
+  /Financial liabilities|upcoming maturities/ig,
+  /There are no existential risks/ig,
+  /The opportunities and risks relating to the expected development of the Rheinmetall Group/ig,
+  /F126 frigate|regulatory constraints|export control/ig,
+];
 const insuranceKeywords = [
   /Legal risks\s+As part of the normal course of business/ig,
   /statements relating to opportunities and risks\s+as presented in the Munich Re Group Annual Report 2025\s+apply unchanged/ig,
@@ -103,6 +134,16 @@ const productKeywords = [
   /concentration|holdings|sector|derivative|securities lending|hedg|currency|währung/ig,
   /custody|custodian|counterparty|protocol|governance|regulator|risk factor|risiken/ig,
 ];
+const treasuryBondKeywords = [
+  /912810SQ2/ig,
+  /Interest Rate\s+1-1\/8%/ig,
+  /Interest Payment Dates\s+February 15 and August 15/ig,
+  /Maturity Date\s+August 15,? 2040/ig,
+  /direct obligations of the U\.S\. government/ig,
+  /backed by the full faith and credit of the United States government/ig,
+  /sell it before it matures|sell a Treasury marketable security/ig,
+  /bank, broker, or dealer/ig,
+];
 const qdveKeywords = [
   /IE00B3WJKG14/ig,
   /Das Anlagerisiko ist auf bestimmte Sektoren|Investment risk is concentrated in specific sectors/ig,
@@ -117,6 +158,21 @@ const qdveKeywords = [
   /shares on the secondary market[\s\S]{0,160}?prevailing market price|Sekundärmarkt/ig,
   /prevailing market price[\s\S]{0,140}?may deviate from the value of the Shares/ig,
   /Be aware of currency risk|Währungsrisiko|Share Class Currency|Währung der Reihe/ig,
+];
+const vgwdKeywords = [
+  /IE00B8GKDB10/ig,
+  /Product:\s*Vanguard FTSE All-World High Dividend Yield UCITS ETF/ig,
+  /short term secured lending of its investments/ig,
+  /The Fund may use derivatives/ig,
+  /0\.29% of the value of your investment p\.a\./ig,
+  /0\.04% of the value of your investment per year/ig,
+  /There is no performance fee for this Fund/ig,
+  /Top 10 approximately equals\s+[\d.]+% of net assets/ig,
+  /Number of stocks\s+[\d,]+/ig,
+  /Weighted exposure\s*Financials|Market allocation\s*United States/ig,
+  /The Fund is authorised in Ireland|regulated by the Central Bank/ig,
+  /ETF Shares in the Fund can be bought or sold on a daily basis/ig,
+  /Liquidity risk\. Lower liquidity|Counterparty risk\. The insolvency/ig,
 ];
 const allowedDocumentUrl = (value: string, curated: Set<string>, issuerHost?: string, cik?: string | null) => {
   try {
@@ -142,12 +198,19 @@ export function riskExcerpt(html: string, type: AnalysisPosition['type'] = 'Stoc
     .replace(/[ \t\r]+/g, ' ').replace(/\n\s*\n/g, '\n').trim();
   const found: string[] = [];
   const qdve = type === 'ETF' && isin === 'IE00B3WJKG14';
-  for (const pattern of insurance ? insuranceKeywords : type === 'Stock' ? keywordGroups
-    : qdve ? [...qdveKeywords, ...productKeywords] : productKeywords) {
+  const vgwd = type === 'ETF' && isin === 'IE00B8GKDB10';
+  const rheinmetall = type === 'Stock' && isin === 'DE0007030009';
+  const mondelez = type === 'Stock' && isin === 'US6092071058';
+  const treasuryBond = type === 'Bond' && isin === TREASURY_BOND_ISIN;
+  for (const pattern of insurance ? insuranceKeywords : type === 'Stock'
+    ? rheinmetall ? [...rheinmetallKeywords, ...keywordGroups]
+      : mondelez ? [...mondelezKeywords, ...keywordGroups] : keywordGroups
+    : qdve ? [...qdveKeywords, ...productKeywords] : vgwd ? [...vgwdKeywords, ...productKeywords]
+      : treasuryBond ? [...treasuryBondKeywords, ...productKeywords] : productKeywords) {
     pattern.lastIndex = 0;
     let match: RegExpExecArray | null;
     let count = 0;
-    while ((match = pattern.exec(plain)) && count < (qdve ? 1 : type === 'Stock' ? 5 : 4)) {
+    while ((match = pattern.exec(plain)) && count < (qdve || vgwd || rheinmetall || treasuryBond ? 1 : type === 'Stock' ? 5 : 4)) {
       const start = Math.max(0, match.index - 160);
       const end = Math.min(plain.length, match.index + 430);
       const fragment = plain.slice(start, end).trim();
@@ -224,7 +287,9 @@ export class PrimaryRiskResearch {
       const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
       if ([1, 2].includes(saved.version) && Array.isArray(saved.documents)) for (const doc of saved.documents.slice(-120)) {
         if (doc && typeof doc.source?.url === 'string' && typeof doc.excerpt === 'string' && typeof doc.hash === 'string'
-          && Number.isFinite(doc.fetchedAt) && typeof doc.source?.title === 'string') this.cache.set(doc.source.url, doc);
+          && Number.isFinite(doc.fetchedAt) && typeof doc.source?.title === 'string') this.cache.set(doc.source.url,
+            doc.source.title.trim() ? doc : { ...doc, source: { ...doc.source,
+              title: doc.source.url.split('/').filter(Boolean).pop() || 'Primärbericht' } });
       }
       if (saved.version === 2 && Array.isArray(saved.submissions)) for (const entry of saved.submissions) {
         if (entry && typeof entry.cik === 'string' && Number.isFinite(entry.fetchedAt) && Array.isArray(entry.filings))
@@ -352,23 +417,32 @@ export class PrimaryRiskResearch {
       }
     } else gaps.push('Für dieses Instrument ist noch keine verlässlich zugeordnete Primärquellenkennung hinterlegt.');
     const documents: RiskDocument[] = [];
-    for (const url of [...new Set(candidates)].filter(item => allowedDocumentUrl(item, curated, issuerHost, cik)
-      || (position.type !== 'Stock' && officialProductHost(new URL(item).hostname))).slice(0, MAX_DOCUMENTS)) {
+    for (const url of [...new Set(candidates)].filter(item => (allowedDocumentUrl(item, curated, issuerHost, cik)
+      || (position.type !== 'Stock' && officialProductHost(new URL(item).hostname)))
+      && !(position.type === 'Bond' && position.isin.trim().toUpperCase() === TREASURY_BOND_ISIN
+        && item.endsWith('/R_20200819_3.pdf') && !forceRefresh
+        && this.cache.has(TREASURY_OFFERING_2020)
+        && this.now() - this.cache.get(TREASURY_OFFERING_2020)!.fetchedAt < DAY))
+      .slice(0, position.type === 'Bond' && position.isin.trim().toUpperCase() === TREASURY_BOND_ISIN ? 5 : MAX_DOCUMENTS)) {
       const stored = this.cache.get(url);
       if (!forceRefresh && stored && this.now() - stored.fetchedAt < DAY &&
-        (position.type !== 'Stock' || stored.excerptVersion === (['US5801351017', 'DK0062498333', 'US6701002056'].includes(position.isin.trim().toUpperCase()) ? 3 : 2)) &&
+        (position.type !== 'Stock' || stored.excerptVersion === (['US5801351017', 'DK0062498333', 'US6701002056', 'DE0007030009', 'US6092071058'].includes(position.isin.trim().toUpperCase()) ? 3 : 2)) &&
         (position.isin.trim().toUpperCase() !== 'IE00B3WJKG14' || stored.excerptVersion === 3) &&
+        (position.isin.trim().toUpperCase() !== 'IE00B8GKDB10' || stored.excerptVersion === 2) &&
         (position.type === 'Stock' || stored.identity === position.isin.trim().toUpperCase())) { documents.push(stored); continue; }
       try {
+        const annualRheinmetall = position.isin.trim().toUpperCase() === 'DE0007030009' && url === RHEINMETALL_ANNUAL_2025;
+        const documentTimeout = annualRheinmetall ? 30000 : 12000;
+        const maxDocumentBytes = annualRheinmetall ? 40_000_000 : MAX_BYTES;
         const response = await this.requestFetch(url, { headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' },
-          signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(12000)]) : AbortSignal.timeout(12000) });
+          signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(documentTimeout)]) : AbortSignal.timeout(documentTimeout) });
         const finalUrl = response.url || url;
         if (!response.ok || !(allowedDocumentUrl(finalUrl, curated, issuerHost, cik)
           || (position.type !== 'Stock' && officialProductHost(new URL(finalUrl).hostname)))) throw new Error('Document unavailable');
         const length = Number(response.headers.get('content-length'));
-        if (length > MAX_BYTES) throw new Error('Document too large');
+        if (length > maxDocumentBytes) throw new Error('Document too large');
         const data = Buffer.from(await response.arrayBuffer());
-        if (data.length > MAX_BYTES) throw new Error('Document too large');
+        if (data.length > maxDocumentBytes) throw new Error('Document too large');
         const contentType = response.headers.get('content-type') ?? '';
         let plain: string;
         if (contentType.includes('pdf') || url.toLowerCase().endsWith('.pdf')) {
@@ -376,11 +450,16 @@ export class PrimaryRiskResearch {
           const parser = new PDFParse({ data });
           try { plain = (await parser.getText()).text; } finally { await parser.destroy(); }
         } else plain = data.toString('utf8');
-        if (position.type !== 'Stock' && !plain.toUpperCase().includes(position.isin.trim().toUpperCase())
-          && !(position.type === 'Bond' && plain.includes(position.isin.trim().slice(2)))) throw new Error('Instrument identity not confirmed');
+        const treasuryGeneral = position.type === 'Bond' && position.isin.trim().toUpperCase() === TREASURY_BOND_ISIN
+          && treasuryGeneralUrl(url) && documents.some(document => treasuryAuctionUrl(document.source.url));
+        if (treasuryGeneral && !/Treasury marketable securit(?:y|ies)|Treasury Bonds/i.test(plain)) throw new Error('Treasury context not confirmed');
+        if (position.type !== 'Stock' && !treasuryGeneral && !plain.toUpperCase().includes(position.isin.trim().toUpperCase())
+          && !(position.type === 'Bond' && plain.includes(position.isin.trim().slice(2, -1)))) throw new Error('Instrument identity not confirmed');
         if (position.isin.trim().toUpperCase() === 'DE0008430026' && !/Munich Re|Münchener Rückversicherungs/i.test(plain))
           throw new Error('Issuer identity not confirmed');
         if (position.isin.trim().toUpperCase() === 'DE0008232125' && !/Lufthansa Group|Deutsche Lufthansa AG/i.test(plain))
+          throw new Error('Issuer identity not confirmed');
+        if (position.isin.trim().toUpperCase() === 'DE0007030009' && !/Rheinmetall AG|Rheinmetall Group/i.test(plain))
           throw new Error('Issuer identity not confirmed');
         if (position.isin.trim().toUpperCase() === 'CA03880B1040' && !/ARBOR METALS CORP\.?/i.test(plain))
           throw new Error('Issuer identity not confirmed');
@@ -390,15 +469,24 @@ export class PrimaryRiskResearch {
           throw new Error('Report period not confirmed');
         const excerpt = riskExcerpt(plain, position.type, position.isin.trim().toUpperCase() === 'DE0008430026', position.isin.trim().toUpperCase());
         if (!excerpt) throw new Error('No risk evidence');
-        if (position.type !== 'Stock' && !excerpt.toUpperCase().includes(position.isin.trim().toUpperCase())
-          && !(position.type === 'Bond' && excerpt.includes(position.isin.trim().slice(2))))
+        if (position.type !== 'Stock' && !treasuryGeneral && !excerpt.toUpperCase().includes(position.isin.trim().toUpperCase())
+          && !(position.type === 'Bond' && excerpt.includes(position.isin.trim().slice(2, -1))))
           throw new Error('Instrument identity absent from risk excerpt');
         const period = filingDetails.get(url)?.period ?? KNOWN_STOCK_REPORT_PERIOD(position.isin.trim().toUpperCase(), url)
+          ?? (position.isin.trim().toUpperCase() === TREASURY_BOND_ISIN && treasuryAuctionUrl(url)
+            ? url.includes('/R_20200819_3.pdf') ? '2020-08-19' : '2020-10-15' : null)
           ?? (position.type === 'Stock' ? null : productDocumentPeriod(plain, this.now()));
-        const document: RiskDocument = { source: { title: filingDetails.get(url)?.title ?? url.split('/').pop() ?? 'Primärbericht', url }, excerpt,
+        const documentTitle = filingDetails.get(url)?.title
+          || (position.isin.trim().toUpperCase() === TREASURY_BOND_ISIN && treasuryGeneralUrl(url)
+            ? url.includes('/research-center/') ? 'TreasuryDirect: Staatsanleihen als direkte US-Verpflichtungen'
+              : url.includes('/selling-marketable-securities/') ? 'TreasuryDirect: Verkauf vor Fälligkeit'
+                : 'TreasuryDirect: Marktgängige US-Staatsanleihen'
+            : decodeURIComponent(new URL(url).pathname.split('/').filter(Boolean).pop() || new URL(url).hostname));
+        const document: RiskDocument = { source: { title: documentTitle, url }, excerpt,
           hash: createHash('sha256').update(data).digest('hex'), fetchedAt: this.now(), period,
-          ...(position.type === 'Stock' ? { excerptVersion: ['US5801351017', 'DK0062498333', 'US6701002056'].includes(position.isin.trim().toUpperCase()) ? 3 : 2 } : {}),
+          ...(position.type === 'Stock' ? { excerptVersion: ['US5801351017', 'DK0062498333', 'US6701002056', 'DE0007030009', 'US6092071058'].includes(position.isin.trim().toUpperCase()) ? 3 : 2 } : {}),
           ...(position.isin.trim().toUpperCase() === 'IE00B3WJKG14' ? { excerptVersion: 3 } : {}),
+          ...(position.isin.trim().toUpperCase() === 'IE00B8GKDB10' ? { excerptVersion: 2 } : {}),
           ...(position.type !== 'Stock' ? { identity: position.isin.trim().toUpperCase() } : {}) };
         this.cache.set(url, document);
         documents.push(document);
@@ -415,8 +503,18 @@ export class PrimaryRiskResearch {
       const index = gaps.findIndex(gap => gap.includes('Primärquellenkennung'));
       if (index >= 0) gaps.splice(index, 1);
     }
+    if (position.type === 'Bond' && position.isin.trim().toUpperCase() === TREASURY_BOND_ISIN
+      && documents.some(document => treasuryAuctionUrl(document.source.url))) {
+      for (let index = gaps.length - 1; index >= 0; index--) {
+        const failedUrl = gaps[index].replace(/^Primärdokument konnte nicht aktuell geladen werden: /, '');
+        if (treasuryAuctionUrl(failedUrl)) gaps.splice(index, 1);
+      }
+    }
     if (!cik && documents.length && !documents.some(document => document.period &&
-      this.now() - Date.parse(document.period) < 400 * DAY)) gaps.push('Kein datiertes aktuelles Primärdokument zur exakten Instrumentkennung gefunden.');
+      this.now() - Date.parse(document.period) < 400 * DAY)
+      && !(position.type === 'Bond' && position.isin.trim().toUpperCase() === TREASURY_BOND_ISIN
+        && documents.some(document => treasuryAuctionUrl(document.source.url))))
+      gaps.push('Kein datiertes aktuelles Primärdokument zur exakten Instrumentkennung gefunden.');
     if (!documents.length) gaps.push('Kein lesbares aktuelles Primärdokument für die Risikoprüfung verfügbar.');
     return { documents, discoveryChecked, gaps };
   }

@@ -20,7 +20,18 @@ it('provides filing discovery pointers by normalized ISIN without exposing holdi
 
 it('identifies the Apollo share class and requires a separately evidenced NAV date', () => {
   const positions = buildAnalysisPositions([{ ID: 32, name: 'Apollo', isin: 'LU3170240538', symbol: 'A41HPL', type: 'Fund', current_shares: 0.1 }] as Asset[]);
-  expect(buildResearchSecurities(positions)[0].discoveryHints).toMatchObject({ issuer: 'Apollo Global Private Markets ELTIF, Klasse A2 UNH', sourceUrls: ['https://www.apollo.com/agpm-eltif'] });
+  expect(buildResearchSecurities(positions)[0].discoveryHints).toMatchObject({ issuer: 'Apollo Global Private Markets ELTIF, Klasse A2 UNH', sourceUrls: [
+    'https://www.francetransactions.com/IMG/pdf/dic-apollo-private-equity.pdf',
+    'https://www.apollo.com/agpm-eltif',
+  ] });
   expect(fundResearchInstructions).toContain('Bewertungsstichtag');
   expect(fundResearchInstructions).toContain('kein Nachweis eines offiziellen Fonds-NAV');
+});
+
+it('provides the listed SpaceX Class A identity and SEC discovery pointers', () => {
+  const positions = buildAnalysisPositions([{ ID: 34, name: 'SpaceX', isin: 'US84615Q1031', symbol: 'SPCX', type: 'Stock', current_shares: 1 }] as Asset[]);
+  expect(buildResearchSecurities(positions)[0].discoveryHints).toMatchObject({
+    issuer: 'Space Exploration Technologies Corp. (SpaceX)', listing: expect.stringContaining('SEC CIK 0001181412'),
+    sourceUrls: expect.arrayContaining(['https://www.sec.gov/edgar/browse/?CIK=0001181412&owner=include']),
+  });
 });

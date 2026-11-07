@@ -20,7 +20,7 @@ import type { MarketForecastProvider } from './marketForecastProvider';
 import { candidateForecastPosition, validCandidateMarketQuote, type CandidateMarketQuote, type CandidateMarketQuoteProvider } from './candidateMarketQuote';
 import type { DeterministicResearchProvider, DeterministicResearchResult } from './deterministicOnlineResearch';
 import { PrimaryRiskResearch } from './primaryRiskResearch';
-import { PrimaryRiskAssessmentCache, riskAssessmentSchema, riskForModel, validateRiskAssessment,
+import { PrimaryRiskAssessmentCache, addRiskReviewContext, riskReviewInput, riskAssessmentSchema, riskForModel, validateRiskAssessment,
   type PrimaryRiskRecord } from './primaryRiskAssessment';
 import { allRiskCheckNames, riskReviewInstructions } from './assetRiskPolicy';
 import {
@@ -57,7 +57,14 @@ function analysisSchema(request: PortfolioAnalysisRequest, sources: AnalysisSour
         tradeCheck: { type: 'object', additionalProperties: false, properties: {
           costs: { type: 'string' }, taxes: { type: 'string' }, conclusion: { type: 'string' },
         }, required: ['costs', 'taxes', 'conclusion'] },
-      }, required: ['assetId', 'action', 'rationale', 'risk', 'sourceIndexes', 'tradeCheck', 'plannedAmountEUR', 'navEvidence', 'tradeDecision'],
+        orderRecommendation: { type: ['object', 'null'], additionalProperties: false, properties: {
+          type: { type: 'string', enum: ['market', 'limit', 'stop', 'trailing-stop'] },
+          validity: { type: ['string', 'null'], enum: ['day', '360-days', null] },
+          execution: { type: 'string', enum: ['finpal-preview', 'manual-trade-republic'] },
+          priceInstruction: { type: 'string' }, rationale: { type: 'string' },
+        }, required: ['type', 'validity', 'execution', 'priceInstruction', 'rationale'] },
+        executionBlocker: { type: ['string', 'null'], enum: ['independent', 'funding-only', 'scale-only', null] },
+      }, required: ['assetId', 'action', 'rationale', 'risk', 'sourceIndexes', 'tradeCheck', 'plannedAmountEUR', 'navEvidence', 'tradeDecision', 'orderRecommendation', 'executionBlocker'],
     } },
     newAssetRecommendations: { type: 'array', maxItems: request.targetAssetId === undefined ? 5 : 0, items: {
       type: 'object', additionalProperties: false,
@@ -67,8 +74,14 @@ function analysisSchema(request: PortfolioAnalysisRequest, sources: AnalysisSour
         type: { type: 'string', enum: ['Stock', 'ETF', 'Fund', 'Bond', 'Crypto', 'Commodity', 'RealEstate', 'CashEquivalent'] },
         action: { type: 'string', enum: ['Kaufen', 'Prüfen'] },
         rationale: { type: 'string' }, risk: { type: 'string' },
+        orderRecommendation: { type: ['object', 'null'], additionalProperties: false, properties: {
+          type: { type: 'string', enum: ['market', 'limit', 'stop', 'trailing-stop'] },
+          validity: { type: ['string', 'null'], enum: ['day', '360-days', null] },
+          execution: { type: 'string', enum: ['finpal-preview', 'manual-trade-republic'] },
+          priceInstruction: { type: 'string' }, rationale: { type: 'string' },
+        }, required: ['type', 'validity', 'execution', 'priceInstruction', 'rationale'] },
         sourceIndexes: { type: 'array', minItems: 1, items: { type: 'integer', minimum: 0, maximum: sources.length - 1 } },
-      }, required: ['name', 'isin', 'symbol', 'type', 'action', 'rationale', 'risk', 'sourceIndexes', 'plannedAmountEUR'],
+      }, required: ['name', 'isin', 'symbol', 'type', 'action', 'rationale', 'risk', 'sourceIndexes', 'plannedAmountEUR', 'orderRecommendation'],
     } },
   }, required: ['summary', 'infos', 'warnings', 'recommendations', 'newAssetRecommendations', 'optimizationInputs', 'fundamentalRisks'],
 }; }
@@ -205,6 +218,16 @@ export function validateAnalysisResult(value: unknown, request: PortfolioAnalysi
   const result = value as Pick<PortfolioAnalysisResult, 'summary' | 'infos' | 'warnings' | 'recommendations' | 'newAssetRecommendations'>;
   const text = (s: unknown) => typeof s === 'string' && s.trim().length > 0 && s.length <= 10000;
   const fail = (reason: string): never => { throw new AnalysisValidationError(reason); };
+  const validOrderRecommendation = (order: AssetRecommendation['orderRecommendation'], action: string, type: string) => {
+    if (!['Kaufen', 'Verkaufen'].includes(action)) return order === null || order === undefined;
+    if (!order || !['market', 'limit', 'stop', 'trailing-stop'].includes(order.type)
+      || !['finpal-preview', 'manual-trade-republic'].includes(order.execution)
+      || !text(order.priceInstruction) || !text(order.rationale)
+      || (order.type === 'market' ? order.validity !== null : !['day', '360-days'].includes(order.validity ?? ''))
+      || (['stop', 'trailing-stop'].includes(order.type) && order.execution !== 'manual-trade-republic')
+      || (order.execution === 'finpal-preview' && !['Stock', 'ETF'].includes(type))) return false;
+    return true;
+  };
   if (!result || typeof result !== 'object' || !text(result.summary)) fail('Die Zusammenfassung fehlt oder ist ungültig.');
   if (result.infos !== undefined && (!Array.isArray(result.infos) || result.infos.length > 100 || !result.infos.every(text))) fail('Die Infos haben ein ungültiges Format.');
   if (!Array.isArray(result.warnings) || result.warnings.length > 100 || !result.warnings.every(text)) fail('Die Warnhinweise haben ein ungültiges Format.');
@@ -234,6 +257,9 @@ export function validateAnalysisResult(value: unknown, request: PortfolioAnalysi
       || (rec.warnings !== undefined && (!Array.isArray(rec.warnings) || !rec.warnings.every(text)))) fail(prefix + 'Die Angaben zur Einzelanalyse sind ungültig.');
     if ((requireTradeChecks || rec.tradeCheck !== undefined) && (!rec.tradeCheck
       || !text(rec.tradeCheck.costs) || !text(rec.tradeCheck.taxes) || !text(rec.tradeCheck.conclusion))) fail(prefix + 'Die direkte Kosten- und Steuerprüfung fehlt oder ist unvollständig.');
+    if (rec.orderRecommendation !== undefined && !validOrderRecommendation(rec.orderRecommendation, rec.action, position.type)) fail(prefix + 'Die Orderart ist nicht ausführbar oder passt nicht zur Aktion. Zulässig sind Market, Limit, Stop und Trailing Stop; Stop-Varianten werden nur manuell bei Trade Republic ausgeführt.');
+    if (rec.executionBlocker !== undefined && !['independent', 'funding-only', 'scale-only', null].includes(rec.executionBlocker)) fail(prefix + 'Der Ausführungssperrgrund ist ungültig.');
+    if (['Kaufen', 'Verkaufen'].includes(rec.action) && rec.executionBlocker) fail(prefix + 'Ein empfohlener Trade darf nicht zugleich als gesperrt markiert sein.');
     if (requireTradeChecks && isEltif(position) && !rec.navEvidence) fail(prefix + 'Getrennte NAV-Nachweise fuer diese ELTIF-Anteilsklasse fehlen; unbekannte Werte als null angeben.');
     if (rec.navEvidence !== undefined && rec.navEvidence !== null) {
       const nav = rec.navEvidence;
@@ -275,6 +301,7 @@ export function validateAnalysisResult(value: unknown, request: PortfolioAnalysi
       || (rec.isin.trim() && !/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(normalize(rec.isin)))
       || !['Stock', 'ETF', 'Fund', 'Bond', 'Crypto', 'Commodity', 'RealEstate', 'CashEquivalent'].includes(rec.type)
       || !['Kaufen', 'Prüfen'].includes(rec.action) || !text(rec.rationale) || !text(rec.risk)) fail('Eine neue Kaufidee enthält ungültige oder fehlende Angaben.');
+    if (rec.orderRecommendation !== undefined && !validOrderRecommendation(rec.orderRecommendation, rec.action, rec.type)) fail('Die Orderart einer neuen Kaufidee ist ungültig.');
     if (!Array.isArray(rec.sourceIndexes) || !rec.sourceIndexes.length
       || !rec.sourceIndexes.every(i => Number.isInteger(i) && i >= 0 && i < sources.length)) fail('Neue Kaufideen benötigen gültige Recherchequellen.');
     for (const key of ['isin', 'symbol', 'name'] as const) {
@@ -589,6 +616,7 @@ export class PortfolioAnalysisService {
     try {
       progress('documents');
       const set = await this.primaryRiskResearch.collect(position, controller.signal, previous.report.sources, true);
+      addRiskReviewContext(position, set, savedRequest.investorContext);
       let assessment: unknown = null;
       if (set.documents.length && set.discoveryChecked) {
         progress('assessment');
@@ -607,11 +635,7 @@ export class PortfolioAnalysisService {
         }
         const evidence = await this.response(key, model, savedRequest.provider, {
           instructions: riskReviewInstructions(position),
-          input: [{ role: 'user', content: JSON.stringify({ security: { name: position.name, isin: position.isin, symbol: position.symbol,
-            ...(position.type === 'Bond' ? { investorBaseCurrency: 'EUR',
-              ...(position.bondHolding?.source === 'user-confirmed' ? { confirmedNominalCurrency: position.bondHolding.currency } : {}) } : {}) },
-            documents: set.documents.map((document, documentIndex) => ({ documentIndex, source: document.source,
-              period: document.period, excerpt: document.excerpt })) }) }],
+          input: [{ role: 'user', content: JSON.stringify(riskReviewInput(position, set)) }],
           text: { format: { type: 'json_schema', name: 'primary_risk_assessment', strict: true, schema: riskAssessmentSchema(position) } },
         }, controller.signal, () => progress('assessment'), () => progress('assessment'));
         assessment = JSON.parse(responseText(evidence, 'analysis'));
@@ -825,6 +849,7 @@ export class PortfolioAnalysisService {
         notify(true);
         const sourceHints = this.researchCache.findForSecurity(securities[positionIndex], true)?.sources ?? [];
         const set = await this.primaryRiskResearch.collect(position, controller.signal, sourceHints);
+        addRiskReviewContext(position, set, request.investorContext);
         let record = this.primaryRiskCache.get(position, set);
         if (record) reusedRiskAssetIds.push(position.id);
         if (!record) {
@@ -834,11 +859,7 @@ export class PortfolioAnalysisService {
             try {
               const evidence = await this.response(key, model, request.provider, {
               instructions: riskReviewInstructions(position),
-              input: [{ role: 'user', content: JSON.stringify({ security: { name: position.name, isin: position.isin, symbol: position.symbol,
-                ...(position.type === 'Bond' ? { investorBaseCurrency: 'EUR',
-                  ...(position.bondHolding?.source === 'user-confirmed' ? { confirmedNominalCurrency: position.bondHolding.currency } : {}) } : {}) },
-                documents: set.documents.map((document, documentIndex) => ({ documentIndex, source: document.source,
-                  period: document.period, excerpt: document.excerpt })) }) }],
+              input: [{ role: 'user', content: JSON.stringify(riskReviewInput(position, set)) }],
               text: { format: { type: 'json_schema', name: 'primary_risk_assessment', strict: true, schema: riskAssessmentSchema(position) } },
               }, controller.signal, notify, onRetry);
               assessment = JSON.parse(responseText(evidence, 'analysis'));
@@ -898,10 +919,12 @@ export class PortfolioAnalysisService {
       analysisInput.instructions += ' Führe bei jeder Bestands-Empfehlung eine direkte Kosten- und Steuerprüfung in tradeCheck durch: costs nennt den aktuellen Gesamtmarktwert, Gebührenszenarien in EUR und Prozent, möglichen Nettoverkaufserlös vor Spread und Steuern sowie fehlende Orderkosten; taxes bewertet die anwendbaren Regeln ausschließlich anhand der recherchierten Quellen und kennzeichnet unbekannte individuelle Daten; conclusion zieht daraus eine konkrete Schlussfolgerung für die Aktion. Nutze die gelieferten tradeEconomics.feeScenarios. Mit investorContext gelten die gespeicherten Orderkosten des jeweiligen Anbieters; leere feeScenarios bedeuten unbekannte Kosten. Ohne investorContext gilt 1 EUR je regulärer Trade-Republic-Order, auch bei Bruchstücken. Das doppelte Gebührenszenario gilt nur bei zwei gesonderten Orders; Bruchstücke allein begründen keine zweite Order. Sparplanausführungen sind ausgenommen. Keine exakten Handelsmengen empfehlen. Für Teilverkäufe ist der Gebührenanteil höher; Szenarien nicht als tatsächliche Gebührenbestätigung ausgeben. Bei Kaufen auch Gebühren im Verhältnis zum Kaufbudget prüfen; Kaufbetrag und konkrete Ausführung sind unbekannt. Den bestätigten Steuerwohnsitz im jeweiligen Zeitraum verwenden; ohne diese Angabe Deutschland nur als bedingtes Szenario behandeln. Keine persönliche Steuerersparnis berechnen. Vorhandene Kursverluste sind unrealisiert, bis ein Verkauf erfolgt. FinPal-costBasis ist keine bestätigte steuerliche FIFO-Basis; realizedGainLoss einschließlich Dividenden niemals mit steuerlichen Aktiengewinnen oder Verlusttöpfen gleichsetzen. Ein steuerlicher Verlust ist kein zusätzlicher Verkaufserlös und eine mögliche spätere Verrechnung keine sichere sofortige Auszahlung. Bei Aktienverlusten unter deutschem Privatsteuerrecht die Beschränkung auf Aktienveräußerungsgewinne erläutern, nicht mit Dividenden verrechnen. Aussagen mit gelieferten Quellennummern belegen. Wenn Gebühren den Wert einer kleinen Restposition aufzehren, nicht allein wegen Einkommensprofil oder Aufräumen verkaufen: Halten oder Prüfen und den Kostengrund nennen. Eine Entscheidung nicht mit einem pauschalen Prüfe Gebühren und Steuern vertagen, sondern die verfügbaren Daten jetzt auswerten und nur konkret fehlende Daten benennen. Fehlende Daten nicht erfinden. Kosten, Steuern und Ergebnis jeweils kompakt in ein bis zwei Sätzen.';
       if (request.targetAssetId !== undefined) analysisInput.instructions += ' Einzelanalyse: Bewerte ausschliesslich das ausgewaehlte Asset in portfolio.positions. contextPortfolio dient nur als Kontext fuer Diversifikation, Konzentration und Budget; erstelle keine Empfehlungen fuer dessen andere Assets. Recherchiere keine neuen Kaufideen und liefere newAssetRecommendations als leere Liste. Die Zusammenfassung und Warnungen beziehen sich nur auf dieses Asset.';
       analysisInput.instructions += ' Finanzierungsprüfung: Gib plannedAmountEUR je Empfehlung an: für Kaufen den lokal berechneten Kaufbetrag ohne Gebühren, für Verkaufen den lokal berechneten Brutto-Verkaufsbetrag vor Gebühren, Spread und Steuern; für Halten und Prüfen null. Das sind EUR-Umschichtungsszenarien, keine exakten Stückzahlen oder ausführbaren Orders. Fehlende Daten erlauben null, dann ist die Finanzierung ausdrücklich ungeklärt. Plane alle Aufstockungen und neuen Käufe gemeinsam, nicht jeweils mit dem gesamten Budget. Nur Verkaufsbeträge aus tatsächlich empfohlenen Verkäufen einrechnen, maximal deren belegten EUR-Marktwert, niemals Gewinne zusätzlich zum Verkaufserlös addieren. Kaufbeträge plus gespeicherte Ordergebühr je Kauf- oder Verkaufsvorschlag (neue Kaufideen: defaultCustody; ohne investorContext: 1 EUR je regulärer Trade-Republic-Order) dürfen Barmittel (profile.buyBudget) plus Brutto-Verkaufserlöse nicht übersteigen. Lass Spielraum für Spreads und unbekannte Steuern; keinen persönlichen Steuerabzug oder eine Erstattung erfinden und die Finanzierung daher nur bedingt bestätigen. Bei fehlendem Budget und fehlender sinnvoller Umschichtung Prüfen wählen. Abhängige Käufe erst nach Verkäufen und Gutschrift begründen. Vorläufige Einzelanalysen müssen auch die weiter bestehenden Kauf-/Verkaufsszenarien aus existingTradeScenarios berücksichtigen, nicht deren Budget erneut vergeben.';
-      analysisInput.instructions += ' ELTIFs: quoteFreshness.status nav-unverified bewertet nur den Broker-Tick; brokerTickStatus old bedeutet keinen veralteten offiziellen NAV. Weder 48 Stunden noch ein alter Broker-Tick begruenden allein eine NAV-Warnung oder die Aktion Pruefen. Liefere navEvidence fuer jede gehaltene ELTIF-Anteilsklasse: exakte ISIN, offizieller NAV je Anteil, NAV-Währung, Bewertungsstichtag als YYYY-MM-DD, belegter Veröffentlichungszyklus, daraus belegter naechster Veröffentlichungstermin als YYYY-MM-DD und sourceIndexes. Nur Daten aus geoeffneten offiziellen Quellen der exakten Anteilsklasse; fehlende Werte null, keine Schaetzungen aus Brokerpreisen oder anderen Anteilsklassen. Der Termin beruecksichtigt die belegte Veröffentlichungsverzoegerung. Eine monatliche oder quartalsweise Bewertung kann innerhalb ihres Zyklus aktuell sein, auch wenn der Stichtag mehr als 48 Stunden zurueckliegt. Ist der Zyklus oder Termin nicht belegt, ist die NAV-Aktualität ungeklärt. Ein Datenportal ohne NAV belegt nur den fehlenden Nachweis dort, nicht die weltweite Nichtverfuegbarkeit. Bei anderen Assets navEvidence null.';
+      analysisInput.instructions += ' Orderart: Liefere orderRecommendation für jede Empfehlung. Bei Halten oder Prüfen ist sie null. Bei Kaufen oder Verkaufen wähle genau market, limit, stop oder trailing-stop. Market hat validity null; Limit, Stop und Trailing Stop verwenden day oder 360-days. Stop und Trailing Stop dienen einer bedingten späteren Auslösung und dürfen nicht als sicher ausführbare sofortige Umschichtung oder als garantierter Mindestverkaufskurs dargestellt werden; execution ist dafür manual-trade-republic. Bei trailing-stop muss priceInstruction die in der Live-Ordermaske zu prüfende Referenz sowie den absoluten oder prozentualen Nachlaufabstand nennen; ohne aktuelle Volatilitäts-, Bid/Ask- und Brokerdaten keinen Abstand erfinden. FinPal kann derzeit nur Market per EUR-Betrag und Limit per ganzer Stückzahl für Aktien/ETF previewen; dafür execution finpal-preview, sonst manual-trade-republic. Ohne aktuellen handelbaren Bid/Ask und bestätigten Spread keinen konkreten Limit-, Stop- oder Trailing-Abstand erfinden. Begründe die Orderart anhand Liquidität, Dringlichkeit, Preisrisiko und Zweck der Empfehlung. Eine zeitnahe, preisbegrenzte Rebalancing-Ausführung ist typischerweise Limit. Trailing Stop ist eine Risikosteuerung für eine bestehende Position und kein Ersatz für einen sofort erforderlichen Verkauf oder die Finanzierung eines abhängigen Kaufs.';
+      analysisInput.instructions += ' ELTIFs: quoteFreshness.status nav-unverified bewertet nur den Broker-Tick; brokerTickStatus old bedeutet keinen veralteten offiziellen NAV. Weder 48 Stunden noch ein alter Broker-Tick begruenden allein eine NAV-Warnung oder die Aktion Pruefen. Liefere navEvidence fuer jede gehaltene ELTIF-Anteilsklasse: exakte ISIN, offizieller NAV je Anteil, NAV-Währung, Bewertungsstichtag als YYYY-MM-DD, belegter Veröffentlichungszyklus, daraus belegter naechster Veröffentlichungstermin als YYYY-MM-DD und sourceIndexes. Nur Daten aus geoeffneten offiziellen Quellen der exakten Anteilsklasse; fehlende Werte null, keine Schaetzungen aus Brokerpreisen oder anderen Anteilsklassen. Der Termin beruecksichtigt die belegte Veröffentlichungsverzoegerung. Eine monatliche oder quartalsweise Bewertung kann innerhalb ihres Zyklus aktuell sein, auch wenn der Stichtag mehr als 48 Stunden zurueckliegt. Ist der Zyklus oder Termin nicht belegt, ist die NAV-Aktualität ungeklärt. Ein Datenportal ohne NAV belegt nur den fehlenden Nachweis dort, nicht die weltweite Nichtverfuegbarkeit. structuralRisks bei einem ELTIF sind geprüfte strukturelle Produktmerkmale und keine automatische Vollsperre. Bei executionConstraint eltif-nav-and-redemption-unverified darfst du dennoch eine qualitative Richtung Kaufen, Halten oder Verkaufen begründen; Kaufen oder Verkaufen muss dann plannedAmountEUR null haben und ausdrücklich unter dem Vorbehalt eines aktuellen offiziellen NAV, eines bestätigten Rückgabefensters und einer Ausführungsprüfung stehen. Ein solcher möglicher Verkaufserlös finanziert keine anderen Käufe. Bei anderen Assets navEvidence null.';
       analysisInput.instructions += forecastAnalysisInstructions + robustAnalysisInstructions + decisionProfileInstructions;
       analysisInput.instructions += ' decisionReadiness reviewed-uncertainty in verifiedFundamentalRisks bedeutet: Primärberichte geprüft, begrenzte Restunsicherheit bleibt offen. Das ist kein zusätzlicher Risikoblock für eine begründete Handlungsempfehlung, sofern der robuste Modellstatus stabil ist und keine wesentlichen Risiken belegt sind. Nenne die offenen Punkte und ihre möglichen Folgen; behaupte keine vollständige Entwarnung.';
-      analysisInput.instructions += ' optimization.robust.cashOnlyComparison ist ein eigenständiger Vergleich: ausschließlich freies erfasstes Cash oberhalb der Reserve für Käufe einsetzen, ohne Verkauf oder Verkaufserlös. Nenne Status, verbleibendes Cash und entscheidende Stress- oder Produktrisiken getrennt von der vollständigen Umschichtung. Ein gescheitertes Gesamtszenario belegt nicht, dass Cash-Halten besser ist. Die Cash-Variante ist ein Modellszenario; selbst stable-scenario ist keine Ausführungsfreigabe. Bei review-required oder unavailable keine Cash-Käufe als Empfehlung oder Finanzierungsquelle ausgeben.';
+      analysisInput.instructions += ' Erstelle nach der Prüfung einen ausführbaren Teilplan über alle Assets und neuen Kandidaten, deren konkrete Trades nicht blockiert sind. Ein Steuer-, Produkt-, Daten- oder Ausführungshindernis friert nur den betroffenen Trade und davon finanziell abhängige Käufe ein; unabhängige Käufe, Verkäufe und Haltentscheidungen bleiben gemeinsam zu prüfen. Verwende für empfohlene Trades exakt die Beträge des anhand deiner Entscheidungen neu berechneten allocationPlan. Ein zurückgestellter Verkauf darf keinen Kauf finanzieren. optimization.robust.cashOnlyComparison bleibt nur ein Vergleichsfall und darf nicht automatisch an die Stelle des umfassenderen ausführbaren Teilplans treten. Negative Stressvergleiche sind Warnhinweise und allein kein Sperrgrund.';
+      analysisInput.instructions += ' Setze executionBlocker bei Kaufen oder Verkaufen immer null. Bei Halten oder Prüfen ist independent nur für einen vom Betrag unabhängigen Steuer-, Produkt-, Daten-, Strategie- oder Ausführungsgrund dieses Assets zulässig. funding-only bedeutet: Der Trade wäre eigenständig geeignet, sein bisheriger Betrag hing aber von einem zurückgestellten Verkauf ab. scale-only bedeutet: Produkt und Richtung sind grundsätzlich geeignet, aber erst die modellierte Größe, Zielquote, Stilverschiebung oder Konzentrationswirkung ist zu hoch. Einen modellierten Kauf nicht allein wegen entfallener Verkaufserlöse oder einer zu großen sale-finanzierten Zielquote vollständig verwerfen: Setze funding-only beziehungsweise scale-only; der lokale Optimierer berechnet ihn mit freiem Cash und Gebühren neu. Nach einer Korrektur sind ausschließlich der neue Betrag und seine neue Zielquote zu beurteilen. Ist diese kleinere Variante tragfähig, muss die Empfehlung Kaufen und executionBlocker null lauten; bleibt auch sie aus einem konkreten Grund ungeeignet, independent wählen und genau diesen Grund nennen. Ein aktueller Marktrückgang darf bei unveränderten Produktgrundlagen als günstigerer Einstiegskontext berücksichtigt werden, ist aber allein kein Kaufsignal. Bei langem Horizont und hoher bestätigter Verlusttragfähigkeit eine positive, diversifizierte, kostenbereinigte Teilplan-Variante nicht allein wegen kurzfristiger Volatilität oder Markt-Timing-Ungewissheit ablehnen.';
       analysisInput.instructions += ' ETFs können lokale FinPal-ETF-Historienmodelle enthalten: mindestens fünf Jahre bereinigte Handelstagskurse, 2.000 Moving-Block-Bootstrap-Pfade mit 252 Handelstagen Horizont, Unsicherheit und EUR-Risikohistorie. Das sind historische Modellszenarien mit geschrumpftem Signal, keine veröffentlichten Analystenkursziele oder garantierten Renditen. Vorhandene lokale ETF-Daten unverändert verwenden und nicht als fehlende veröffentlichte Prognose beanstanden. Modell-Referenzwert ist keine ausführbare Preisvorhersage. Fonds-Ausschüttungen sind in bereinigten historischen Kursen berücksichtigt; künftig nicht zusätzlich in die Rendite einrechnen. Ein positives Szenario verlangt weiterhin gemeinsame Budget-, Stress-, Gebühren- und Produktrisikoprüfung. Bei ETF-Produktprüfung nicht einzelne Verluste oder Margenprobleme von Portfoliounternehmen als Verlustlage des Fonds gleichsetzen; belegte wesentliche Fondsrisiken bleiben relevant.';
       analysisInput.instructions += ' optimization.reviewedUnavailableKeys kennzeichnet nach abgeschlossener gezielter Nachrecherche weiterhin nicht beschaffbare Prognose- oder Volatilitätsdaten. Diese Prognoseprüfung ist abgeschlossen: als neutralen Hinweis in infos nennen, nicht allein deshalb Prüfen wählen oder die weitere qualitative Analyse blockieren. Konzentration, Unternehmenslage, Risiko, Kosten und Portfolioeignung anhand vorhandener Belege weiter beurteilen. Für diese Positionen keinen optimierten Handelsbetrag erfinden; Halten ist der unveränderte Modellbestand, keine durch eine Prognose belegte Anlageempfehlung. Andere konkret entscheidungsrelevante Datenlücken bleiben Prüfgründe.';
       let validated!: ReturnType<typeof validateAnalysisResult>;
@@ -968,9 +991,7 @@ export class PortfolioAnalysisService {
                 try {
                   const evidence = await this.response(key, model, request.provider, {
                     instructions: riskReviewInstructions(position),
-                    input: [{ role: 'user', content: JSON.stringify({ security: { name: position.name, isin: position.isin, symbol: position.symbol },
-                      documents: set.documents.map((document, documentIndex) => ({ documentIndex, source: document.source,
-                        period: document.period, excerpt: document.excerpt })) }) }],
+                    input: [{ role: 'user', content: JSON.stringify(riskReviewInput(position, set)) }],
                     text: { format: { type: 'json_schema', name: 'primary_risk_assessment', strict: true, schema: riskAssessmentSchema(position) } },
                   }, controller.signal, notify, onRetry);
                   assessment = JSON.parse(responseText(evidence, 'analysis'));

@@ -59,6 +59,17 @@ it('distinguishes blank from explicit zero, allows a monthly deficit, and reject
   }
 });
 
+it('keeps an explicitly stored execution buffer separate and protected in addition to reserve and withdrawals', () => {
+  const r = request();
+  r.profile.decisionDetails = parseDecisionDetails({ reserveEUR: '100', executionBufferEUR: '25,50',
+    plannedWithdrawalsEUR: '50', confirmedAt: new Date().toISOString() });
+  expect(r.profile.decisionDetails).toMatchObject({ reserveEUR: 100, executionBufferEUR: 25.5, plannedWithdrawalsEUR: 50 });
+  expect(protectedCashEUR(r.profile)).toBe(175.5);
+  const plan = buildForecastAllocation(r, [robustReturnForecastFixture('1', { targetPrice: 200 })]);
+  expect(plan.projectedCashEUR).toBeGreaterThanOrEqual(175.5);
+  expect(plan.assumptions.join(' ')).toContain('Ausführungspuffer');
+});
+
 it('accepts a total loss capacity of 100 percent without treating it as EUR or personal drawdown tolerance', () => {
   const r = request();
   r.profile.decisionDetails = parseDecisionDetails({ lossCapacityPercent: '100', lossCapacityUnit: 'percent', confirmedAt: new Date().toISOString() });

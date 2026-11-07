@@ -166,6 +166,21 @@ it('respects confirmed weight bands as hard constraints instead of maximizing a 
   expect(plan.positions[0].source).toBe('user-confirmed');
 });
 
+it('reoptimizes around a cited concentration without inventing a universal position cap', () => {
+  const r = request();
+  r.positions.push({ ...r.positions[0], id: 2, name: 'Diversified ETF', symbol: 'DIV', isin: 'IE00DIV', type: 'ETF' });
+  const concentrated = returnForecastFixture('1', { targetPrice: 200, annualVolatilityPercent: 20 });
+  const diversified = returnForecastFixture('2', { targetPrice: 160, annualVolatilityPercent: 20 });
+  const unrestricted = buildForecastAllocation(r, [concentrated, diversified]);
+  const constrained = buildForecastAllocation(r, [concentrated, diversified], [], undefined, undefined, [], undefined, false,
+    { noIncreaseKeys: new Set(['1']) });
+  expect(unrestricted.positions[0].amountEUR).toBeGreaterThan(0);
+  expect(constrained.positions[0]).toMatchObject({ action: 'Halten', amountEUR: null });
+  expect(constrained.positions[0].targetValueEUR).toBeLessThanOrEqual(constrained.positions[0].currentValueEUR! + 0.5);
+  expect(constrained.positions[1].amountEUR).toBeGreaterThan(0);
+  expect(constrained.assumptions.join(' ')).toContain('keine pauschalen Konzentrationsgrenzen');
+});
+
 it('does not churn a small holding when fixed order fees erase the expected improvement', () => {
   const r = request(); r.profile.buyBudget = 0; r.positions[0].shares = .04;
   const plan = buildForecastAllocation(r, [returnForecastFixture('1', { targetPrice: 40 })]);

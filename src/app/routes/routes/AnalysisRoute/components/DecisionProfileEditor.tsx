@@ -40,7 +40,7 @@ export default function DecisionProfileEditor({ value = {}, onChange, busy }: { 
       </label>
     </div>
     <p>Die finanzielle Verlusttragfähigkeit kann in EUR oder von 0 bis einschließlich 100 % angegeben werden. Prozent beziehen sich auf das in FinPal erfasste Portfolio einschließlich Cash, ohne externes Vermögen. Beim Wechsel der Einheit wird der bisherige Verlustwert geleert; es erfolgt keine automatische Umrechnung.</p>
-    <p>Reserve und zusätzliche Entnahmen werden addiert und für Käufe sowie Gebühren geschützt. Entnahmen nicht nochmals in der Reserve erfassen. Beide Beträge beziehen sich auf die erfasste Liquidität. Externes Vermögen wird weder als Kaufbudget noch als pauschaler Risikoausgleich angerechnet.</p>
+    <p>Reserve, Ausführungspuffer und zusätzliche Entnahmen werden addiert und für Käufe sowie Gebühren geschützt. Der Ausführungspuffer ist keine Schätzung tatsächlicher Spreads oder Steuern. Entnahmen nicht nochmals in der Reserve erfassen. Alle drei Beträge beziehen sich auf die erfasste Liquidität. Externes Vermögen wird weder als Kaufbudget noch als pauschaler Risikoausgleich angerechnet.</p>
     <label className="block min-w-0">Weitere Angaben zu Entnahmen, Verpflichtungen, Erfahrung und Steuerbesonderheiten
       <textarea className={`${fieldClass} mt-1`} rows={3} maxLength={3000} value={value.notes ?? ''} disabled={busy} onChange={event => update('notes', event.target.value)} />
     </label>

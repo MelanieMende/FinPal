@@ -60,7 +60,7 @@ it('assesses a new ETF from its exact issuer document and saves the candidate re
     : queue.shift() ?? new Response('', { status: 500 }));
   const service = new PortfolioAnalysisService(dir, fetcher as unknown as typeof fetch); service.saveKey('sk-testOnlyNotARealKey');
   const result = await service.analyze(request);
-  expect(result.fundamentalRisks?.find(item => item.key === `new:${isin}`)).toMatchObject({ status: 'assessed', materialRisks: expect.arrayContaining(['structure']) });
+  expect(result.fundamentalRisks?.find(item => item.key === `new:${isin}`)).toMatchObject({ status: 'assessed', structuralRisks: expect.arrayContaining(['structure']) });
   expect(fetcher.mock.calls.filter(([target]) => target === url)).toHaveLength(1);
   expect(fs.existsSync(path.join(dir, 'portfolio-primary-risk-assessments.json'))).toBe(true);
   expect(new PortfolioAnalysisService(dir, jest.fn()).getLastResult()?.report.fundamentalRisks?.find(item => item.key === `new:${isin}`)?.status).toBe('assessed');
@@ -341,11 +341,11 @@ it('does not accept a legacy source link as a completed corporate risk review', 
   const service = new PortfolioAnalysisService(dir, mockedFetch, undefined, jest.fn().mockResolvedValue(f)); service.saveKey('sk-testOnlyNotARealKey');
   const result = await service.analyze(r);
   expect(result.fundamentalRisks![0]).toMatchObject({ status: 'unknown', materialRisks: [] });
-  expect(result.allocationPlan!.optimization!.robust!.reviewReasons.join(' ')).toContain('Risikoprüfung');
-  expect(result.allocationPlan!.optimization!.robust!.decisionStatus).toBe('review-required');
+  expect(result.allocationPlan!.warnings.join(' ')).toContain('Risikoprüfung');
+  expect(result.allocationPlan!.optimization!.robust!.decisionStatus).toBe('no-trades');
   expect(result.recommendations[0]).toMatchObject({ action: 'Halten', plannedAmountEUR: null });
   expect(result.fundingCheck!.status).toBe('no-trades');
-  expect(service.getLastResult()!.report.allocationPlan!.optimization!.robust!.decisionStatus).toBe('review-required');
+  expect(service.getLastResult()!.report.allocationPlan!.optimization!.robust!.decisionStatus).toBe('no-trades');
   for (const call of mockedFetch.mock.calls.slice(1)) {
     const body = JSON.parse(call[1].body);
     expect(body.input.map((input: { content: string }) => input.content).join(' ')).not.toContain('riskHistory');
@@ -369,7 +369,7 @@ it('does not spend a correction request to override missing primary document evi
   const result = await service.analyze(r);
   expect(mockedFetch).toHaveBeenCalledTimes(2);
   expect(result.fundamentalRisks).toContainEqual(expect.objectContaining({ key: '1', status: 'unknown', materialRisks: [] }));
-  expect(result.allocationPlan!.optimization!.robust!.reviewReasons.join(' ')).toContain('Risikoprüfung');
+  expect(result.allocationPlan!.warnings.join(' ')).toContain('Risikoprüfung');
 });
 
 it('uses structured market forecasts in the local optimizer without requiring AI-generated optimization inputs', async () => {
@@ -611,6 +611,21 @@ it('requires the direct cost and tax check in new analyses while accepting older
   const sources = [{ title: 'Source', url: 'https://example.com/report' }];
   expect(() => validateAnalysisResult(legacy, request, sources)).not.toThrow();
   expect(() => validateAnalysisResult(legacy, request, sources, true)).toThrow(/Kosten- und Steuerprüfung/);
+});
+
+it('validates Trade Republic order types and keeps stop variants manual', () => {
+  const sources = [{ title: 'Source', url: 'https://example.com/report' }];
+  const buy = { ...report, recommendations: [{ ...report.recommendations[0], action: 'Kaufen' as const, plannedAmountEUR: 50,
+    orderRecommendation: { type: 'limit' as const, validity: 'day' as const, execution: 'finpal-preview' as const,
+      priceInstruction: 'Limit erst aus einem frischen handelbaren Ask ableiten.', rationale: 'Preisgrenze für die Umschichtung.' } }] };
+  expect(() => validateAnalysisResult(buy, request, sources)).not.toThrow();
+  expect(() => validateAnalysisResult({ ...buy, recommendations: [{ ...buy.recommendations[0],
+    orderRecommendation: { ...buy.recommendations[0].orderRecommendation, type: 'trailing-stop' as const,
+      execution: 'manual-trade-republic' as const, priceInstruction: 'Nachlaufabstand in der Live-Ordermaske prüfen.' } }] }, request, sources)).not.toThrow();
+  expect(() => validateAnalysisResult({ ...buy, recommendations: [{ ...buy.recommendations[0],
+    orderRecommendation: { ...buy.recommendations[0].orderRecommendation, type: 'trailing-stop' as const } }] }, request, sources)).toThrow(/Orderart/);
+  expect(() => validateAnalysisResult({ ...buy, recommendations: [{ ...buy.recommendations[0],
+    orderRecommendation: { ...buy.recommendations[0].orderRecommendation, type: 'stop' as const, execution: 'finpal-preview' as const } }] }, request, sources)).toThrow(/Orderart/);
 });
 
 it('corrects a sale of a tiny Arbor position whose value is consumed by the fee scenario', async () => {

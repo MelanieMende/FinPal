@@ -10,6 +10,7 @@ export interface FundamentalRiskAssessment {
   status: 'assessed' | 'unknown';
   decisionReadiness?: 'reviewed-uncertainty';
   materialRisks: string[];
+  structuralRisks?: string[];
   rationale: string;
   sources: AnalysisSource[];
 }
@@ -114,7 +115,7 @@ export function readFundamentalRisks(value: unknown, sources: AnalysisSource[]):
 
 export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest, forecasts: ReturnForecast[] = [], candidates: NewAssetRecommendation[] = [],
   previous?: PortfolioAnalysisResult, decisions?: AssetRecommendation[], reviewedUnavailableKeys: string[] = [], fundamentals: FundamentalRiskAssessment[] = [],
-  variant: 'full' | 'cash-only' = 'full'): PortfolioAllocation {
+  variant: 'full' | 'cash-only' = 'full', frozenKeys: ReadonlySet<string> = new Set()): PortfolioAllocation {
   const supplied = new Map<string, ReturnForecast>();
   if (request.targetAssetId !== undefined) for (const f of previous?.allocationPlan?.optimization?.forecasts ?? []) if (validReturnForecast(f)) supplied.set(f.key, f);
   for (const f of forecasts) if (validReturnForecast(f)) supplied.set(f.key, f);
@@ -157,12 +158,14 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
   // All previous forecasts are already in adjusted; do not merge unadjusted old views back into the calculation.
   const context = previous ? { ...previous, allocationPlan: previous.allocationPlan && { ...previous.allocationPlan,
     optimization: previous.allocationPlan.optimization && { ...previous.allocationPlan.optimization, forecasts: adjusted } } } : undefined;
-  const plan = buildForecastAllocation(request, adjusted, modelCandidates, context, undefined, reviewedUnavailableKeys, riskModel, variant === 'cash-only');
+  const concentrationKeys = new Set(fundamentals.filter(assessment => assessment.materialRisks.includes('concentration')).map(assessment => assessment.key));
+  const plan = buildForecastAllocation(request, adjusted, modelCandidates, context, undefined, reviewedUnavailableKeys, riskModel,
+    variant === 'cash-only', { noIncreaseKeys: concentrationKeys, frozenKeys });
   const details: RobustModelDetails = { version: 3, decisionStatus: 'no-trades', covarianceStatus: measured ? 'measured-eur' : 'unavailable',
     observations: measured?.observations ?? 0, covarianceShrinkage: measured?.shrinkage ?? null, estimates, stressChecks: [], reviewReasons: [], scenarioTrades: [] };
   plan.optimization!.robust = details;
   if (variant === 'full' && request.targetAssetId === undefined) {
-    const cashPlan = buildRobustForecastAllocation(request, forecasts, candidates, previous, undefined, reviewedUnavailableKeys, fundamentals, 'cash-only');
+    const cashPlan = buildRobustForecastAllocation(request, forecasts, candidates, previous, undefined, reviewedUnavailableKeys, fundamentals, 'cash-only', frozenKeys);
     const cashDetails = cashPlan.optimization!.robust!;
     details.cashOnlyComparison = {
       availableCashEUR: Math.max(0, Math.round((request.profile.buyBudget - protectedCashEUR(request.profile)) * 100) / 100),
@@ -191,6 +194,14 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
       : text);
   plan.assumptions.push('Robustes Modell v3: Aktien- und Bootstrap-Signale erhalten denselben Grundfaktor 0,25. Analystenabdeckung gewichtet zusätzlich mit n/(n+10). Dies sind konservative, nicht empirisch kalibrierte Modellannahmen; keine Trefferwahrscheinlichkeiten.');
   plan.assumptions.push('Unsicherheit gewichtet das bereits geschrumpfte Signal graduell mit |Signal|/(|Signal| + Unsicherheitsproxy). Sie wird nicht nochmals als lineare Handelsstrafe abgezogen. Die vollständige Unsicherheit bleibt in den Stressprüfungen erhalten. Analystenspannen und Bootstrap-Bänder sind unterschiedliche Szenariodaten, keine vergleichbaren Konfidenzintervalle.');
+  for (const assessment of fundamentals.filter(item => item.structuralRisks?.length)) {
+    const name = plan.positions.find(position => position.key === assessment.key)?.name ?? assessment.key;
+    plan.warnings.push(`${name}: Geprüfte strukturelle Produktmerkmale (${assessment.structuralRisks!.map(risk => riskLabels[risk] ?? risk).join(', ')}) fließen qualitativ in die Empfehlung ein; sie sind ohne konkreten Schadensfall keine automatische Vollsperre.`);
+  }
+  for (const key of concentrationKeys) {
+    const name = plan.positions.find(position => position.key === key)?.name ?? key;
+    plan.assumptions.push(`${name}: Wegen des belegten Konzentrationsrisikos wurde der aktuelle EUR-Bestand als Obergrenze gesetzt. Das ist keine pauschale Positionsquote; der Optimierer verteilt nur eine sonst modellierte Aufstockung neu.`);
+  }
   if ([...supplied.values()].some(f => f.model?.kind === 'etf-history-v1')) {
     plan.assumptions.push('ETF-Historienmodelle verwenden bereinigte Kurse als historischen Renditeproxy mit Ausschüttungs-/Splitbereinigung. Keine veröffentlichte Kursprognose und keine kalibrierten Zukunftswahrscheinlichkeiten; historische Renditen werden einmal zu 75 % gegen null geschrumpft. Künftige Ausschüttungen nicht zusätzlich addieren. Neue ETFs werden anhand ihres belegten EUR-Börsenkurses mit Beständen, Liquidität, Gebühren und Risiken gemeinsam modelliert; auch ein Nullbetrag ist ein berechnetes Ergebnis.');
     plan.assumptions = plan.assumptions.map(text => text.startsWith('Cashrendite =')
@@ -226,7 +237,7 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
     if (assessment?.decisionReadiness === 'reviewed-uncertainty' && !assessment.materialRisks.length)
       plan.warnings.push(`${trade.name}: Primärberichte geprüft; verbleibende Unsicherheit ist in der Risikokachel dokumentiert.`);
   }
-  if (plan.projectedCashEUR <= .01) details.reviewReasons.push('Die Umschichtung lässt keinen finanziellen Puffer für unbekannte Spreads oder Verkaufssteuern.');
+  if (plan.projectedCashEUR <= .01) details.reviewReasons.push('Die Umschichtung lässt keinen finanziellen Puffer für unbekannte Spreads oder Verkaufssteuern. Hinterlege dafür einen Ausführungspuffer in der persönlichen Entscheidungsgrundlage.');
   if (measured) {
     const total = plan.totalValueEUR;
     const before = measured.keys.map(key => (plan.positions.find(p => p.key === key)?.currentValueEUR ?? 0) / total);
@@ -260,6 +271,24 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
   }
   details.decisionStatus = details.reviewReasons.length ? 'review-required' : 'stable-scenario';
   details.reviewReasons = [...new Set(details.reviewReasons)].slice(0, 180);
+  const assetSpecificBlocked = new Set(trades.filter(trade => details.reviewReasons.some(reason => reason.startsWith(trade.name + ':'))).map(trade => trade.key));
+  const globalReasons = details.reviewReasons.filter(reason => !plan.positions.some(position => reason.startsWith(position.name + ':')));
+  if (assetSpecificBlocked.size && !globalReasons.length) {
+    const nextFrozen = new Set([...frozenKeys, ...assetSpecificBlocked]);
+    const partial = buildRobustForecastAllocation(request, forecasts, candidates, previous, decisions,
+      reviewedUnavailableKeys, fundamentals, variant, nextFrozen);
+    for (const key of assetSpecificBlocked) {
+      const blocked = partial.positions.find(position => position.key === key);
+      const original = plan.positions.find(position => position.key === key);
+      if (!blocked || !original) continue;
+      blocked.action = 'Prüfen'; blocked.amountEUR = null; blocked.targetValueEUR = blocked.currentValueEUR;
+      blocked.projectedWeightPercent = blocked.currentWeightPercent;
+      blocked.reason = details.reviewReasons.filter(reason => reason.startsWith(original.name + ':')).join(' ');
+    }
+    partial.assumptions.push('Assetbezogener ausführbarer Teilplan: Nur Trades mit konkretem Prüfgrund wurden eingefroren; alle übrigen Positionen wurden anschließend gemeinsam neu optimiert.');
+    partial.warnings.push(...details.reviewReasons);
+    return partial;
+  }
   if (details.reviewReasons.length) {
     plan.warnings.push(...details.reviewReasons);
     for (const trade of trades) {
@@ -271,10 +300,29 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
     plan.cashTargetPercent = 100 * request.profile.buyBudget / plan.totalValueEUR;
     plan.optimization!.expectedReturnPercent = null; plan.optimization!.expectedGainEUR = null; plan.optimization!.riskProxyPercent = null;
   } else if (decisions) {
-    const accepted = buildForecastAllocation(request, adjusted, modelCandidates, context, decisions, reviewedUnavailableKeys, riskModel, variant === 'cash-only');
+    const executionDecisions = decisions.map(decision => {
+      if (!['funding-only', 'scale-only'].includes(decision.executionBlocker ?? '')) return decision;
+      const modeled = details.scenarioTrades.find(trade => trade.key === String(decision.assetId) && trade.action === 'Kaufen');
+      return modeled ? { ...decision, action: 'Kaufen' as const, plannedAmountEUR: modeled.amountEUR, executionBlocker: null } : decision;
+    });
+    const accepted = buildForecastAllocation(request, adjusted, modelCandidates, context, executionDecisions, reviewedUnavailableKeys, riskModel,
+      variant === 'cash-only', { noIncreaseKeys: concentrationKeys, frozenKeys });
+    const acceptedTrades = accepted.positions.filter(position => position.amountEUR !== null
+      && (position.action === 'Kaufen' || position.action === 'Verkaufen'));
     accepted.optimization!.forecasts = plan.optimization!.forecasts;
-    accepted.optimization!.robust = { ...details, decisionStatus: accepted.positions.some(p => p.amountEUR !== null) ? 'stable-scenario' : 'no-trades' };
+    accepted.optimization!.robust = { ...details,
+      decisionStatus: acceptedTrades.length ? 'stable-scenario' : 'no-trades',
+      scenarioTrades: acceptedTrades.map(position => ({ key: position.key,
+        action: position.action as 'Kaufen' | 'Verkaufen', amountEUR: position.amountEUR!,
+        targetPercent: position.projectedWeightPercent })),
+      concentration: { beforeLargestPercent: Math.max(0, ...accepted.positions.map(position => position.currentWeightPercent ?? 0)),
+        scenarioLargestPercent: Math.max(0, ...accepted.positions.map(position => position.projectedWeightPercent ?? 0)) },
+    };
     accepted.assumptions = plan.assumptions;
+    if (details.scenarioTrades.some(trade => !decisions.some(decision => String(decision.assetId) === trade.key
+      && decision.action === trade.action && typeof decision.plannedAmountEUR === 'number'))) {
+      accepted.assumptions.push('Ausführbarer Teilplan: konkret blockierte Trades wurden eingefroren und alle übrigen Entscheidungen gemeinsam mit dem verbleibenden Cash neu berechnet. Zurückgestellte Verkaufserlöse finanzieren keine Käufe.');
+    }
     accepted.warnings = [...new Set([...accepted.warnings,
       ...plan.warnings.filter(warning => warning.startsWith('Stresshinweis:')
         || warning.includes('verbleibende Unsicherheit ist in der Risikokachel'))])];

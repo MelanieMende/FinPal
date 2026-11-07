@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { AnalysisPosition, AnalysisSource } from './portfolioAnalysis';
-import { knownResearchSources } from './portfolioResearch';
+import { bitcoinPrimarySources, isBitcoinResearchPosition, knownResearchSources } from './portfolioResearch';
 
 export interface RiskDocument {
   source: AnalysisSource;
@@ -17,6 +17,11 @@ export interface RiskDocumentSet {
   documents: RiskDocument[];
   discoveryChecked: boolean;
   gaps: string[];
+  reviewContext?: {
+    custody?: import('./investorFacts').CustodyFact;
+    product?: NonNullable<import('./investorFacts').ResolvedTaxContext['product']>;
+    taxResidencies?: import('./investorFacts').InvestorContext['taxResidencies'];
+  };
 }
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -24,6 +29,10 @@ const MAX_BYTES = 16_000_000;
 const MAX_DOCUMENTS = 4;
 const TREASURY_BOND_ISIN = 'US912810SQ22';
 const TREASURY_OFFERING_2020 = 'https://www.treasurydirect.gov/instit/annceresult/press/preanre/2020/A_20201015_1.pdf';
+const APOLLO_ELTIF_ISIN = 'LU3170240538';
+const APOLLO_ELTIF_KID_ARCHIVE = 'https://www.francetransactions.com/IMG/pdf/dic-apollo-private-equity.pdf';
+const APOLLO_ELTIF_PAGE = 'https://www.apollo.com/agpm-eltif';
+const apolloEltifDocumentUrl = (url: string) => url === APOLLO_ELTIF_KID_ARCHIVE;
 const treasuryAuctionUrl = (url: string) => /^https:\/\/www\.treasurydirect\.gov\/instit\/annceresult\/press\/preanre\/2020\/(?:R_20200819_3|A_20201015_1)\.pdf$/i.test(url);
 const treasuryGeneralUrl = (url: string) => [
   'https://www.treasurydirect.gov/research-center/history-of-marketable-securities/',
@@ -48,6 +57,7 @@ const SEC_CIK_BY_ISIN: Record<string, string> = {
   US47759T1007: '0001481513',
   DK0062498333: '0000353278',
   US6701002056: '0000353278',
+  US84615Q1031: '0001181412',
 };
 const ISSUER_HOST_BY_ISIN: Record<string, string> = {
   DE0007030009: 'ir.rheinmetall.com',
@@ -134,6 +144,16 @@ const productKeywords = [
   /concentration|holdings|sector|derivative|securities lending|hedg|currency|währung/ig,
   /custody|custodian|counterparty|protocol|governance|regulator|risk factor|risiken/ig,
 ];
+const bitcoinKeywords = [
+  /Non-upgraded nodes may use and distribute incorrect information/ig,
+  /Bitcoin network|Bitcoin.s public ledger/ig,
+  /consensus rules|proof.of.work|majority of the network.s hashing power|51 percent attack/ig,
+  /private key|recovery phrase|third party controls your keys/ig,
+  /Bitcoin price is volatile|sometimes illiquid markets/ig,
+  /active development|Government taxes and regulations|regulatory mandates/ig,
+  /credit institution licensed in Germany and a crypto-asset services provider under Regulation \(EU\) 2023\/1114[\s\S]{0,120}?MiCAR/ig,
+  /custody and administration of crypto-assets|execution of orders in Crypto-Assets/ig,
+];
 const treasuryBondKeywords = [
   /912810SQ2/ig,
   /Interest Rate\s+1-1\/8%/ig,
@@ -174,6 +194,18 @@ const vgwdKeywords = [
   /ETF Shares in the Fund can be bought or sold on a daily basis/ig,
   /Liquidity risk\. Lower liquidity|Counterparty risk\. The insolvency/ig,
 ];
+const apolloEltifKeywords = [
+  /Apollo Global Private Markets ELTIF[\s\S]{0,180}?A2 UNH[\s\S]{0,180}?LU3170240538/ig,
+  /L'objectif\s+d'investissement\s+du\s+Compartiment[\s\S]{0,260}?plus-\s*value\s+de\s+capital\s+à\s+long\s+terme/ig,
+  /Frais\s+de\s+gestion\s+et\s+autres\s+frais[\s\S]{0,180}?2\.80\s*%/ig,
+  /Commissions\s+liées\s+aux\s+résultats[\s\S]{0,100}?1\.71\s*%/ig,
+  /demander\s+le\s+rachat\s+de\s+leurs\s+Actions\s+tous\s+les\s+trimestres/ig,
+  /réserve\s+de\s+liquidité[\s\S]{0,180}?rachats/ig,
+  /dérivés|effet de levier|dépositaire du Compartiment/ig,
+  /Attention\s+au\s+risque\s+de\s+change[\s\S]{0,180}?devise/ig,
+  /Commission de Surveillance du Secteur Financier|Règlement ELTIF|réglementée par la CSSF/ig,
+  /valeur liquidative|date d'évaluation|fréquence d'évaluation/ig,
+];
 const allowedDocumentUrl = (value: string, curated: Set<string>, issuerHost?: string, cik?: string | null) => {
   try {
     const url = new URL(value);
@@ -202,11 +234,14 @@ export function riskExcerpt(html: string, type: AnalysisPosition['type'] = 'Stoc
   const rheinmetall = type === 'Stock' && isin === 'DE0007030009';
   const mondelez = type === 'Stock' && isin === 'US6092071058';
   const treasuryBond = type === 'Bond' && isin === TREASURY_BOND_ISIN;
+  const apolloEltif = type === 'Fund' && isin === APOLLO_ELTIF_ISIN;
   for (const pattern of insurance ? insuranceKeywords : type === 'Stock'
     ? rheinmetall ? [...rheinmetallKeywords, ...keywordGroups]
       : mondelez ? [...mondelezKeywords, ...keywordGroups] : keywordGroups
-    : qdve ? [...qdveKeywords, ...productKeywords] : vgwd ? [...vgwdKeywords, ...productKeywords]
-      : treasuryBond ? [...treasuryBondKeywords, ...productKeywords] : productKeywords) {
+    : type === 'Crypto' ? [...bitcoinKeywords, ...productKeywords]
+      : qdve ? [...qdveKeywords, ...productKeywords] : vgwd ? [...vgwdKeywords, ...productKeywords]
+      : treasuryBond ? [...treasuryBondKeywords, ...productKeywords]
+        : apolloEltif ? [...apolloEltifKeywords, ...productKeywords] : productKeywords) {
     pattern.lastIndex = 0;
     let match: RegExpExecArray | null;
     let count = 0;
@@ -236,6 +271,12 @@ function productDocumentPeriod(text: string, now: number): string | null {
     aug: '08', sep: '09', sept: '09', okt: '10', nov: '11', dez: '12' };
   for (const match of text.matchAll(/\b(?:per|zum|stand)\s+(\d{1,2})\.(Jan|Feb|Mär|Mrz|Apr|Mai|Jun|Jul|Aug|Sept?|Okt|Nov|Dez)\.?(20\d{2})/gi)) {
     const date = Date.parse(`${match[3]}-${germanMonths[match[2].toLowerCase()]}-${match[1].padStart(2, '0')}`);
+    if (Number.isFinite(date) && date <= now + DAY && date > now - 3 * 365 * DAY) dates.push(date);
+  }
+  const frenchMonths: Record<string, string> = { janvier: '01', février: '02', fevrier: '02', mars: '03', avril: '04', mai: '05', juin: '06',
+    juillet: '07', août: '08', aout: '08', septembre: '09', octobre: '10', novembre: '11', décembre: '12', decembre: '12' };
+  for (const match of text.matchAll(/\b(?:daté du|date du)\s*:?\s*(\d{1,2})\s+(janvier|février|fevrier|mars|avril|mai|juin|juillet|août|aout|septembre|octobre|novembre|décembre|decembre)\s+(20\d{2})/gi)) {
+    const date = Date.parse(`${match[3]}-${frenchMonths[match[2].toLowerCase()]}-${match[1].padStart(2, '0')}`);
     if (Number.isFinite(date) && date <= now + DAY && date > now - 3 * 365 * DAY) dates.push(date);
   }
   return dates.length ? new Date(Math.max(...dates)).toISOString().slice(0, 10) : null;
@@ -345,13 +386,61 @@ export class PrimaryRiskResearch {
       return null;
     }
   }
+  private async collectBitcoin(signal?: AbortSignal, forceRefresh = false): Promise<RiskDocumentSet> {
+    const documents: RiskDocument[] = [];
+    const gaps: string[] = [];
+    let networkSourceFailures = 0;
+    for (const source of bitcoinPrimarySources) {
+      const stored = this.cache.get(source.url);
+      const tradeRepublicPolicy = source.url === 'https://assets.traderepublic.com/assets/files/EN_ExecutionPolicy.pdf';
+      const identity = tradeRepublicPolicy ? 'trade-republic-casp' : 'bitcoin-network';
+      if (!forceRefresh && stored?.identity === identity && stored.excerptVersion === 2
+        && this.now() - stored.fetchedAt < DAY && stored.fetchedAt <= this.now()) {
+        documents.push(stored);
+        continue;
+      }
+      try {
+        const response = await this.requestFetch(source.url, { headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' },
+          signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(12000)]) : AbortSignal.timeout(12000) });
+        if (!response.ok || (response.url && response.url !== source.url)
+          || Number(response.headers.get('content-length')) > 2_000_000) throw new Error('Bitcoin documentation unavailable');
+        const data = Buffer.from(await response.arrayBuffer());
+        if (data.length > 2_000_000) throw new Error('Bitcoin documentation too large');
+        const excerpt = riskExcerpt(data.toString('utf8'), 'Crypto');
+        if (tradeRepublicPolicy
+          ? !/Trade Republic Bank GmbH/i.test(excerpt) || !/licensed in Germany/i.test(excerpt) || !/MiCAR/i.test(excerpt)
+          : !/Bitcoin/i.test(excerpt) || !/block.?chain|wallet|consensus|private key|bitcoin price/i.test(excerpt))
+          throw new Error(tradeRepublicPolicy ? 'Trade Republic MiCAR context missing' : 'Bitcoin network context missing');
+        const document: RiskDocument = { source, excerpt, hash: createHash('sha256').update(data).digest('hex'),
+          fetchedAt: this.now(), period: null, identity, excerptVersion: 2 };
+        this.cache.set(source.url, document);
+        documents.push(document);
+        try { this.save(); } catch { /* This run can still use the downloaded document. */ }
+      } catch {
+        if (signal?.aborted) throw signal.reason;
+        if (stored?.identity === identity) documents.push(stored);
+        if (tradeRepublicPolicy) gaps.push(`Anbieterbezogene Crypto-Primärquelle konnte nicht aktuell geladen werden: ${source.url}`);
+        else {
+          networkSourceFailures++;
+          gaps.push(`Bitcoin-Projektdokumentation konnte nicht aktuell geladen werden: ${source.url}`);
+        }
+      }
+    }
+    if (!documents.some(document => document.identity === 'bitcoin-network'))
+      gaps.push('Keine lesbare Bitcoin-Projektdokumentation für die Risikoprüfung verfügbar.');
+    // Undated protocol documentation is not a financial report or current market telemetry.
+    return { documents, gaps, discoveryChecked: networkSourceFailures === 0 };
+  }
   async collect(position: AnalysisPosition, signal?: AbortSignal, sourceHints: AnalysisSource[] = [], forceRefresh = false): Promise<RiskDocumentSet> {
+    if (isBitcoinResearchPosition(position)) return this.collectBitcoin(signal, forceRefresh);
     const curated = new Set(knownResearchSources(position).map(value => new URL(value).toString()));
     const issuerHost = ISSUER_HOST_BY_ISIN[position.isin.trim().toUpperCase()];
     const cik = await this.resolveCik(position, signal);
     const candidates = [...curated].filter(url => allowedDocumentUrl(url, curated, issuerHost, cik) &&
       (/\.(?:htm|html|pdf)(?:$|\?|\/)/i.test(url) ||
         (position.isin.trim().toUpperCase() === 'US47759T1007' && url.includes('/news-release-details/jinkosolar-announces-'))));
+    if (position.isin.trim().toUpperCase() === APOLLO_ELTIF_ISIN && curated.has(APOLLO_ELTIF_KID_ARCHIVE))
+      candidates.unshift(APOLLO_ELTIF_KID_ARCHIVE);
     if (position.isin.trim().toUpperCase() === 'DE0008232125') {
       try {
         const response = await this.requestFetch(LUFTHANSA_REPORT_INDEX, { headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' },
@@ -418,7 +507,8 @@ export class PrimaryRiskResearch {
     } else gaps.push('Für dieses Instrument ist noch keine verlässlich zugeordnete Primärquellenkennung hinterlegt.');
     const documents: RiskDocument[] = [];
     for (const url of [...new Set(candidates)].filter(item => (allowedDocumentUrl(item, curated, issuerHost, cik)
-      || (position.type !== 'Stock' && officialProductHost(new URL(item).hostname)))
+      || (position.type !== 'Stock' && officialProductHost(new URL(item).hostname))
+      || (position.isin.trim().toUpperCase() === APOLLO_ELTIF_ISIN && apolloEltifDocumentUrl(item)))
       && !(position.type === 'Bond' && position.isin.trim().toUpperCase() === TREASURY_BOND_ISIN
         && item.endsWith('/R_20200819_3.pdf') && !forceRefresh
         && this.cache.has(TREASURY_OFFERING_2020)
@@ -429,6 +519,7 @@ export class PrimaryRiskResearch {
         (position.type !== 'Stock' || stored.excerptVersion === (['US5801351017', 'DK0062498333', 'US6701002056', 'DE0007030009', 'US6092071058'].includes(position.isin.trim().toUpperCase()) ? 3 : 2)) &&
         (position.isin.trim().toUpperCase() !== 'IE00B3WJKG14' || stored.excerptVersion === 3) &&
         (position.isin.trim().toUpperCase() !== 'IE00B8GKDB10' || stored.excerptVersion === 2) &&
+        (position.isin.trim().toUpperCase() !== APOLLO_ELTIF_ISIN || stored.excerptVersion === 3) &&
         (position.type === 'Stock' || stored.identity === position.isin.trim().toUpperCase())) { documents.push(stored); continue; }
       try {
         const annualRheinmetall = position.isin.trim().toUpperCase() === 'DE0007030009' && url === RHEINMETALL_ANNUAL_2025;
@@ -438,7 +529,8 @@ export class PrimaryRiskResearch {
           signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(documentTimeout)]) : AbortSignal.timeout(documentTimeout) });
         const finalUrl = response.url || url;
         if (!response.ok || !(allowedDocumentUrl(finalUrl, curated, issuerHost, cik)
-          || (position.type !== 'Stock' && officialProductHost(new URL(finalUrl).hostname)))) throw new Error('Document unavailable');
+          || (position.type !== 'Stock' && officialProductHost(new URL(finalUrl).hostname))
+          || (position.isin.trim().toUpperCase() === APOLLO_ELTIF_ISIN && apolloEltifDocumentUrl(finalUrl)))) throw new Error('Document unavailable');
         const length = Number(response.headers.get('content-length'));
         if (length > maxDocumentBytes) throw new Error('Document too large');
         const data = Buffer.from(await response.arrayBuffer());
@@ -453,7 +545,10 @@ export class PrimaryRiskResearch {
         const treasuryGeneral = position.type === 'Bond' && position.isin.trim().toUpperCase() === TREASURY_BOND_ISIN
           && treasuryGeneralUrl(url) && documents.some(document => treasuryAuctionUrl(document.source.url));
         if (treasuryGeneral && !/Treasury marketable securit(?:y|ies)|Treasury Bonds/i.test(plain)) throw new Error('Treasury context not confirmed');
-        if (position.type !== 'Stock' && !treasuryGeneral && !plain.toUpperCase().includes(position.isin.trim().toUpperCase())
+        const apolloCompanion = position.isin.trim().toUpperCase() === APOLLO_ELTIF_ISIN && url === APOLLO_ELTIF_PAGE
+          && /Apollo Global Private Markets ELTIF/i.test(plain)
+          && documents.some(document => document.identity === APOLLO_ELTIF_ISIN && document.source.url === APOLLO_ELTIF_KID_ARCHIVE);
+        if (position.type !== 'Stock' && !treasuryGeneral && !apolloCompanion && !plain.toUpperCase().includes(position.isin.trim().toUpperCase())
           && !(position.type === 'Bond' && plain.includes(position.isin.trim().slice(2, -1)))) throw new Error('Instrument identity not confirmed');
         if (position.isin.trim().toUpperCase() === 'DE0008430026' && !/Munich Re|Münchener Rückversicherungs/i.test(plain))
           throw new Error('Issuer identity not confirmed');
@@ -469,14 +564,18 @@ export class PrimaryRiskResearch {
           throw new Error('Report period not confirmed');
         const excerpt = riskExcerpt(plain, position.type, position.isin.trim().toUpperCase() === 'DE0008430026', position.isin.trim().toUpperCase());
         if (!excerpt) throw new Error('No risk evidence');
-        if (position.type !== 'Stock' && !treasuryGeneral && !excerpt.toUpperCase().includes(position.isin.trim().toUpperCase())
+        if (position.type !== 'Stock' && !treasuryGeneral && !apolloCompanion && !excerpt.toUpperCase().includes(position.isin.trim().toUpperCase())
           && !(position.type === 'Bond' && excerpt.includes(position.isin.trim().slice(2, -1))))
           throw new Error('Instrument identity absent from risk excerpt');
         const period = filingDetails.get(url)?.period ?? KNOWN_STOCK_REPORT_PERIOD(position.isin.trim().toUpperCase(), url)
           ?? (position.isin.trim().toUpperCase() === TREASURY_BOND_ISIN && treasuryAuctionUrl(url)
             ? url.includes('/R_20200819_3.pdf') ? '2020-08-19' : '2020-10-15' : null)
           ?? (position.type === 'Stock' ? null : productDocumentPeriod(plain, this.now()));
-        const documentTitle = filingDetails.get(url)?.title
+        const apolloTitle = position.isin.trim().toUpperCase() === APOLLO_ELTIF_ISIN && url === APOLLO_ELTIF_KID_ARCHIVE
+          ? 'Apollo Global Private Markets ELTIF A2 UNH – PRIIPs-KID 09.09.2025 (Archivkopie)'
+          : position.isin.trim().toUpperCase() === APOLLO_ELTIF_ISIN && url === APOLLO_ELTIF_PAGE
+            ? 'Apollo: Apollo Global Private Markets ELTIF – Produkt- und Risikohinweise' : '';
+        const documentTitle = filingDetails.get(url)?.title || apolloTitle
           || (position.isin.trim().toUpperCase() === TREASURY_BOND_ISIN && treasuryGeneralUrl(url)
             ? url.includes('/research-center/') ? 'TreasuryDirect: Staatsanleihen als direkte US-Verpflichtungen'
               : url.includes('/selling-marketable-securities/') ? 'TreasuryDirect: Verkauf vor Fälligkeit'
@@ -487,6 +586,7 @@ export class PrimaryRiskResearch {
           ...(position.type === 'Stock' ? { excerptVersion: ['US5801351017', 'DK0062498333', 'US6701002056', 'DE0007030009', 'US6092071058'].includes(position.isin.trim().toUpperCase()) ? 3 : 2 } : {}),
           ...(position.isin.trim().toUpperCase() === 'IE00B3WJKG14' ? { excerptVersion: 3 } : {}),
           ...(position.isin.trim().toUpperCase() === 'IE00B8GKDB10' ? { excerptVersion: 2 } : {}),
+          ...(position.isin.trim().toUpperCase() === APOLLO_ELTIF_ISIN ? { excerptVersion: 3 } : {}),
           ...(position.type !== 'Stock' ? { identity: position.isin.trim().toUpperCase() } : {}) };
         this.cache.set(url, document);
         documents.push(document);

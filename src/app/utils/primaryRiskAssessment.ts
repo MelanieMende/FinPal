@@ -5,6 +5,29 @@ import type { AnalysisPosition, AnalysisSource } from './portfolioAnalysis';
 import type { FundamentalRiskAssessment } from './robustForecastModel';
 import type { RiskDocument, RiskDocumentSet } from './primaryRiskResearch';
 import { ASSET_RISK_POLICY_VERSION, isInsuranceStock, riskChecksForPosition, riskMetricsForPosition, riskCheckLabels, riskEvidenceTerms, type RiskCheckName } from './assetRiskPolicy';
+import { isBitcoinResearchPosition } from './portfolioResearch';
+import type { InvestorContext } from './investorFacts';
+
+export function addRiskReviewContext(position: AnalysisPosition, set: RiskDocumentSet, context?: InvestorContext): void {
+  delete set.reviewContext;
+  if (position.type !== 'Crypto' || !context) return;
+  const facts = context.assets.find(asset => asset.assetId === position.id);
+  const product = facts?.resolvedTaxContext?.product;
+  set.reviewContext = {
+    ...(facts ? { custody: { ...facts.custody } } : {}),
+    ...(product?.instrumentId === position.isin.trim().toUpperCase() ? { product: { ...product } } : {}),
+    taxResidencies: context.taxResidencies.map(residency => ({ ...residency })),
+  };
+}
+
+export function riskReviewInput(position: AnalysisPosition, set: RiskDocumentSet) {
+  return { security: { name: position.name, isin: position.isin, symbol: position.symbol, type: position.type,
+    ...(position.type === 'Crypto' && set.reviewContext ? { reviewContext: set.reviewContext } : {}),
+    ...(position.type === 'Bond' ? { investorBaseCurrency: 'EUR',
+      ...(position.bondHolding?.source === 'user-confirmed' ? { confirmedNominalCurrency: position.bondHolding.currency } : {}) } : {}) },
+    documents: set.documents.map((document, documentIndex) => ({ documentIndex, source: document.source,
+      period: document.period, excerpt: document.excerpt })) };
+}
 
 export const RISK_POLICY = ASSET_RISK_POLICY_VERSION;
 export interface RiskCheck {
@@ -240,7 +263,80 @@ function qualifyVgwdProductRisks(position: AnalysisPosition, check: RiskCheck, d
   }
   return check;
 }
-function qualifyCheck(position: AnalysisPosition, check: RiskCheck, documents: RiskDocument[]): RiskCheck {
+function qualifyApolloEltifProductRisks(position: AnalysisPosition, check: RiskCheck, documents: RiskDocument[]): RiskCheck {
+  if (position.isin.trim().toUpperCase() !== 'LU3170240538' || check.finding !== 'unknown') return check;
+  const documentIndex = documents.findIndex(document => document.identity === 'LU3170240538'
+    && document.source.url === 'https://www.francetransactions.com/IMG/pdf/dic-apollo-private-equity.pdf'
+    && document.period === '2025-09-09');
+  const document = documents[documentIndex];
+  if (!document) return check;
+  const evidence: Partial<Record<RiskCheckName, { finding: RiskCheck['finding']; pattern: RegExp; reason: string }>> = {
+    strategy: { finding: 'no-risk', pattern: /L'objectif\s+d'investissement\s+du\s+Compartiment[\s\S]{0,260}?plus-\s*value\s+de\s+capital\s+à\s+long\s+terme/i,
+      reason: 'Das KID vom 09.09.2025 belegt für die exakte Anteilsklasse als Anlageziel einen langfristigen Kapitalzuwachs und beschreibt die globale Private-Markets-Strategie. Ein Widerspruch zum ausgewiesenen Produktziel ist darin nicht erkennbar.' },
+    costs: { finding: 'risk', pattern: /Frais\s+de\s+gestion\s+et\s+autres\s+frais[\s\S]{0,180}?2\.80\s*%/i,
+      reason: 'Das KID vom 09.09.2025 weist für die exakte Anteilsklasse 2,80 % Verwaltungs- und sonstige laufende Kosten aus. Das ist ein datierter historischer Produktkostenbeleg; wegen des fehlenden aktuellen KID ist nicht belegt, dass dieser Satz heute noch gilt.' },
+  };
+  const match = evidence[check.flag]?.pattern.exec(document.excerpt);
+  if (!match || !validQuote(match[0], document)) return check;
+  return { ...check, finding: evidence[check.flag]!.finding, documentIndex, quote: match[0], reason: evidence[check.flag]!.reason };
+}
+function qualifyBitcoinCheck(position: AnalysisPosition, check: RiskCheck, set: RiskDocumentSet): RiskCheck {
+  if (!isBitcoinResearchPosition(position)) return check;
+  if (check.flag === 'identity' && check.finding !== 'risk' && set.reviewContext?.product?.kind === 'security') {
+    const reason = 'Die exakt zugeordnete Broker-Produktkennung bezeichnet ein Wertpapier. Die BTC-Netzwerkdokumentation ersetzt dessen Produktunterlagen nicht.';
+    return check.finding === 'unknown' && check.reason === reason && check.documentIndex === null && !check.quote
+      ? check : { ...check, finding: 'unknown', reason, documentIndex: null, quote: '' };
+  }
+  if (check.finding !== 'unknown') return check;
+  if (check.flag === 'identity') {
+    const documentIndex = set.documents.findIndex(document => document.identity === 'bitcoin-network'
+      && document.source.url === 'https://developer.bitcoin.org/devguide/block_chain.html');
+    const document = set.documents[documentIndex];
+    const quote = /The block chain provides Bitcoin.s public ledger, an ordered and timestamped record of transactions\./i.exec(document?.excerpt ?? '')?.[0] ?? '';
+    if (validQuote(quote, document)) return { ...check, finding: 'no-risk', documentIndex, quote,
+      reason: `Die eindeutige BTC-Kennung ist dem Bitcoin-Netzwerk zugeordnet; der Developer Guide beschreibt dessen öffentliches Transaktionsregister. Für den Coin ist keine ISIN erforderlich. ${set.reviewContext?.product?.kind === 'direct-crypto'
+        ? 'Die exakt passende Broker-Produktkennung bestätigt zusätzlich ein direktes Kryptoprodukt.'
+        : 'Die konkrete Produkt- und Verwahrform ist damit noch nicht bestätigt und wird separat geprüft.'}` };
+  }
+  if (check.flag === 'protocol') {
+    const documentIndex = set.documents.findIndex(document => document.identity === 'bitcoin-network'
+      && document.source.url === 'https://developer.bitcoin.org/devguide/block_chain.html');
+    const document = set.documents[documentIndex];
+    const quote = /Non-upgraded nodes may use and distribute incorrect information during both types of forks, creating several situations which could lead to financial loss\./i.exec(document?.excerpt ?? '')?.[0] ?? '';
+    if (validQuote(quote, document)) return { ...check, finding: 'risk', documentIndex, quote,
+      reason: 'Strukturelles Konsens- und Fork-Risiko laut Developer Guide; kein aktueller Angriff oder Ausfall belegt. Bei Regeländerungen können nicht aktualisierte Nodes falsche Informationen weitergeben und finanzielle Verluste verursachen.' };
+  }
+  if (check.flag === 'custody' && set.reviewContext?.custody?.kind === 'broker'
+    && set.reviewContext.custody.provider === 'Trade Republic' && set.reviewContext.custody.source === 'user-confirmed') {
+    const documentIndex = set.documents.findIndex(document => document.identity === 'bitcoin-network'
+      && document.source.url === 'https://bitcoin.org/en/secure-your-wallet');
+    const document = set.documents[documentIndex];
+    const quote = /When a third party controls your keys[\s\S]{0,260}?(?:hacked, fail, or freeze access to funds|security and honesty)/i.exec(document?.excerpt ?? '')?.[0] ?? '';
+    if (validQuote(quote, document)) return { ...check, finding: 'risk', documentIndex, quote,
+      reason: 'Die Brokerverwahrung bei Trade Republic ist nutzerbestätigt. Bitcoin.org warnt, dass bei Kontrolle der Schlüssel durch Dritte deren Sicherheit und Redlichkeit maßgeblich werden und Online-Verwahrer gehackt werden, ausfallen oder Zugriffe sperren können. Das belegt ein strukturelles Dienstleisterrisiko, keinen aktuellen Vorfall bei Trade Republic.' };
+  }
+  if (check.flag === 'liquidity') {
+    const documentIndex = set.documents.findIndex(document => document.identity === 'bitcoin-network'
+      && document.source.url === 'https://bitcoin.org/en/you-need-to-know');
+    const document = set.documents[documentIndex];
+    const quote = /The price of a bitcoin can unpredictably increase or decrease[\s\S]{0,220}?sometimes illiquid markets/i.exec(document?.excerpt ?? '')?.[0] ?? '';
+    if (validQuote(quote, document)) return { ...check, finding: 'risk', documentIndex, quote,
+      reason: 'Bitcoin.org nennt zeitweise illiquide Märkte als strukturelles Marktliquiditätsrisiko. Daraus folgt weder ein aktuell belegter Liquiditätsengpass noch eine konkrete Aussage zu heutigen Spreads oder zur Ausführung bei Trade Republic.' };
+  }
+  if (check.flag === 'regulatory' && set.reviewContext?.product?.kind === 'direct-crypto'
+    && set.reviewContext?.custody?.kind === 'broker' && set.reviewContext.custody.provider === 'Trade Republic'
+    && set.reviewContext.custody.source === 'user-confirmed'
+    && set.reviewContext.taxResidencies?.some(residency => residency.country === 'DE')) {
+    const documentIndex = set.documents.findIndex(document => document.identity === 'trade-republic-casp'
+      && document.source.url === 'https://assets.traderepublic.com/assets/files/EN_ExecutionPolicy.pdf');
+    const document = set.documents[documentIndex];
+    const quote = /Trade Republic Bank GmbH[\s\S]{0,220}?credit institution licensed in Germany and a crypto-asset services provider under Regulation \(EU\) 2023\/1114[\s\S]{0,80}?MiCAR/i.exec(document?.excerpt ?? '')?.[0] ?? '';
+    if (validQuote(quote, document)) return { ...check, finding: 'no-risk', documentIndex, quote,
+      reason: 'Für den bestätigten deutschen Trade-Republic-Direktkrypto-Kontext dokumentiert die aktuelle Ausführungsrichtlinie eine deutsche Bankzulassung und die Tätigkeit als Kryptowerte-Dienstleister nach MiCAR. Damit ist kein aktueller Zulassungsmangel des Dienstleisters belegt; dies ist weder eine behördliche Billigung von Bitcoin noch ein Schutz vor künftigen Rechtsänderungen.' };
+  }
+  return check;
+}
+function qualifyCheck(position: AnalysisPosition, check: RiskCheck, documents: RiskDocument[], set?: RiskDocumentSet): RiskCheck {
   let qualified = qualifyMunichFinancingAndContinuity(position, check, documents);
   qualified = qualifyMunichLegalRisk(position, qualified, documents);
   qualified = qualifyMondelezLegalRisk(position, qualified, documents);
@@ -248,7 +344,9 @@ function qualifyCheck(position: AnalysisPosition, check: RiskCheck, documents: R
   qualified = qualifyMcdContinuity(position, qualified, documents);
   qualified = qualifyNovoFinancing(position, qualified, documents);
   qualified = qualifyQdveProductRisks(position, qualified, documents);
-  return qualifyVgwdProductRisks(position, qualified, documents);
+  qualified = qualifyVgwdProductRisks(position, qualified, documents);
+  qualified = qualifyApolloEltifProductRisks(position, qualified, documents);
+  return set ? qualifyBitcoinCheck(position, qualified, set) : qualified;
 }
 const munichLegalRiskReason = '2025: Laufende Gerichts-, Aufsichts- und Schiedsverfahren; Munich Re erwartet keine erhebliche negative Wirkung. In den geprüften Auszügen fehlt eine Aktualisierung für 2026.';
 const munichLegalRiskReason2026 = 'Stand 30.06.2026: Laufende Verfahren aus dem Bericht 2025; Munich Re erwartet keine erhebliche negative Wirkung und erklärt die damaligen Risikoaussagen für unverändert gültig.';
@@ -358,10 +456,18 @@ function qualifyMcdRegulatoryRisk(position: AnalysisPosition, check: RiskCheck, 
 export function riskFingerprint(position: AnalysisPosition, set: RiskDocumentSet): string {
   return createHash('sha256').update(JSON.stringify({ policy: RISK_POLICY, isin: position.isin.trim().toUpperCase(),
     type: position.type, ...(position.isin.trim().toUpperCase() === 'US5801351017' ? { mcdReviewVersion: 2 } : {}),
+    ...(position.type === 'Crypto' && set.reviewContext ? { cryptoReviewContext: {
+      custody: set.reviewContext.custody && { kind: set.reviewContext.custody.kind,
+        provider: set.reviewContext.custody.provider, source: set.reviewContext.custody.source },
+      product: set.reviewContext.product,
+      taxResidencies: set.reviewContext.taxResidencies?.map(({ country, validFrom }) => ({ country, validFrom }))
+        .sort((a, b) => `${a.country}:${a.validFrom}`.localeCompare(`${b.country}:${b.validFrom}`)),
+    } } : {}),
     ...(position.type === 'Bond' && position.isin.trim().toUpperCase() === 'US912810SQ22'
       ? { treasuryContextVersion: 1, nominalCurrency: position.bondHolding?.source === 'user-confirmed' ? position.bondHolding.currency : null } : {}),
     documents: set.documents.map(doc => [doc.source.url, doc.hash,
-      isInsuranceStock(position) ? doc.excerptVersion ?? 0 : 0]).sort((a, b) => String(a[0]).localeCompare(String(b[0]))) })).digest('hex');
+      isInsuranceStock(position) || position.isin.trim().toUpperCase() === 'LU3170240538' ? doc.excerptVersion ?? 0 : 0])
+      .sort((a, b) => String(a[0]).localeCompare(String(b[0]))) })).digest('hex');
 }
 function legacyMcdFingerprint(position: AnalysisPosition, set: RiskDocumentSet): string {
   return createHash('sha256').update(JSON.stringify({ policy: RISK_POLICY, isin: position.isin.trim().toUpperCase(),
@@ -380,11 +486,11 @@ export function validateRiskAssessment(position: AnalysisPosition, set: RiskDocu
       || !check.reason.trim() || (check.finding !== 'unknown' && (!validQuote(check.quote, document)
         || !riskEvidenceTerms[flag].test(check.quote)))) {
       const fallback = qualifyCheck(position,
-        { flag, finding: 'unknown', reason: 'Kein überprüfbarer Befund mit Textstelle.', documentIndex: null, quote: '' }, set.documents);
+        { flag, finding: 'unknown', reason: 'Kein überprüfbarer Befund mit Textstelle.', documentIndex: null, quote: '' }, set.documents, set);
       if (fallback.finding === 'unknown') gaps.push(`${flag}: ${fallback.reason}`);
       return fallback;
     }
-    const qualified = qualifyCheck(position, check, set.documents);
+    const qualified = qualifyCheck(position, check, set.documents, set);
     if (qualified.finding === 'unknown') gaps.push(`${flag}: ${qualified.reason.trim()}`);
     return { flag, finding: qualified.finding, reason: qualified.reason.trim().slice(0, 700),
       documentIndex: qualified.finding === 'unknown' && qualified === check ? null : qualified.documentIndex,
@@ -418,7 +524,38 @@ export function validateRiskAssessment(position: AnalysisPosition, set: RiskDocu
 export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessment {
   const findings = { risk: 'Risiko belegt', 'no-risk': 'kein wesentliches Risiko belegt', unknown: 'offen' };
   const metricLabels: Record<string, string> = { 'net-income': 'Periodengewinn', 'operating-margin': 'operative Marge', cash: 'Liquidität', 'debt-maturities': 'Fälligkeiten', 'combined-ratio': 'Combined Ratio', 'solvency-ratio': 'Solvenzquote' };
-  const materialRisks = record.checks.filter(check => check.finding === 'risk').map(check => check.flag);
+  const reviewedBitcoinStructuralRisk = (check: RiskCheck) => record.isin === 'BTC' && check.finding === 'risk' && (
+    (check.flag === 'protocol'
+      && /strukturell/i.test(check.reason)
+      && /(?:Konsens|Fork|Governance|Protokoll)/i.test(check.reason))
+    || (check.flag === 'custody'
+      && /Trade Republic.*(?:nutzerbestätigt|user.confirmed)/i.test(check.reason)
+      && /strukturell/i.test(check.reason))
+    || (check.flag === 'liquidity'
+      && /strukturell/i.test(check.reason))
+  );
+  const reviewedApolloStructuralRisk = (check: RiskCheck) => record.isin === 'LU3170240538' && check.finding === 'risk'
+    && ['costs', 'liquidity', 'structure'].includes(check.flag)
+    && check.documentIndex !== null
+    && record.sources[check.documentIndex]?.url === 'https://www.francetransactions.com/IMG/pdf/dic-apollo-private-equity.pdf'
+    && (check.flag === 'costs' ? /(?:Frais|Coûts|2\.80\s*%|1\.71\s*%)/i.test(check.quote)
+      : check.flag === 'liquidity' ? /rachat|trimestres/i.test(check.quote)
+        : /dérivés|effet de levier|dépositaire/i.test(check.quote));
+  const etfFlags = new Set<RiskCheckName>(['identity', 'strategy', 'costs', 'concentration', 'liquidity', 'structure', 'currency', 'regulatory']);
+  const reviewedEtfStructuralRisk = (check: RiskCheck) => record.checks.length === etfFlags.size
+    && record.checks.every(item => etfFlags.has(item.flag)) && check.finding === 'risk'
+    && ['liquidity', 'structure', 'currency'].includes(check.flag)
+    && check.documentIndex !== null && check.quote.trim().length >= 12
+    && (check.flag === 'liquidity'
+      ? /(?:secondary market|stock exchange|redeem|redemption|liquidity|liquidit|Rückgabe|Sekundärmarkt|Börse)/i.test(check.quote)
+      : check.flag === 'structure'
+        ? /(?:derivative|derivatives|secured lending|securities lending|counterparty|Wertpapierleihe|Derivat|Kontrahent)/i.test(check.quote)
+        : /(?:currency|exchange rate|foreign exchange|Währung|Wechselkurs|USD|EUR|GBP)/i.test(check.quote));
+  const isStructuralRisk = (check: RiskCheck) => reviewedBitcoinStructuralRisk(check)
+    || reviewedApolloStructuralRisk(check) || reviewedEtfStructuralRisk(check);
+  const structuralRisks = record.checks.filter(isStructuralRisk).map(check => check.flag);
+  const materialRisks = record.checks.filter(check => check.finding === 'risk'
+    && !isStructuralRisk(check)).map(check => check.flag);
   const reviewedMunichUncertainty = record.isin === 'DE0008430026' && record.status === 'unknown'
     && materialRisks.length === 0 && record.checks.length === 6
     && record.checks.every(check => (check.finding === 'no-risk' && check.documentIndex !== null && check.quote.trim().length >= 12)
@@ -463,6 +600,25 @@ export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessme
     && ['net-income', 'operating-margin', 'cash', 'debt-maturities'].every(name => record.metrics.some(metric => metric.name === name))
     && record.sources.some(source => /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/353278\/\d{18}\/caq[1-4]20\d{2}\.htm$/i.test(source.url) && /6-K/.test(source.title))
     && record.sources.some(source => /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/353278\/\d{18}\/nvo-20\d{6}\.htm$/i.test(source.url) && /20-F/.test(source.title));
+  const reviewedBitcoinUncertainty = record.isin === 'BTC' && record.status === 'unknown'
+    && materialRisks.length === 0 && record.checks.length === 6
+    && record.checks.every(check => (check.flag === 'identity' && check.finding === 'no-risk')
+      || (['protocol', 'custody', 'liquidity'].includes(check.flag) && reviewedBitcoinStructuralRisk(check))
+      || (check.flag === 'concentration' && check.finding === 'unknown')
+      || (check.flag === 'regulatory' && (check.finding === 'unknown' || check.finding === 'no-risk')))
+    && record.gaps.length > 0 && record.gaps.every(gap => /^(?:concentration|regulatory):/.test(gap))
+    && ['https://bitcoin.org/en/how-it-works', 'https://developer.bitcoin.org/devguide/block_chain.html',
+      'https://bitcoin.org/en/secure-your-wallet', 'https://bitcoin.org/en/you-need-to-know']
+      .every(url => record.sources.some(source => source.url === url));
+  const reviewedApolloUncertainty = record.isin === 'LU3170240538' && record.status === 'unknown'
+    && materialRisks.length === 0 && record.checks.length === 8
+    && record.checks.every(check => (['identity', 'strategy', 'regulatory'].includes(check.flag) && check.finding === 'no-risk')
+      || reviewedApolloStructuralRisk(check)
+      || (['valuation', 'currency'].includes(check.flag) && check.finding === 'unknown'))
+    && record.gaps.length > 0
+    && record.gaps.every(gap => /^(?:valuation|currency):|^Kein datiertes aktuelles Primärdokument/.test(gap))
+    && record.sources.some(source => source.url === 'https://www.francetransactions.com/IMG/pdf/dic-apollo-private-equity.pdf')
+    && record.sources.some(source => source.url === 'https://www.apollo.com/agpm-eltif');
   const shorten = (value: string, limit: number) => {
     if (value.length <= limit) return value;
     const candidate = value.slice(0, limit);
@@ -471,7 +627,7 @@ export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessme
     return `${candidate.slice(0, candidate.lastIndexOf(' ')).trimEnd()} …`;
   };
   const details = record.sources.length ? record.checks.map(check =>
-    `${riskCheckLabels[check.flag]}: ${findings[check.finding]} (${shorten(check.reason, 230)})`) : [];
+    `${check.flag === 'identity' && record.checks.some(item => item.flag === 'protocol') ? 'Netzwerk und Coin' : riskCheckLabels[check.flag]}: ${findings[check.finding]} (${shorten(check.reason, 230)})`) : [];
   const metrics = record.metrics.map(metric =>
     `${metricLabels[metric.name] ?? metric.name}: ${metric.value} ${metric.unit}, Periode ${metric.period}`);
   const checkedUnknown = new Set(record.checks.filter(check => check.finding === 'unknown').map(check => check.flag));
@@ -485,8 +641,9 @@ export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessme
   }
   if (visible.length < lines.length) visible.push(`Weitere ${lines.length - visible.length} Befunde im gespeicherten Prüfprotokoll.`);
   return { key: record.key, status: record.status,
-    ...(reviewedMunichUncertainty || reviewedMondelezUncertainty || reviewedMcdUncertainty || reviewedNovoUncertainty ? { decisionReadiness: 'reviewed-uncertainty' as const } : {}),
-    materialRisks, rationale: visible.join('\n'), sources: record.sources };
+    ...(reviewedMunichUncertainty || reviewedMondelezUncertainty || reviewedMcdUncertainty || reviewedNovoUncertainty || reviewedBitcoinUncertainty || reviewedApolloUncertainty
+      ? { decisionReadiness: 'reviewed-uncertainty' as const } : {}),
+    materialRisks, ...(structuralRisks.length ? { structuralRisks } : {}), rationale: visible.join('\n'), sources: record.sources };
 }
 
 export class PrimaryRiskAssessmentCache {
@@ -536,7 +693,7 @@ export class PrimaryRiskAssessmentCache {
         this.set(record);
       }
     }
-    const qualifiedChecks = record.checks.map(check => qualifyCheck(position, check, set.documents));
+    const qualifiedChecks = record.checks.map(check => qualifyCheck(position, check, set.documents, set));
     if (qualifiedChecks.some((check, index) => check !== record.checks[index])) {
       const changedFlags = new Set(qualifiedChecks.filter((check, index) => check !== record!.checks[index]).map(check => check.flag));
       const gaps = record.gaps.filter(gap => !changedFlags.has(gap.split(':', 1)[0] as RiskCheckName));

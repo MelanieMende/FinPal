@@ -46,6 +46,10 @@ export interface ForecastOptimizationDetails {
 }
 
 export interface ForecastRiskModel { keys: string[]; covariance: number[][]; uncertainty: number[]; }
+export interface ForecastAllocationConstraints {
+  noIncreaseKeys?: ReadonlySet<string>;
+  frozenKeys?: ReadonlySet<string>;
+}
 
 const day = 86400000;
 const positive = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0;
@@ -191,8 +195,8 @@ function project(v: number[], lower: number[], upper: number[], budget: number, 
 
 export function buildForecastAllocation(request: PortfolioAnalysisRequest, forecasts: ReturnForecast[] = [], candidates: NewAssetRecommendation[] = [],
   previous?: PortfolioAnalysisResult, decisions?: AssetRecommendation[], reviewedUnavailableKeys: string[] = [], riskModel?: ForecastRiskModel,
-  buyOnly = false): PortfolioAllocation {
-  const plan = calculateForecastAllocation(request, forecasts, candidates, previous, decisions, riskModel, buyOnly);
+  buyOnly = false, constraints?: ForecastAllocationConstraints): PortfolioAllocation {
+  const plan = calculateForecastAllocation(request, forecasts, candidates, previous, decisions, riskModel, buyOnly, constraints);
   const reviewed = new Set([...previous?.allocationPlan?.optimization?.reviewedUnavailableKeys ?? [], ...reviewedUnavailableKeys]);
   const optimization = plan.optimization!;
   const onlyMissingForecasts = plan.status === 'blocked' && plan.warnings.some(w => w.startsWith('Für die ausgewählte Optimierung'));
@@ -211,7 +215,8 @@ export function buildForecastAllocation(request: PortfolioAnalysisRequest, forec
 }
 
 function calculateForecastAllocation(request: PortfolioAnalysisRequest, forecasts: ReturnForecast[] = [], candidates: NewAssetRecommendation[] = [],
-  previous?: PortfolioAnalysisResult, decisions?: AssetRecommendation[], riskModel?: ForecastRiskModel, buyOnly = false): PortfolioAllocation {
+  previous?: PortfolioAnalysisResult, decisions?: AssetRecommendation[], riskModel?: ForecastRiskModel, buyOnly = false,
+  constraints?: ForecastAllocationConstraints): PortfolioAllocation {
   const base = buildPortfolioAllocation(request, candidates, previous);
   const level = request.profile.goal === 'preservation' || request.profile.horizonYears < 5 ? 'low' : request.profile.risk;
   const lambda = { low: 10, medium: 5, high: 2 }[level];
@@ -224,11 +229,11 @@ function calculateForecastAllocation(request: PortfolioAnalysisRequest, forecast
       'Risiko: veröffentlichte annualisierte historische Volatilitäten oder lokal aus belegten adjustierten Tageskursen berechnete Volatilität; gemeinsame Korrelation +1 als konservative Modellannahme. Keine empirische Korrelationsmatrix und kein berechneter Diversifikationsvorteil.',
       'Cashrendite = 0 als vorsichtige Vergleichsannahme. Beim lokalen Anleihemodell sind Kupons und modellierte Stückzinsen in der Gesamtrendite enthalten, bei ETF-Historienmodellen bereinigte Ausschüttungen als Renditeproxy. Andere Dividenden, Zinsen, Steuern und Spreads fehlen; kein vollständiges Total-Return-Optimum.',
       'Kursziele müssen zum Originalkurs passen. Für die EUR-Bewertung werden konstante Wechselkurse unterstellt; künftige FX-Renditen und FX-Volatilität sind nicht modelliert. Zieltermine müssen 330–400 Tage in der Zukunft liegen; keine Extrapolation anderer Horizonte.',
-      'Long-only, ohne Kredit und Leerverkäufe. Keine festen Kategoriequoten, Positionsobergrenzen oder Mindest-Cashquote. Bestätigte persönliche Bandbreiten bleiben verbindlich; Cash ergibt sich aus der Optimierung und den verfügbaren Mitteln nach Gebühren.',
+      'Long-only, ohne Kredit und Leerverkäufe. Keine festen Kategoriequoten und keine pauschalen Konzentrationsgrenzen. Bestätigte persönliche Bandbreiten bleiben verbindlich; bei einem belegten Konzentrationsrisiko darf die betroffene Position ohne ausdrücklich bestätigtes höheres Mindestgewicht nicht aufgestockt werden. Cash ergibt sich aus der Optimierung und den verfügbaren Mitteln nach Gebühren.',
       'Numerische kontinuierliche Optimierung mit konservativer Reserve aller möglichen Ordergebühren. Tatsächliche EUR-Beträge werden danach mit Gebühren und Cent-Rundung berechnet; kein garantiert globales Optimum für diskrete Orders.',
       'ELTIFs und Cash Equivalents werden ohne bestätigte kurzfristige Handelbarkeit nicht umgeschichtet. Positionen mit fehlenden vollständigen Prognose- oder Risikodaten werden in einer Teilportfolio-Optimierung unverändert eingefroren; ohne mindestens eine vollständig belegte Position bleibt die Optimierung blockiert.',
     ], warnings: ['Veröffentlichte Kursziele und historische Volatilität können falsch oder überholt sein. Das Ergebnis ist nur unter den angegebenen Annahmen optimal.'] };
-  if (protectedCashEUR(request.profile) > 0) plan.assumptions.push(`Persönlich geschützte Liquidität: ${protectedCashEUR(request.profile).toFixed(2)} EUR für Reserve und zusätzliche Entnahmen. Bleibt Teil des erfassten Vermögens und steht nicht für Käufe oder Gebühren zur Verfügung.`);
+  if (protectedCashEUR(request.profile) > 0) plan.assumptions.push(`Geschützte Liquidität: ${protectedCashEUR(request.profile).toFixed(2)} EUR für Reserve, Ausführungspuffer und zusätzliche Entnahmen. Bleibt Teil des erfassten Vermögens und steht nicht für Käufe oder Gebühren zur Verfügung.`);
   const block = (reason: string): PortfolioAllocation => {
     plan.status = 'blocked'; plan.warnings.push(reason); plan.feesEUR = 0; plan.projectedCashEUR = request.profile.buyBudget;
     info.expectedReturnPercent = null; info.expectedGainEUR = null; info.riskProxyPercent = null;
@@ -305,6 +310,7 @@ function calculateForecastAllocation(request: PortfolioAnalysisRequest, forecast
   const current = base.positions.map(p => p.currentValueEUR! / total);
   const frozen = inputs.map((p, i) => isEltif(p) || p.type === 'CashEquivalent'
     || !!unresolvedReasons[i]
+    || !!constraints?.frozenKeys?.has(base.positions[i].key)
     || request.targetAssetId !== undefined && base.positions[i].assetId !== request.targetAssetId);
   const feeReserve = base.positions.reduce((sum, p, i) => sum + (!frozen[i]
     || request.targetAssetId !== undefined && p.amountEUR !== null ? p.feeEUR ?? 0 : 0), 0) / total;
@@ -316,8 +322,10 @@ function calculateForecastAllocation(request: PortfolioAnalysisRequest, forecast
   const lower = targets.map((t, i) => frozen[i] ? request.targetAssetId !== undefined && base.positions[i].assetId !== request.targetAssetId
     ? (base.positions[i].currentValueEUR! + (base.positions[i].action === 'Kaufen' ? 1 : base.positions[i].action === 'Verkaufen' ? -1 : 0) * (base.positions[i].amountEUR ?? 0)) / total
     : current[i] : Math.max(buyOnly ? current[i] : 0, (t?.minPercent ?? 0) / 100 * net));
-  const upper = inputs.map((_p, i) => frozen[i] ? lower[i] : (targets[i]?.maxPercent ?? 100) / 100 * net);
+  const upper = inputs.map((_p, i) => frozen[i] ? lower[i] : Math.min((targets[i]?.maxPercent ?? 100) / 100 * net,
+    constraints?.noIncreaseKeys?.has(base.positions[i].key) ? current[i] : 1));
   if (buyOnly && lower.some((value, i) => value > upper[i] + 1e-10)) return block('Eine bestätigte Zielobergrenze liegt unter dem aktuellen Bestand; die reine Cash-Variante kann diese Vorgabe ohne Verkauf nicht einhalten.');
+  if (lower.some((value, i) => value > upper[i] + 1e-10)) return block('Eine bestätigte Mindestgewichtung widerspricht der Nebenbedingung, eine belegte Konzentrationsposition nicht weiter aufzustocken. Bitte Zielband oder Konzentrationsentscheidung prüfen.');
   const fixedMinimum = lower.reduce((s, n) => s + n, 0);
   if (fixedMinimum > net - cashFloor + 1e-10) return block('Bestätigte Mindestgewichte oder bestehende Einzelanalyse-Szenarien sind mit Gebührenreserve und geschützter Liquidität nicht finanzierbar.');
   const budget = net - cashFloor;

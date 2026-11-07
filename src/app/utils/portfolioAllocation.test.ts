@@ -25,6 +25,16 @@ it('derives crypto targets from the profile and computes a fee-adjusted amount r
   expect(request.positions[0].price).toBe(1000);
 });
 
+it('allows only amount-free qualitative directions for an ELTIF with unverified NAV and redemption execution', () => {
+  const eltif = { ...pos(32, 'Fund', 1000), name: 'Apollo Global Private Markets ELTIF', isin: 'LU3170240538' };
+  const plan = buildPortfolioAllocation(req([eltif], 1000));
+  expect(plan.positions[0]).toMatchObject({ executionConstraint: 'eltif-nav-and-redemption-unverified' });
+  expect(allocationMismatch(plan, [rec(32, 'Verkaufen', null)])).toBeNull();
+  expect(allocationMismatch(plan, [rec(32, 'Kaufen', null)])).toBeNull();
+  expect(allocationMismatch(plan, [rec(32, 'Verkaufen', 100)])).toContain('plannedAmountEUR muss');
+  expect(validPortfolioAllocation(plan)).toBe(true);
+});
+
 it('honors confirmed targets above the generic crypto limit and does not silently normalize conflicting targets', () => {
   const request = withFacts(req([pos(1, 'Crypto', 1000)], 1000), { 1: { percent: 40, minPercent: 35, maxPercent: 45 } });
   const plan = buildPortfolioAllocation(request);

@@ -58,6 +58,14 @@ const issuerHints: Record<string, { issuer: string; listing: string; sourceUrls:
       'https://www.sec.gov/Archives/edgar/data/1481513/000110465926116605/tm2627736d1_ex99-1.htm',
     ],
   },
+  US84615Q1031: {
+    issuer: 'Space Exploration Technologies Corp. (SpaceX)', listing: 'Nasdaq: SPCX; Class A Common Stock; SEC CIK 0001181412',
+    sourceUrls: [
+      'https://www.sec.gov/edgar/browse/?CIK=0001181412&owner=include',
+      'https://ir.spacex.com/',
+      'https://ir.spacex.com/faqs-and-contact/',
+    ],
+  },
   US912810SQ22: {
     issuer: 'United States Treasury; CUSIP 912810SQ2; 1,125 %; Fälligkeit 15.08.2040',
     listing: 'WKN A281P1; Frankfurt (XFRA) und Stuttgart (XSTU); Prozentnotierung in USD',
@@ -73,7 +81,10 @@ const issuerHints: Record<string, { issuer: string; listing: string; sourceUrls:
   },
   LU3170240538: {
     issuer: 'Apollo Global Private Markets ELTIF, Klasse A2 UNH', listing: 'Nicht börslicher ELTIF; Broker-Preis und offizieller NAV sind getrennt zu prüfen',
-    sourceUrls: ['https://www.apollo.com/agpm-eltif'],
+    sourceUrls: [
+      'https://www.francetransactions.com/IMG/pdf/dic-apollo-private-equity.pdf',
+      'https://www.apollo.com/agpm-eltif',
+    ],
   },
   CA03880B1040: {
     issuer: 'Arbor Metals Corp.', listing: 'TSXV: ABR; Frankfurt: 432; Yahoo Finance: ABR.V (TSXV, CAD; zusätzliche Recherchekennung)',
@@ -91,7 +102,24 @@ const issuerHints: Record<string, { issuer: string; listing: string; sourceUrls:
   },
 };
 
-export function knownResearchSources(position: Pick<AnalysisPosition, 'isin'>) {
+export const bitcoinPrimarySources = [
+  { title: 'Bitcoin.org: Funktionsweise des Bitcoin-Netzwerks', url: 'https://bitcoin.org/en/how-it-works' },
+  { title: 'Bitcoin Developer Guide: Blockchain und Konsensregeln', url: 'https://developer.bitcoin.org/devguide/block_chain.html' },
+  { title: 'Bitcoin.org: Wallet- und Verwahrrisiken', url: 'https://bitcoin.org/en/secure-your-wallet' },
+  { title: 'Bitcoin.org: Kurs-, Transaktions- und regulatorische Risiken', url: 'https://bitcoin.org/en/you-need-to-know' },
+  { title: 'Trade Republic: Crypto Execution Policy (MiCAR)', url: 'https://assets.traderepublic.com/assets/files/EN_ExecutionPolicy.pdf' },
+] as const;
+
+// This identifies network research only, never the legal product or custody arrangement.
+export function isBitcoinResearchPosition(position: Pick<AnalysisPosition, 'isin'> & Partial<Pick<AnalysisPosition, 'type' | 'symbol'>>) {
+  if (position.type !== 'Crypto') return false;
+  const identifier = position.isin.trim().toUpperCase();
+  const symbol = (position.symbol ?? '').trim().toUpperCase();
+  return ['', 'BTC'].includes(identifier) && (symbol === '' ? identifier === 'BTC' : /^BTC(?:-(?:EUR|USD))?$/.test(symbol));
+}
+
+export function knownResearchSources(position: Pick<AnalysisPosition, 'isin'> & Partial<Pick<AnalysisPosition, 'type' | 'symbol'>>) {
+  if (isBitcoinResearchPosition(position)) return bitcoinPrimarySources.map(source => source.url);
   return issuerHints[position.isin.trim().toUpperCase()]?.sourceUrls ?? [];
 }
 
@@ -108,7 +136,10 @@ export const currencyExposureAnalysisInstructions = ' currencyExposure beschreib
 
 export function buildResearchSecurities(positions: Pick<AnalysisPosition, 'id' | 'name' | 'isin' | 'symbol' | 'type'>[]) {
   return positions.map(({ id, name, isin, symbol, type }) => {
-    const hints = issuerHints[isin.trim().toUpperCase()];
+    const hints = isBitcoinResearchPosition({ isin, symbol, type })
+      ? { issuer: 'Bitcoin-Netzwerk; Projekt- und Protokolldokumentation, kein Emittent', listing: 'BTC; Produktart und Verwahrung gesondert prüfen',
+        sourceUrls: bitcoinPrimarySources.map(source => source.url) }
+      : issuerHints[isin.trim().toUpperCase()];
     return { id, name, isin, symbol, type, ...(hints ? { discoveryHints: hints } : {}) };
   });
 }

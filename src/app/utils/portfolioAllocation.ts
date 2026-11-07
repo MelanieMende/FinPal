@@ -18,6 +18,7 @@ export interface AllocationPosition {
   amountEUR: number | null;
   projectedWeightPercent: number | null;
   feeEUR: number | null;
+  executionConstraint?: 'eltif-nav-and-redemption-unverified';
   reason: string;
 }
 export interface PortfolioAllocation {
@@ -86,6 +87,7 @@ export function buildPortfolioAllocation(request: PortfolioAnalysisRequest, cand
       targetWeight: confirmed ? { ...confirmed } : cash && weight !== null
         ? { percent: weight, minPercent: weight, maxPercent: weight } : null,
       targetValueEUR: null, action: 'Halten', amountEUR: null, projectedWeightPercent: weight,
+      ...(isEltif(p) ? { executionConstraint: 'eltif-nav-and-redemption-unverified' as const } : {}),
       feeEUR: fee, reason: cash && !confirmed ? 'Cash Equivalent bleibt ohne eigene Zielvorgabe bestehen.' : '',
     };
   });
@@ -224,11 +226,21 @@ export function allocationMismatch(plan: PortfolioAllocation, recommendations: A
   for (const rec of [...recommendations, ...candidates]) {
     const key = 'assetId' in rec ? String(rec.assetId) : allocationCandidateKey(rec);
     const target = plan.positions.find(p => p.key === key);
+    if (target?.executionConstraint === 'eltif-nav-and-redemption-unverified'
+      && (rec.action === 'Kaufen' || rec.action === 'Verkaufen')) {
+      if (rec.plannedAmountEUR !== null && rec.plannedAmountEUR !== undefined)
+        return `${key}: Für den ELTIF ist nur eine qualitative ${rec.action === 'Kaufen' ? 'Kauf-' : 'Reduzierungs'}richtung zulässig. plannedAmountEUR muss ohne aktuellen offiziellen NAV und bestätigtes Rückgabefenster null bleiben.`;
+      continue;
+    }
     if (plan.optimization?.robust?.decisionStatus === 'review-required') {
       if (rec.action === 'Kaufen' || rec.action === 'Verkaufen') return `${key}: Modellszenario mit offener Entscheidung. Halten oder Prüfen und plannedAmountEUR null wählen; keine abhängige Umschichtung bestätigen. Gründe: ${plan.optimization.robust.reviewReasons.join(' ')}`;
       continue;
     }
-    if (plan.status === 'calculated' && target?.action === 'Prüfen' && rec.action !== 'Prüfen') return `${key}: Die Position ist wegen fehlender Optimierungseingaben unverändert eingefroren. Prüfen wählen und die konkrete Datenlücke nennen.`;
+    if (plan.status === 'calculated' && target?.action === 'Prüfen' && !['Prüfen', 'Halten'].includes(rec.action)) return `${key}: Die Position ist wegen eines konkreten Prüfgrunds unverändert eingefroren. Prüfen oder begründet Halten wählen und die Datenlücke nennen.`;
+    if ('assetId' in rec && ['funding-only', 'scale-only'].includes(rec.executionBlocker ?? '') && target?.amountEUR !== null
+      && (target?.action === 'Kaufen' || target?.action === 'Verkaufen')) {
+      return `${key}: Der lokale Teilplan hat den finanzierungs- oder größenabhängigen Trade ohne zurückgestellte Verkaufserlöse neu berechnet. Beurteile nur den neuen Betrag und die neue Zielquote. ${target.action} mit plannedAmountEUR ${target.amountEUR.toFixed(2)} EUR und executionBlocker null übernehmen oder einen konkreten, auch für diese kleinere Variante geltenden unabhängigen Asset-Blocker nennen.`;
+    }
     if (rec.action !== 'Kaufen' && rec.action !== 'Verkaufen') continue;
     if (!target || target.action !== rec.action || target.amountEUR === null) return `${key}: Kein berechneter ${rec.action === 'Kaufen' ? 'Kauf' : 'Verkauf'} möglich. Halten oder Prüfen wählen und den konkreten Modell-/Datengrund nennen.`;
     if (typeof rec.plannedAmountEUR !== 'number' || cents(rec.plannedAmountEUR) !== cents(target.amountEUR)) return `${key}: plannedAmountEUR muss dem lokal berechneten Betrag ${target.amountEUR.toFixed(2)} EUR entsprechen. Begründung, amountRationale und Kostenprüfung an Ziel und Gewichtung vorher/nachher anpassen.`;
@@ -254,6 +266,7 @@ export function validPortfolioAllocation(plan: PortfolioAllocation): boolean {
       && (p.assetId === undefined || Number.isInteger(p.assetId))
       && ['user-confirmed', 'profile-model', 'cash-holding', 'forecast-optimization'].includes(p.source)
       && ['Kaufen', 'Verkaufen', 'Halten', 'Prüfen'].includes(p.action)
+      && (p.executionConstraint === undefined || p.executionConstraint === 'eltif-nav-and-redemption-unverified')
       && [p.currentValueEUR, p.targetValueEUR, p.amountEUR, p.feeEUR].every(n => nullable(n) && (n === null || n >= 0))
       && [p.currentWeightPercent, p.projectedWeightPercent].every(n => n === null || percentage(n))
       && (p.targetWeight === null || !!p.targetWeight
@@ -261,4 +274,4 @@ export function validPortfolioAllocation(plan: PortfolioAllocation): boolean {
         && p.targetWeight.minPercent <= p.targetWeight.percent && p.targetWeight.percent <= p.targetWeight.maxPercent));
 }
 
-export const portfolioAllocationInstructions = ' allocationPlan ist ein lokal berechnetes Profilmodell mit transparenten Modellannahmen, keine Renditeoptimierung und keine Marktprognose. Eigene bestätigte Zielgewichte haben Vorrang. Nenne berechnete Zielgewichtung und Bandbreite, nicht pauschal optimale zukünftige Rendite. Für Kaufen/Verkaufen sind Richtung und plannedAmountEUR aus allocationPlan verbindlich; keine beispielhaften oder frei erfundenen Beträge. Halten oder Prüfen bleibt bei belegten Kosten-, Steuer-, Produkt- oder Markthindernissen möglich; den konkreten Grund gegenüber dem Modell nennen. Bei blockierter Bewertung oder widersprüchlichen Zielen keine Umschichtungsbeträge erfinden. Neue belegte Kaufideen dürfen vorgeschlagen werden; ihre gemeinsamen Modellbeträge werden lokal berechnet und gegebenenfalls mit correction.allocationPlan zurückgegeben. Dann Beträge, Empfehlungen, Kostenprüfung und Erklärungen anhand dieses Plans gemeinsam korrigieren. Zielwerte und projectedWeightPercent gelten bei Umsetzung aller Modelltrades, Gebühren berücksichtigt; bei verschobenen Trades sind dies keine Gewichte des tatsächlichen empfohlenen Teilplans. Cashanteile für fehlende Kategorien sind reserviert und kein frei zusätzliches Kaufbudget. Unbekannte Steuern oder Spreads niemals als bereits berücksichtigt darstellen.';
+export const portfolioAllocationInstructions = ' allocationPlan ist ein lokal berechnetes Profilmodell mit transparenten Modellannahmen, keine Renditeoptimierung und keine Marktprognose. Eigene bestätigte Zielgewichte haben Vorrang. Nenne berechnete Zielgewichtung und Bandbreite, nicht pauschal optimale zukünftige Rendite. Für Kaufen/Verkaufen sind Richtung und plannedAmountEUR aus allocationPlan verbindlich; keine beispielhaften oder frei erfundenen Beträge. Ausnahme: executionConstraint eltif-nav-and-redemption-unverified erlaubt eine belegte qualitative Kauf- oder Reduzierungsrichtung mit plannedAmountEUR null. Diese ist keine ausführbare Order; nenne NAV-, Rückgabefenster- und Bewertungsbedingung ausdrücklich und verwende einen möglichen Verkaufserlös nicht zur Finanzierung anderer Käufe. Halten oder Prüfen bleibt bei belegten Kosten-, Steuer-, Produkt- oder Markthindernissen möglich; den konkreten Grund gegenüber dem Modell nennen. Bei blockierter Bewertung oder widersprüchlichen Zielen keine Umschichtungsbeträge erfinden. Neue belegte Kaufideen dürfen vorgeschlagen werden; ihre gemeinsamen Modellbeträge werden lokal berechnet und gegebenenfalls mit correction.allocationPlan zurückgegeben. Dann Beträge, Empfehlungen, Kostenprüfung und Erklärungen anhand dieses Plans gemeinsam korrigieren. Zielwerte und projectedWeightPercent gelten bei Umsetzung aller Modelltrades, Gebühren berücksichtigt; bei verschobenen Trades sind dies keine Gewichte des tatsächlichen empfohlenen Teilplans. Cashanteile für fehlende Kategorien sind reserviert und kein frei zusätzliches Kaufbudget. Unbekannte Steuern oder Spreads niemals als bereits berücksichtigt darstellen.';

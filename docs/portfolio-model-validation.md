@@ -83,6 +83,8 @@ Softwaretests prüfen derzeit Rechenregeln, Datengrenzen, Cashschutz, Finanzieru
 
 Ein negativer relativer Modellnutzen in einem einzelnen Stressszenario ist nun ein sichtbarer Warnhinweis statt eines automatischen Vetos. Für eine berechnete Umschichtung muss der relative Modellnutzen im Basisszenario nach Gebühren positiv sein. Belegte Unternehmens- und Produktrisiken, unzureichende Daten, fehlender Ausführungspuffer und weitere unabhängige Sperrgründe bleiben wirksam. Die Cash-Variante nutzt dieselbe Regel.
 
+Der Ausführungspuffer wird als eigener EUR-Betrag neben Liquiditätsreserve und geplanten Entnahmen gespeichert und additiv vor Käufen und Gebühren geschützt. Er ist keine Schätzung tatsächlicher Spreads oder Steuern. Bei einem belegten Konzentrationsrisiko wird keine allgemeine Prozentgrenze erfunden; stattdessen darf der aktuelle EUR-Bestand dieses Instruments im neu berechneten Szenario nicht steigen. Das verbleibende Budget wird gemeinsam neu optimiert.
+
 Die fachliche Gegenprüfung vom 19.10.2026 bezog sich auf die frühere strengere Regel. Die geänderte Schwelle ist nicht historisch außerhalb der Kalibrierungsdaten validiert. Vor einer belastbaren Bewertung müssen insbesondere unnötig blockierte Chancen und zusätzliche Verluste in ungünstigen Marktphasen anhand zeitlich getrennter historischer Daten verglichen werden.
 
 ## Fachliche Quellen

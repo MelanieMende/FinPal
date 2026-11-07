@@ -11,6 +11,17 @@ down to that step from a fresh broker quote; submission preserves the exact EUR
 amount in the native amount field, alongside the current estimated size. Missing
 fractional support blocks the order. Sales recheck available shares at the fresh
 bid price before submission.
+
+Portfolio analyses may recommend Market, Limit, Stop-Market or Trailing Stop
+Loss. A Stop recommendation is conditional,
+does not guarantee a minimum execution price and is currently marked for manual
+entry in Trade Republic. The FinPal execution preview continues to support only
+Market orders by EUR amount and good-for-day Limit orders in whole shares for
+stocks and ETFs. Trailing Stop Loss is based on the user-confirmed current broker
+feature and remains manual until its live wire contract has been verified; the
+currently checked public support pages still list only Market, Limit and Stop.
+Limit, Stop and trailing distances must be derived from a fresh live preview;
+the analysis must not invent a fixed price or distance from a stale portfolio quote.
 Use the existing Import screen to save broker credentials with OS encryption.
 The trading connection uses those credentials in an isolated pytr session and
 can require approval in the Trade Republic app or an authenticator code.

@@ -7,7 +7,7 @@ import { setDividendsInternal } from '../../../../store/dividends/dividends.redu
 import { analyzePortfolio } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
 import AssetList from '../../AssetsRoute/components/AssetList/AssetList';
 import { buildAnalysisPositions } from '../../../../utils/portfolioAnalysis';
-import PortfolioAnalysis, { ANALYSIS_PROFILE_KEY, ANALYSIS_MODEL_KEY, AssetResearchIndicator } from './PortfolioAnalysis';
+import PortfolioAnalysis, { ANALYSIS_PROFILE_KEY, ANALYSIS_MODEL_KEY, AssetResearchIndicator, AssetTradeStatus } from './PortfolioAnalysis';
 import AnalysisRoute from '../AnalysisRoute';
 import { MARKET_PRICE_UPDATED_AT_KEY, MARKET_PRICE_UPDATED_EVENT } from '../../../../utils/syncTimestamps';
 import { tradeDecisionFixture } from '../../../../../testing/fixtures/tradeDecision';
@@ -59,6 +59,23 @@ async function open() {
 async function openAISettings() {
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'KI-Einstellungen' })); });
 }
+
+it('shows an explicit per-asset trade blocking status', () => {
+  const base = { assetId: 1, action: 'Halten' as const, rationale: 'Begründung', risk: 'Risiko', sourceIndexes: [] as number[] };
+  const view = render(<div>
+    <AssetTradeStatus assetName="Frei" recommendation={{ ...base, action: 'Kaufen', plannedAmountEUR: 100, executionBlocker: null }} />
+    <AssetTradeStatus assetName="Blockiert" recommendation={{ ...base, executionBlocker: 'independent' }} />
+    <AssetTradeStatus assetName="Finanzierung" recommendation={{ ...base, executionBlocker: 'funding-only' }} />
+    <AssetTradeStatus assetName="Größe" recommendation={{ ...base, executionBlocker: 'scale-only' }} />
+    <AssetTradeStatus assetName="Ohne Trade" recommendation={{ ...base, executionBlocker: null }} />
+  </div>);
+  expect(screen.getByLabelText('Handelsstatus für Frei')).toHaveTextContent('Nicht blockiert – Kaufen empfohlen');
+  expect(screen.getByLabelText('Handelsstatus für Blockiert')).toHaveTextContent('Blockiert – eigener Prüfgrund');
+  expect(screen.getByLabelText('Handelsstatus für Finanzierung')).toHaveTextContent('Nur Finanzierung offen');
+  expect(screen.getByLabelText('Handelsstatus für Größe')).toHaveTextContent('Nur Größenprüfung offen');
+  expect(screen.getByLabelText('Handelsstatus für Ohne Trade')).toHaveTextContent('Kein Modelltrade vorgesehen');
+  view.unmount();
+});
 
 it('persists personal decision details, restores them for local requests, and clears them with stale-result detection', async () => {
   localStorage.setItem(ANALYSIS_PROFILE_KEY, JSON.stringify({ goal: 'growth', risk: 'medium', horizonYears: '10', buyBudget: '999' }));
@@ -185,6 +202,8 @@ it('restores the detailed sale decision and links scenario evidence outside the 
   const savedReport = await window.API.analyzePortfolio({} as never);
   savedReport.sources.push({ title: 'Market outlook', url: 'https://example.com/outlook' });
   savedReport.recommendations[0] = { ...savedReport.recommendations[0], action: 'Verkaufen', plannedAmountEUR: 50,
+    orderRecommendation: { type: 'limit', validity: 'day', execution: 'finpal-preview',
+      priceInstruction: 'Limit aus dem aktuellen Bid ableiten.', rationale: 'Ausführungspreis begrenzen.' },
     tradeDecision: { ...tradeDecisionFixture, scenarios: tradeDecisionFixture.scenarios.map(s => ({ ...s, sourceIndexes: [1] })) },
   };
   window.API.getLastPortfolioAnalysis = jest.fn().mockResolvedValue({ report: savedReport, snapshot: '', provider: 'chatgpt' });
@@ -192,6 +211,7 @@ it('restores the detailed sale decision and links scenario evidence outside the 
   await act(async () => { render(<PortfolioAnalysis standalone priceUpdatedAt={null} />, { preloadedState: { assets } }); });
   expect(screen.getByRole('region', { name: 'Halten oder jetzt reduzieren' })).toBeInTheDocument();
   expect(screen.getByText(tradeDecisionFixture.amountRationale)).toBeInTheDocument();
+  expect(screen.getByLabelText('Empfohlene Orderart')).toHaveTextContent(/Limit.*tagesgültig.*FinPal-Preview/);
   const article = screen.getByRole('region', { name: 'Halten oder jetzt reduzieren' }).closest('article')!;
   expect(within(article).getByRole('link', { name: '[1] Market outlook' })).toHaveAttribute('href', 'https://example.com/outlook');
   expect(screen.queryByText(/Diese gespeicherte Empfehlung enthält noch keine Abwägung/)).not.toBeInTheDocument();

@@ -76,7 +76,10 @@ it('does not recommend the original concentrated Bitcoin-to-Jinko switch from a 
     { key: '33', status: 'assessed', materialRisks: ['loss-making', 'low-margin'], rationale: 'Synthetic evidence of losses and weak margin.', sources: jinko.forecastSources },
   ]);
   expect(plan.positions.find(p => p.key === '33')!.action).not.toBe('Kaufen');
-  expect(plan.positions.find(p => p.key === '31')!.action).not.toBe('Verkaufen');
+  expect(plan.positions.find(p => p.key === '33')!.reason).toContain('Verlustlage');
+  expect(plan.optimization!.robust!.decisionStatus).toBe('stable-scenario');
+  expect(plan.optimization!.robust!.scenarioTrades.every(trade => trade.key !== '33')).toBe(true);
+  expect(plan.assumptions.join(' ')).toContain('Assetbezogener ausführbarer Teilplan');
   expect(plan.optimization!.robust!.estimates.find(e => e.key === '33')!.adjustedReturnPercent).toBeCloseTo(132.4705 * .25 * 7 / 17, 4);
   expect(validPortfolioAllocation(plan)).toBe(true);
 });
@@ -114,7 +117,10 @@ it('compares a cash-only purchase independently without using sale proceeds or t
   const bitcoin = robustReturnForecastFixture('31', { referencePrice: 74456.65, targetPrice: 60000, annualVolatilityPercent: 10 });
   const jinko = robustReturnForecastFixture('33', { referencePrice: 8.61, targetPrice: 100, annualVolatilityPercent: 10,
     uncertainty: { method: 'analyst-consensus', analystCount: 30, targetLowPrice: 99, targetHighPrice: 101 } });
-  const plan = buildRobustForecastAllocation(r, [bitcoin, jinko]);
+  const plan = buildRobustForecastAllocation(r, [bitcoin, jinko], [], undefined, undefined, [], [
+    { key: '31', status: 'assessed', materialRisks: [], rationale: 'Synthetic assessment.', sources: bitcoin.forecastSources },
+    { key: '33', status: 'assessed', materialRisks: [], rationale: 'Synthetic assessment.', sources: jinko.forecastSources },
+  ]);
   const comparison = plan.optimization!.robust!.cashOnlyComparison!;
   expect(plan.optimization!.robust!.scenarioTrades.some(trade => trade.action === 'Verkaufen')).toBe(true);
   expect(comparison.availableCashEUR).toBeCloseTo(117.54);
@@ -125,6 +131,62 @@ it('compares a cash-only purchase independently without using sale proceeds or t
   expect(comparison.remainingCashEUR).toBeGreaterThanOrEqual(150);
   expect(comparison.stressChecks.length).toBeGreaterThan(0);
   expect(validPortfolioAllocation(plan)).toBe(true);
+});
+
+it('rebuilds a selected executable partial plan without blocked sale proceeds', () => {
+  const r = request();
+  r.profile.decisionDetails = { reserveEUR: 100, plannedWithdrawalsEUR: 50, confirmedAt: new Date().toISOString() };
+  const bitcoin = robustReturnForecastFixture('31', { referencePrice: 74456.65, targetPrice: 60000, annualVolatilityPercent: 10 });
+  const jinko = robustReturnForecastFixture('33', { referencePrice: 8.61, targetPrice: 100, annualVolatilityPercent: 10,
+    uncertainty: { method: 'analyst-consensus', analystCount: 30, targetLowPrice: 99, targetHighPrice: 101 } });
+  const risks = [
+    { key: '31', status: 'assessed' as const, materialRisks: [] as string[], rationale: 'Synthetic assessment.', sources: bitcoin.forecastSources },
+    { key: '33', status: 'assessed' as const, materialRisks: [] as string[], rationale: 'Synthetic assessment.', sources: jinko.forecastSources },
+  ];
+  const first = buildRobustForecastAllocation(r, [bitcoin, jinko], [], undefined, undefined, [], risks);
+  const comparison = first.optimization!.robust!.cashOnlyComparison!;
+  expect(comparison.decisionStatus).toBe('stable-scenario');
+  const decisions = r.positions.map(position => {
+    const trade = comparison.scenarioTrades.find(candidate => candidate.key === String(position.id));
+    return { assetId: position.id, action: trade?.action ?? 'Halten' as 'Kaufen' | 'Halten',
+      plannedAmountEUR: trade?.amountEUR ?? null, rationale: 'Cash-Variante', risk: 'Geprueft', sourceIndexes: [] as number[] };
+  });
+  const selected = buildRobustForecastAllocation(r, [bitcoin, jinko], [], undefined, decisions, [], risks);
+  expect(selected.optimization!.robust!.decisionStatus).toBe('stable-scenario');
+  expect(selected.optimization!.robust!.scenarioTrades.every(trade => trade.action === 'Kaufen')).toBe(true);
+  expect(selected.assumptions.join(' ')).toContain('Ausführbarer Teilplan');
+  const correctedDecisions = decisions.map(decision => {
+    const trade = selected.optimization!.robust!.scenarioTrades.find(candidate => candidate.key === String(decision.assetId));
+    return trade ? { ...decision, action: trade.action, plannedAmountEUR: trade.amountEUR } : decision;
+  });
+  expect(allocationMismatch(selected, correctedDecisions)).toBeNull();
+});
+
+it('keeps funding- and scale-only buys eligible and resizes them to cash after a blocked sale', () => {
+  const r = request();
+  r.profile.decisionDetails = { reserveEUR: 100, plannedWithdrawalsEUR: 50, confirmedAt: new Date().toISOString() };
+  const bitcoin = robustReturnForecastFixture('31', { referencePrice: 74456.65, targetPrice: 60000, annualVolatilityPercent: 10 });
+  const jinko = robustReturnForecastFixture('33', { referencePrice: 8.61, targetPrice: 100, annualVolatilityPercent: 10,
+    uncertainty: { method: 'analyst-consensus', analystCount: 30, targetLowPrice: 99, targetHighPrice: 101 } });
+  const risks = [
+    { key: '31', status: 'assessed' as const, materialRisks: [] as string[], rationale: 'Synthetic assessment.', sources: bitcoin.forecastSources },
+    { key: '33', status: 'assessed' as const, materialRisks: [] as string[], rationale: 'Synthetic assessment.', sources: jinko.forecastSources },
+  ];
+  for (const blocker of ['funding-only', 'scale-only'] as const) {
+    const decisions = [
+      { assetId: 31, action: 'Prüfen' as const, plannedAmountEUR: null as number | null, executionBlocker: 'independent' as const,
+        rationale: 'Verkauf blockiert', risk: 'Steuerprüfung', sourceIndexes: [] as number[] },
+      { assetId: 33, action: 'Halten' as const, plannedAmountEUR: null as number | null, executionBlocker: blocker,
+        rationale: 'Nur Größe oder Finanzierung offen', risk: 'Kein eigener Blocker', sourceIndexes: [] as number[] },
+    ];
+    const selected = buildRobustForecastAllocation(r, [bitcoin, jinko], [], undefined, decisions, [], risks);
+    const buy = selected.positions.find(position => position.key === '33')!;
+    expect(buy.action).toBe('Kaufen');
+    expect(buy.amountEUR).toBeGreaterThan(0);
+    expect(buy.amountEUR!).toBeLessThanOrEqual(r.profile.buyBudget - 150);
+    expect(selected.positions.find(position => position.key === '31')!.amountEUR).toBeNull();
+    expect(allocationMismatch(selected, decisions)).toContain('finanzierungs- oder größenabhängigen Trade');
+  }
 });
 
 it('makes cited corporate risks binding for proposed buys and preserves the linked trade review after AI holds', () => {
@@ -170,13 +232,14 @@ it('permits a positive net base scenario despite a negative stress check when ot
   r.profile.decisionDetails = { reserveEUR: 100, plannedWithdrawalsEUR: 0, confirmedAt: new Date().toISOString() };
   const f = robustReturnForecastFixture('33', { referencePrice: 8.61, targetPrice: 100, annualVolatilityPercent: 10,
     uncertainty: { method: 'analyst-consensus', analystCount: 50, targetLowPrice: 99, targetHighPrice: 101 } });
-  const risk = { key: '33', status: 'assessed' as const, materialRisks: [] as string[], rationale: 'Synthetic assessment.', sources: f.forecastSources };
+  const risk = { key: '33', status: 'assessed' as const, materialRisks: [] as string[], structuralRisks: ['costs'], rationale: 'Synthetic assessment.', sources: f.forecastSources };
   const plan = buildRobustForecastAllocation(r, [f], [], undefined, undefined, [], [risk]);
   expect(plan.optimization!.robust!.baseUtilityImprovementEUR).toBeGreaterThan(0);
   expect(plan.optimization!.robust!.stressChecks.some(check => check.utilityImprovementEUR <= 0)).toBe(true);
   expect(plan.optimization!.robust!.decisionStatus).toBe('stable-scenario');
   expect(plan.positions[0].action).toBe('Kaufen');
   expect(plan.warnings.some(warning => warning.startsWith('Stresshinweis:'))).toBe(true);
+  expect(plan.warnings.some(warning => warning.includes('strukturelle Produktmerkmale') && warning.includes('Produktkosten'))).toBe(true);
   expect(validPortfolioAllocation(plan)).toBe(true);
 });
 

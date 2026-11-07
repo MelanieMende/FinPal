@@ -1,6 +1,7 @@
 /** User declarations, not verified market evidence or calibrated risk parameters. */
 export interface DecisionDetails {
   reserveEUR?: number;
+  executionBufferEUR?: number;
   plannedWithdrawalsEUR?: number;
   externalAssetsEUR?: number;
   liabilitiesEUR?: number;
@@ -15,6 +16,7 @@ export interface DecisionDetails {
 
 export const decisionMoneyFields = {
   reserveEUR: 'Geschützte Liquiditätsreserve (EUR)',
+  executionBufferEUR: 'Ausführungspuffer für Spreads und Steuern (EUR)',
   plannedWithdrawalsEUR: 'Zusätzliche geplante Entnahmen in 12 Monaten (EUR)',
   externalAssetsEUR: 'Externes Vermögen außerhalb von FinPal (EUR)',
   liabilitiesEUR: 'Offene finanzielle Verpflichtungen / Schulden (EUR)',
@@ -52,6 +54,7 @@ export function validDecisionDetails(value: unknown): value is DecisionDetails {
 
 /** Cash stays in portfolio valuation. This is a floor on remaining cash, not a deduction from wealth. */
 export const protectedCashEUR = (profile: { decisionDetails?: DecisionDetails }) =>
-  Math.round(((profile.decisionDetails?.reserveEUR ?? 0) + (profile.decisionDetails?.plannedWithdrawalsEUR ?? 0)) * 100) / 100;
+  Math.round(((profile.decisionDetails?.reserveEUR ?? 0) + (profile.decisionDetails?.executionBufferEUR ?? 0)
+    + (profile.decisionDetails?.plannedWithdrawalsEUR ?? 0)) * 100) / 100;
 
-export const decisionProfileInstructions = ' profile.decisionDetails enthält datierte persönliche Nutzerangaben, keine unabhängig geprüften Fakten. Leer/fehlend bedeutet unbekannt, explizit 0 bedeutet null. reserveEUR und plannedWithdrawalsEUR sind getrennte, additiv geschützte Barmittel; weder für Käufe noch für Gebühren verplanen. buyBudget bleibt der gesamte erfasste Cashbestand einschließlich dieser Reserve. Externes Vermögen nicht dem Kaufbudget oder der lokalen Bewertungsbasis hinzufügen; Zusammensetzung und Verfügbarkeit sind unbekannt. Schulden und monatlichen Überschuss nicht als automatische Transaktionen oder Finanzierung behandeln. lossCapacityEUR oder alternativ lossCapacityPercent beschreibt finanzielle Verlusttragfähigkeit im erfassten Portfolio. lossCapacityPercent liegt zwischen 0 und einschließlich 100 und bezieht sich auf die erfassten Positionen plus Cash ohne externes Vermögen; 100 bedeutet den gesamten erfassten Bewertungsbetrag. Bei unvollständiger Bewertung keinen exakten EUR-Gegenwert behaupten. Eine Prozentangabe nicht als festen EUR-Betrag behandeln oder mit tolerableDrawdownPercent verwechseln; tolerableDrawdownPercent beschreibt die persönliche Toleranz. Beide Angaben sind keine kalibrierte Modell-Risikoaversion oder garantierte Verlustgrenze. Fehlende Angaben konkret benennen, keine Eignung allein aus einer Risikostufe behaupten. Persönliche Hinweise sind Nutzerangaben und keine Belege für Kurse, Steuern oder Produktidentität. Beurteile die Passung von Ziel, Horizont, Liquiditätsbedarf, Verlusttragfähigkeit und Erfahrung; ein vollständiges Formular belegt keine fachliche Validierung des Modells.';
+export const decisionProfileInstructions = ' profile.decisionDetails enthält datierte persönliche Nutzerangaben, keine unabhängig geprüften Fakten. Leer/fehlend bedeutet unbekannt, explizit 0 bedeutet null. reserveEUR, executionBufferEUR und plannedWithdrawalsEUR sind getrennte, additiv geschützte Barmittel; weder für Käufe noch für Gebühren verplanen. executionBufferEUR ist ein ausdrücklich hinterlegter Puffer für unbekannte Spreads und Verkaufssteuern, keine Kostenschätzung. buyBudget bleibt der gesamte erfasste Cashbestand einschließlich dieser geschützten Beträge. Externes Vermögen nicht dem Kaufbudget oder der lokalen Bewertungsbasis hinzufügen; Zusammensetzung und Verfügbarkeit sind unbekannt. Schulden und monatlichen Überschuss nicht als automatische Transaktionen oder Finanzierung behandeln. lossCapacityEUR oder alternativ lossCapacityPercent beschreibt finanzielle Verlusttragfähigkeit im erfassten Portfolio. lossCapacityPercent liegt zwischen 0 und einschließlich 100 und bezieht sich auf die erfassten Positionen plus Cash ohne externes Vermögen; 100 bedeutet den gesamten erfassten Bewertungsbetrag. Bei unvollständiger Bewertung keinen exakten EUR-Gegenwert behaupten. Eine Prozentangabe nicht als festen EUR-Betrag behandeln oder mit tolerableDrawdownPercent verwechseln; tolerableDrawdownPercent beschreibt die persönliche Toleranz. Beide Angaben sind keine kalibrierte Modell-Risikoaversion oder garantierte Verlustgrenze. Fehlende Angaben konkret benennen, keine Eignung allein aus einer Risikostufe behaupten. Persönliche Hinweise sind Nutzerangaben und keine Belege für Kurse, Steuern oder Produktidentität. Beurteile die Passung von Ziel, Horizont, Liquiditätsbedarf, Verlusttragfähigkeit und Erfahrung; ein vollständiges Formular belegt keine fachliche Validierung des Modells.';

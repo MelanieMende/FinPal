@@ -12,6 +12,122 @@ jest.mock('pdf-parse', () => ({ PDFParse: class {
   async destroy() { /* No native resources in this fixture. */ }
 } }));
 
+it('loads and persists Bitcoin network documentation without requiring an ISIN or annual report', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-bitcoin-primary-'));
+  let now = Date.parse('2026-10-30T10:00:00Z');
+  const body = `<html><h1>Bitcoin network</h1><p>Bitcoin's public ledger uses consensus rules and proof of work.</p>
+    <p>Non-upgraded nodes may use and distribute incorrect information during both types of forks, creating several situations which could lead to financial loss.</p>
+    <p>A majority of the network's hashing power can attempt a 51 percent attack.</p>
+    <p>Bitcoin wallets use a private key. When a third party controls your keys, you rely on their security.</p>
+    <p>Bitcoin price is volatile, with sometimes illiquid markets. Government taxes and regulations apply.</p></html>`;
+  const policy = `Trade Republic Bank GmbH is a credit institution licensed in Germany and a crypto-asset services provider under Regulation (EU) 2023/1114 on Markets in Crypto-Assets (MiCAR). Trade Republic executes orders in Crypto-Assets.`;
+  const fetcher = jest.fn(async (url: string) => new Response(url.includes('EN_ExecutionPolicy.pdf') ? policy : body,
+    { headers: { 'content-type': url.includes('EN_ExecutionPolicy.pdf') ? 'application/pdf' : 'text/html' } }));
+  const position = { id: 31, name: 'Bitcoin', isin: 'BTC', symbol: 'BTC', type: 'Crypto' } as AnalysisPosition;
+  try {
+    const file = path.join(folder, 'documents.json');
+    const first = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
+    expect(first.discoveryChecked).toBe(true);
+    expect(first.gaps).toEqual([]);
+    expect(first.documents).toHaveLength(5);
+    expect(first.documents.every(document => document.period === null)).toBe(true);
+    expect(first.documents.filter(document => document.identity === 'bitcoin-network')).toHaveLength(4);
+    expect(first.documents.find(document => document.identity === 'trade-republic-casp')?.excerpt).toContain('licensed in Germany');
+    expect(first.documents[0].excerpt).toContain('51 percent attack');
+    expect(first.documents[0].excerpt).toContain('during both types of forks');
+    expect(fetcher).toHaveBeenCalledTimes(5);
+    const second = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now)
+      .collect({ ...position, isin: '', symbol: 'BTC-EUR' });
+    expect(second.documents.map(document => document.hash)).toEqual(first.documents.map(document => document.hash));
+    expect(fetcher).toHaveBeenCalledTimes(5);
+    now += 25 * 3600000;
+    fetcher.mockRejectedValue(new Error('offline'));
+    const fallback = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
+    expect(fallback.documents).toHaveLength(5);
+    expect(fallback.discoveryChecked).toBe(false);
+    expect(fallback.gaps).toHaveLength(5);
+    const providerOnlyFailure = jest.fn(async (url: string) => {
+      if (url.includes('EN_ExecutionPolicy.pdf')) throw new Error('provider offline');
+      return new Response(body, { headers: { 'content-type': 'text/html' } });
+    });
+    const partial = await new PrimaryRiskResearch(path.join(folder, 'provider-failure.json'),
+      providerOnlyFailure as unknown as typeof fetch, () => now).collect(position);
+    expect(partial.discoveryChecked).toBe(true);
+    expect(partial.documents.filter(document => document.identity === 'bitcoin-network')).toHaveLength(4);
+    expect(partial.gaps).toEqual(['Anbieterbezogene Crypto-Primärquelle konnte nicht aktuell geladen werden: https://assets.traderepublic.com/assets/files/EN_ExecutionPolicy.pdf']);
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
+it('does not assign Bitcoin project sources from a name, conflicting symbol, or security ISIN', () => {
+  const bitcoin = { isin: 'BTC', symbol: 'BTC', type: 'Crypto' as const };
+  expect(knownResearchSources(bitcoin)).toHaveLength(5);
+  expect(knownResearchSources({ ...bitcoin, isin: '', symbol: 'ETH' })).toEqual([]);
+  expect(knownResearchSources({ ...bitcoin, symbol: 'BCH' })).toEqual([]);
+  expect(knownResearchSources({ ...bitcoin, isin: 'DE000A27Z304' })).toEqual([]);
+  expect(knownResearchSources({ ...bitcoin, type: 'ETF' })).toEqual([]);
+});
+
+it('maps the listed SpaceX Class A ISIN to its SEC CIK and loads the current filing', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-spacex-primary-'));
+  const position = { id: 34, name: 'SpaceX', isin: 'US84615Q1031', symbol: 'SPCX', type: 'Stock' } as AnalysisPosition;
+  const submissions = { filings: { recent: {
+    form: ['10-Q', '10-Q'], accessionNumber: ['0001628280-26-066880', '0001628280-26-052535'],
+    primaryDocument: ['spcx-20260930.htm', 'spcx-20260630.htm'], reportDate: ['2026-09-30', '2026-06-30'],
+  } } };
+  const report = `Space Exploration Technologies Corp. Net income was $1,250 million. Operating income margin was 18.2 percent.
+    Cash and cash equivalents were $6,400 million. Long-term debt and maturities were disclosed. Risk Factors include launch failures,
+    satellite losses, government regulation and licensing. We have sufficient liquidity and there is no substantial doubt about going concern.`;
+  const fetcher = jest.fn(async (url: string) => url.includes('/submissions/CIK0001181412.json')
+    ? new Response(JSON.stringify(submissions), { headers: { 'content-type': 'application/json' } })
+    : new Response(report, { headers: { 'content-type': 'text/html' } }));
+  try {
+    const result = await new PrimaryRiskResearch(path.join(folder, 'documents.json'), fetcher as unknown as typeof fetch,
+      () => Date.parse('2026-11-03T10:00:00Z')).collect(position);
+    expect(result.discoveryChecked).toBe(true);
+    expect(result.gaps).toEqual([]);
+    expect(result.documents).toHaveLength(1);
+    expect(result.documents[0]).toMatchObject({ period: '2026-09-30',
+      source: { title: 'SEC 10-Q 2026-09-30', url: 'https://www.sec.gov/Archives/edgar/data/1181412/000162828026066880/spcx-20260930.htm' } });
+    expect(result.documents[0].excerpt).toContain('Space Exploration Technologies Corp.');
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
+it('loads the exact Apollo A2 UNH KID before accepting the gated Apollo companion page', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-apollo-eltif-'));
+  const now = Date.parse('2026-11-02T10:00:00Z');
+  const kid = `Document daté du 09 Septembre 2025. Apollo Global Private Markets ELTIF — Actions de catégorie A2 UNH. ISIN: LU3170240538.
+    L'objectif d'investissement du Compartiment est de chercher à offrir une plus-\nvalue de capital à long terme par des investissements de capital-investissement.
+    Frais de gestion et autres frais administratifs et d'exploitation: 2.80 % de la valeur de votre investissement par an.
+    Commissions liées aux résultats: 1.71 %. Les investisseurs peuvent demander le rachat de leurs Actions tous les trimestres, sous réserve des restrictions.
+    Une réserve de liquidité est destinée à faciliter les rachats. Le Compartiment peut utiliser des dérivés et un effet de levier.
+    Attention au risque de change si vous sélectionnez une catégorie d'actions dans une devise étrangère.
+    Carne Global Fund Managers est agréée et réglementée par la CSSF conformément au Règlement ELTIF. Le dépositaire du Compartiment est CACEIS Bank.`;
+  const apollo = `<html><h1>Apollo Global Private Markets ELTIF</h1><p>An investment involves a high degree of risk and is illiquid.
+    There are limitations on redemptions in any given quarter and redemption rights might be suspended.</p>
+    <p>Retail investor suitability must be assessed under the ELTIF Regulation and MiFID II.</p></html>`;
+  const fetcher = jest.fn(async (url: string) => new Response(url.includes('francetransactions') ? kid : apollo,
+    { headers: { 'content-type': url.includes('francetransactions') ? 'application/pdf' : 'text/html' } }));
+  try {
+    const position = { id: 32, name: 'Apollo Global Private Markets ELTIF – Klasse A2 UNH', isin: 'LU3170240538',
+      symbol: '', type: 'Fund' } as AnalysisPosition;
+    const result = await new PrimaryRiskResearch(path.join(folder, 'documents.json'), fetcher as unknown as typeof fetch, () => now)
+      .collect(position);
+    expect(result.discoveryChecked).toBe(true);
+    expect(result.documents).toHaveLength(2);
+    expect(result.documents[0]).toMatchObject({ identity: 'LU3170240538', period: '2025-09-09',
+      source: { title: expect.stringContaining('A2 UNH'), url: 'https://www.francetransactions.com/IMG/pdf/dic-apollo-private-equity.pdf' } });
+    expect(result.documents[0].excerpt).toContain('LU3170240538');
+    expect(result.documents[0].excerpt).toContain("L'objectif d'investissement");
+    expect(result.documents[0].excerpt).toContain('2.80 %');
+    expect(result.documents[0].excerpt).toContain('rachat de leurs Actions tous les trimestres');
+    expect(result.documents[0].excerpt).toContain('risque de change');
+    expect(result.documents[0].excerpt).not.toContain('valeur liquidative');
+    expect(result.documents[1].source.title).toContain('Produkt- und Risikohinweise');
+    expect(result.documents[1].excerpt).toContain('limitations on redemptions');
+    expect(result.gaps).toEqual(['Kein datiertes aktuelles Primärdokument zur exakten Instrumentkennung gefunden.']);
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
 it('checks current SEC filings, reuses downloaded documents for 24 hours and detects changed contents', async () => {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-documents-'));
   let now = Date.parse('2026-10-21T10:00:00Z');

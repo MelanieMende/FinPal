@@ -222,7 +222,8 @@ it('requires relevant exact document quotes for each ETF check and reuses the sa
   const checks = riskChecksFor('ETF').map(flag => ({ flag, finding: 'risk', reason: 'Documented exposure.', documentIndex: 0, quote: quotes[flag] }));
   const record = validateRiskAssessment(etf, etfSet, { checks, metrics: [] });
   expect(record.status).toBe('assessed');
-  expect(riskForModel(record).materialRisks).toContain('structure');
+  expect(riskForModel(record).materialRisks).not.toContain('structure');
+  expect(riskForModel(record).structuralRisks).toEqual(expect.arrayContaining(['liquidity', 'structure', 'currency']));
   const unrelated = validateRiskAssessment(etf, etfSet, { checks: checks.map(check => check.flag === 'costs'
     ? { ...check, quote: quotes.identity } : check), metrics: [] });
   expect(unrelated.status).toBe('unknown');
@@ -234,6 +235,51 @@ it('requires relevant exact document quotes for each ETF check and reuses the sa
     expect(new PrimaryRiskAssessmentCache(file).get(etf, etfSet)?.status).toBe('assessed');
     expect(new PrimaryRiskAssessmentCache(file).get({ ...etf, type: 'Fund' }, etfSet)).toBeNull();
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
+it('accepts French PRIIPs evidence for the exact Apollo ELTIF share class', () => {
+  const apollo = { id: 32, name: 'Apollo Global Private Markets ELTIF – A2 UNH', isin: 'LU3170240538', symbol: '', type: 'Fund' } as AnalysisPosition;
+  const text = `Apollo Global Private Markets ELTIF — Actions de catégorie A2 UNH. ISIN: LU3170240538.
+    L'objectif d'investissement du Compartiment est une plus-value de capital à long terme.
+    Frais de gestion et autres frais: 2.80 %. Commissions liées aux résultats: 1.71 %.
+    Les investisseurs peuvent demander le rachat de leurs Actions tous les trimestres, sous réserve des restrictions.
+    Le Compartiment peut utiliser des dérivés et un effet de levier. Attention au risque de change en devise étrangère.
+    Carne Global Fund Managers est agréée et réglementée par la CSSF conformément au Règlement ELTIF.`;
+  const apolloSet: RiskDocumentSet = { documents: [{ ...document, identity: 'LU3170240538', excerpt: text,
+    source: { title: 'Apollo A2 UNH KID', url: 'https://www.francetransactions.com/IMG/pdf/dic-apollo-private-equity.pdf' }, period: '2025-09-09' }],
+  discoveryChecked: true, gaps: [] };
+  const checks = [
+    { flag: 'identity', finding: 'no-risk', quote: 'ISIN: LU3170240538.' },
+    { flag: 'strategy', finding: 'no-risk', quote: "L'objectif d'investissement du Compartiment est une plus-value de capital à long terme." },
+    { flag: 'costs', finding: 'risk', quote: 'Frais de gestion et autres frais: 2.80 %.' },
+    { flag: 'valuation', finding: 'unknown', quote: '' },
+    { flag: 'liquidity', finding: 'risk', quote: 'rachat de leurs Actions tous les trimestres' },
+    { flag: 'structure', finding: 'risk', quote: 'dérivés et un effet de levier' },
+    { flag: 'currency', finding: 'risk', quote: 'risque de change en devise étrangère' },
+    { flag: 'regulatory', finding: 'no-risk', quote: 'agréée et réglementée par la CSSF conformément au Règlement ELTIF' },
+  ].map(check => ({ ...check, reason: check.finding === 'unknown' ? 'Kein datierter offizieller NAV belegt.' : 'Im KID belegt.',
+    documentIndex: check.finding === 'unknown' ? null : 0 }));
+  const record = validateRiskAssessment(apollo, apolloSet, { checks, metrics: [] });
+  expect(record.checks.filter(check => check.flag !== 'valuation').every(check => check.finding !== 'unknown')).toBe(true);
+  expect(record.checks.find(check => check.flag === 'valuation')).toMatchObject({ finding: 'unknown', documentIndex: null });
+  expect(record.gaps).toEqual(['valuation: Kein datierter offizieller NAV belegt.']);
+  const incomplete = validateRiskAssessment(apollo, apolloSet, { checks: checks.map(check =>
+    ['strategy', 'costs'].includes(check.flag)
+      ? { ...check, finding: 'unknown', reason: 'Nicht ausgewertet.', documentIndex: null, quote: '' }
+      : check), metrics: [] });
+  expect(incomplete.checks.find(check => check.flag === 'strategy')).toMatchObject({ finding: 'no-risk', documentIndex: 0 });
+  expect(incomplete.checks.find(check => check.flag === 'costs')).toMatchObject({ finding: 'risk', documentIndex: 0 });
+  expect(incomplete.checks.find(check => check.flag === 'costs')?.reason).toContain('datierter historischer Produktkostenbeleg');
+  expect(incomplete.gaps.some(gap => /^(?:strategy|costs):/.test(gap))).toBe(false);
+  const reviewed = { ...record, status: 'unknown' as const,
+    sources: [...record.sources, { title: 'Apollo product risks', url: 'https://www.apollo.com/agpm-eltif' }],
+    checks: record.checks.map(check => check.flag === 'currency'
+      ? { ...check, finding: 'unknown' as const, reason: 'Anteilsklassenwährung und tatsächliche Absicherung bleiben offen.', documentIndex: null, quote: '' }
+      : check),
+    gaps: ['valuation: Kein datierter offizieller NAV belegt.', 'currency: Anteilsklassenwährung bleibt offen.',
+      'Kein datiertes aktuelles Primärdokument zur exakten Instrumentkennung gefunden.'] };
+  expect(riskForModel(reviewed)).toMatchObject({ decisionReadiness: 'reviewed-uncertainty', materialRisks: [],
+    structuralRisks: ['costs', 'liquidity', 'structure'] });
 });
 
 it('records QDVE sector concentration and secondary-market access from its current issuer documents', () => {
@@ -253,6 +299,10 @@ it('records QDVE sector concentration and secondary-market access from its curre
   expect(record.checks.find(check => check.flag === 'structure')).toMatchObject({ finding: 'risk', documentIndex: 1 });
   expect(record.checks.find(check => check.flag === 'regulatory')).toMatchObject({ finding: 'no-risk', documentIndex: 1 });
   expect(record.gaps.some(gap => /^(?:costs|concentration|liquidity|structure|regulatory):/.test(gap))).toBe(false);
+  expect(riskForModel(record)).toMatchObject({
+    materialRisks: ['concentration'],
+    structuralRisks: ['liquidity', 'structure'],
+  });
   const invalidQuotes = validateRiskAssessment(etf, sourceSet, { checks: riskChecksFor('ETF').map(flag => ({
     flag, finding: 'no-risk', reason: 'Unbelegte Aussage.', documentIndex: 0, quote: 'Diese Textstelle existiert nicht.',
   })), metrics: [] });
@@ -298,6 +348,7 @@ it('uses VGWD KID costs and supervision plus diversified factsheet holdings', ()
   expect(result.checks.find(check => check.flag === 'structure')).toMatchObject({ finding: 'risk', documentIndex: 1 });
   expect(result.checks.find(check => check.flag === 'regulatory')).toMatchObject({ finding: 'no-risk', documentIndex: 1 });
   expect(result.gaps.some(gap => /^(?:identity|costs|concentration|structure|regulatory):/.test(gap))).toBe(false);
+  expect(riskForModel(result)).toMatchObject({ materialRisks: [], structuralRisks: ['structure'] });
   const concentrated = validateRiskAssessment(etf, { ...sourceSet, documents: [{ ...factsheet,
     excerpt: factsheet.excerpt.replace('12.9%', '35.0%') }, kid] }, null);
   expect(concentrated.checks.find(check => check.flag === 'concentration')?.finding).toBe('unknown');

@@ -44,6 +44,13 @@ export interface PortfolioAnalysisRequest {
 }
 
 export interface AnalysisSource { title: string; url: string; }
+export interface OrderRecommendation {
+  type: 'market' | 'limit' | 'stop' | 'trailing-stop';
+  validity: 'day' | '360-days' | null;
+  execution: 'finpal-preview' | 'manual-trade-republic';
+  priceInstruction: string;
+  rationale: string;
+}
 export interface AssetRecommendation {
   tradeDecision?: import('./tradeDecision').TradeDecision | null;
   executionBaseline?: { shares: number; transactionIds?: number[] };
@@ -59,6 +66,8 @@ export interface AssetRecommendation {
   risk: string;
   sourceIndexes: number[];
   tradeCheck?: { costs: string; taxes: string; conclusion: string };
+  orderRecommendation?: OrderRecommendation | null;
+  executionBlocker?: 'independent' | 'funding-only' | 'scale-only' | null;
 }
 export interface PortfolioAnalysisResult {
   mode?: 'ai' | 'local';
@@ -88,6 +97,7 @@ export interface NewAssetRecommendation {
   rationale: string;
   risk: string;
   sourceIndexes: number[];
+  orderRecommendation?: OrderRecommendation | null;
 }
 
 const finiteOrNull = (value: unknown): number | null => typeof value === 'number' && Number.isFinite(value) ? value : null;

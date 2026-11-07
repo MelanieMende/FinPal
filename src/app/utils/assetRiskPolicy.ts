@@ -45,19 +45,19 @@ export const riskEvidenceTerms: Record<RiskCheckName, RegExp> = {
   'low-margin': /margin|marge|gross profit|operating income/i,
   financing: /cash|debt|borrow|maturit|liquid|finanz|fälligkeit/i,
   'going-concern': /going concern|substantial doubt|fortführ|bestandsgefährd/i,
-  regulatory: /regulat|legal proceeding|litigation|tariff|verfahren|aufsicht|sanction/i,
-  identity: /ISIN|CUSIP|share class|anteilsklasse|fund name|emittent|issuer|token/i,
-  strategy: /objective|strategy|index|benchmark|replication|anlageziel|anlagepolitik/i,
-  costs: /expense|charge|fee|cost|TER|kosten|gebühr/i,
-  concentration: /concentrat|holdings|sector|top ten|gewicht|konzentrat|Portfolioallokation|Halbleiter|Informationstechnologie/i,
-  liquidity: /liquid|redeem|redemption|rückgabe|handelsvolumen|bid.ask|secondary market|stock exchange|authorised participants|Sekundärmarkt|Börse|Marktpreis/i,
-  structure: /derivative|swap|lending|securities lending|counterparty|physical|synthetic|struktur|kontrahent/i,
-  currency: /currency|hedg|währung|USD|EUR|GBP/i,
-  valuation: /NAV|net asset value|valuation|bewertung|stichtag|appraisal/i,
+  regulatory: /regulat|legal proceeding|litigation|tariff|verfahren|aufsicht|sanction|règlement|réglementée|agréée|CSSF/i,
+  identity: /ISIN|CUSIP|share class|anteilsklasse|fund name|emittent|issuer|token|Bitcoin network|Bitcoin.s public ledger/i,
+  strategy: /objective|strategy|index|benchmark|replication|anlageziel|anlagepolitik|objectif d'investissement|stratégie/i,
+  costs: /expense|charge|fee|cost|TER|kosten|gebühr|frais|coûts|commission liée/i,
+  concentration: /concentrat|holdings|sector|top ten|gewicht|konzentrat|Portfolioallokation|Halbleiter|Informationstechnologie|hashing power|hash rate|mining pool|51 percent attack/i,
+  liquidity: /liquid|redeem|redemption|rückgabe|handelsvolumen|bid.ask|secondary market|stock exchange|authorised participants|Sekundärmarkt|Börse|Marktpreis|rachat/i,
+  structure: /derivative|swap|lending|securities lending|counterparty|physical|synthetic|struktur|kontrahent|dérivés|effet de levier|dépositaire|contrepartie/i,
+  currency: /currency|hedg|währung|USD|EUR|GBP|devise|risque de change/i,
+  valuation: /NAV|net asset value|valuation|bewertung|stichtag|appraisal|valeur liquidative|évaluation/i,
   credit: /credit|rating|default|issuer|emittent|bonität|ausfall/i,
   terms: /maturity|coupon|interest|fälligkeit|kupon|zins/i,
   seniority: /senior|subordinat|rank|secured|rang|besicher/i,
-  protocol: /protocol|consensus|validator|governance|smart contract|protokoll/i,
+  protocol: /protocol|consensus|validator|governance|smart contract|protokoll|proof.of.work|block.?chain|mining|fork|nodes/i,
   custody: /custod|wallet|private key|verwahr|schlüssel/i,
   underwriting: /combined ratio|technical result|underwriting|schaden.kosten.quote|versicherungstechn/i,
   solvency: /solvency ratio|solvency capital|SCR|solvenz|eigenmittel/i,
@@ -74,6 +74,6 @@ export function riskReviewInstructions(position: Pick<AnalysisPosition, 'isin' |
     (isInsuranceStock(position) ? 'Die verifizierte ISIN ist hier dem Emittenten Munich Re zugeordnet; ein Konzernbericht muss die ISIN nicht selbst abdrucken. Beziehe Zahlen nur auf diesen Konzern und kennzeichne das jeweilige Segment bei einer Combined Ratio. Bewerte die Kapitalstärke eines Rückversicherers anhand der Solvenzquote und das Versicherungsgeschäft anhand der Combined Ratio beziehungsweise des versicherungstechnischen Ergebnisses. Eine gewöhnliche operative Marge ist dafür kein passender Ersatz. Prüfe bei regulatorischen Risiken auch den Abschnitt Legal risks des Konzernberichts: laufende Verfahren und die Einschätzung ihrer finanziellen Wesentlichkeit getrennt nennen. Laufende Verfahren allein belegen keinen wesentlichen finanziellen Schaden, wenn der Bericht ihn ausdrücklich nicht erwartet. Prüfe, ob der Halbjahresbericht 2026 die Risikoaussagen des Geschäftsberichts 2025 ausdrücklich unverändert übernimmt; das ist keine Behauptung, dass es keine Verfahren gibt. ' : '') +
     (type === 'ETF' || type === 'Fund' ? 'Beurteile Kosten, Konzentration, Rückgabe, Derivate/Wertpapierleihe, Währungsabsicherung und offiziellen NAV nur auf Ebene der exakten Anteilsklasse. Ein aktuelles PRIIPs-KID belegt Produktkosten und den Rückgabeweg; Brokergebühren und aktuelle Börsenspannen sind gesonderte Ausführungskosten und machen diese Produktfelder nicht allein unbekannt. Unterscheide erlaubten Derivate- oder Leiheinsatz von tatsächlich berichteter Nutzung. Dokumentierte Sektor- und Währungsrisiken als Risiko benennen, aber die planmäßige Indexstrategie nicht allein wegen fehlenden Kapitalschutzes als eigenständigen Mangel behandeln. ' : '') +
     (type === 'Bond' ? 'Prüfe Emittent, CUSIP/ISIN, Kupon, Endfälligkeit, Rang, Zahlungswährung und Ausfallrisiko; historische Auktionsrenditen sind keine aktuellen Börsenkurse. investorBaseCurrency ist die EUR-Anlegerperspektive, confirmedNominalCurrency stammt aus bestätigten Depotabrechnungen. Beides ist Kontext und ersetzt keine emissionsbezogene Primärquelle; behaupte keine ausdrücklich belegte Zahlungswährung, wenn der Emissionstext nur Dollarbeträge zeigt. Bewerte das Wechselkursrisiko aus der belegten Kombination und nenne eine verbleibende Unsicherheit zur vertraglichen Zahlungswährung. ' : '') +
-    (type === 'Crypto' ? 'Unterscheide Coin, Token, Netzwerk, Emittent und Verwahrer. Ein Whitepaper ist kein Nachweis für Sicherheit oder aufsichtsrechtliche Billigung. ' : '') +
+    (type === 'Crypto' ? 'Unterscheide Coin, Token, Netzwerk, Emittent und Verwahrer. identity prüft die eindeutige Netzwerk-/Coin-Zuordnung anhand der lokalen BTC-Kennung und der Projektdokumentation; für Bitcoin ist keine ISIN erforderlich. Die konkrete Produkt- und Verwahrform ist separat zu prüfen. security.reviewContext enthält vorhandene Verwahrangaben, exakt passende Broker-Produktdaten und Steuerwohnsitze samt Herkunft; bestätigte Angaben nutzen, Voreinstellungen nicht als bestätigt behandeln. Ein bekannter Anbieter belegt nicht dessen interne Wallet-Sicherheit. Bitcoin-Projektdokumentation beschreibt das BTC-Netzwerk und belegt allein kein direktes Kryptoprodukt. Undatierte Protokollgrundlagen dürfen als solche ausgewertet werden; der Abrufzeitpunkt ist kein Veröffentlichungsdatum oder aktueller Netzwerkzustand. Belege strukturelle Konsens-, Fork-, Schlüsselverlust-, Dienstleister- und Marktliquiditätsrisiken mit Textstellen. Ein beschriebenes Mehrheitsangriffsszenario belegt keine aktuell gemessene Mining-Konzentration. Allgemeine Wallet-Hinweise belegen keine Sicherheitsmerkmale des tatsächlichen Depotanbieters. Tagesaktuelle Mining-Pool-Anteile, konkrete Störungen, Handelsspannen und anlegerbezogene regulatorische Zulässigkeit nur mit passenden aktuellen Belegen beurteilen; die verbleibende Lücke genau nennen. Ein Whitepaper ist kein Nachweis für Sicherheit oder aufsichtsrechtliche Billigung. ' : '') +
     'Keine Empfehlung und keine erfundenen Zahlen ausgeben.';
 }

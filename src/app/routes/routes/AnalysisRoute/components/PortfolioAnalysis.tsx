@@ -8,7 +8,7 @@ import { formatSyncTime } from '../../../../utils/syncTimestamps';
 import { assessQuoteFreshness, isMarketClosedInfo } from '../../../../utils/quoteFreshness';
 import { isDescriptiveRiskInfo } from '../../../../utils/analysisMessages';
 import { isEltif, assessNavFreshness, type NavEvidence } from '../../../../utils/eltifValuation';
-import type { AnalysisPosition, AssetResearchStatus } from '../../../../utils/portfolioAnalysis';
+import type { AnalysisPosition, AssetRecommendation, AssetResearchStatus } from '../../../../utils/portfolioAnalysis';
 import { selectTotalLiquidity } from '../../../../store/cash/cash.selectors';
 import { selectRecommendationExecutions } from '../../../../utils/recommendationExecution';
 import { checkPortfolioFunding } from '../../../../utils/portfolioFunding';
@@ -75,6 +75,25 @@ export function AssetResearchIndicator({ status, now }: { status?: AssetResearch
   </p>;
 }
 const compareRecommendations = (a: { action: keyof typeof actionOrder }, b: { action: keyof typeof actionOrder }) => actionOrder[a.action] - actionOrder[b.action];
+
+export function AssetTradeStatus({ recommendation, assetName }: { recommendation: AssetRecommendation; assetName: string }) {
+  const executable = recommendation.action === 'Kaufen' || recommendation.action === 'Verkaufen';
+  const status = executable
+    ? { title: `Nicht blockiert – ${recommendation.action} empfohlen`, detail: 'Der Trade ist freigegeben. Betrag, Kosten und Orderart vor der Ausführung noch einmal prüfen.', color: 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200', icon: 'tick-circle' as const }
+    : recommendation.executionBlocker === 'independent'
+      ? { title: 'Blockiert – eigener Prüfgrund', detail: 'Dieser Trade bleibt unabhängig von der Finanzierung gesperrt. Der konkrete Grund steht in der Empfehlung.', color: 'border-red-400/30 bg-red-500/10 text-red-200', icon: 'ban-circle' as const }
+      : recommendation.executionBlocker === 'funding-only'
+        ? { title: 'Nur Finanzierung offen', detail: 'Das Asset ist grundsätzlich geeignet. FinPal berechnet den Trade ohne zurückgestellte Verkaufserlöse neu.', color: 'border-sky-400/30 bg-sky-500/10 text-sky-200', icon: 'changes' as const }
+        : recommendation.executionBlocker === 'scale-only'
+          ? { title: 'Nur Größenprüfung offen', detail: 'Richtung und Produkt sind grundsätzlich geeignet. Betrag und Zielquote werden kleiner neu berechnet.', color: 'border-sky-400/30 bg-sky-500/10 text-sky-200', icon: 'horizontal-distribution' as const }
+          : recommendation.action === 'Prüfen'
+            ? { title: 'Blockiert – Prüfbedarf', detail: 'Vor einem Trade muss der in der Empfehlung genannte offene Punkt geklärt werden.', color: 'border-amber-400/30 bg-amber-500/10 text-amber-200', icon: 'warning-sign' as const }
+            : { title: 'Kein Modelltrade vorgesehen', detail: 'Halten ist die aktuelle Entscheidung; es besteht kein gesondert ausgewiesener Ausführungsblocker.', color: 'border-white/15 bg-white/5 text-gray-300', icon: 'pause' as const };
+  return <section aria-label={`Handelsstatus für ${assetName}`} className={`my-2 min-w-0 rounded border p-2 text-xs ${status.color}`}>
+    <p className="m-0 flex min-w-0 items-start gap-2 font-bold"><Icon icon={status.icon} size={13} aria-hidden="true" /><span className="min-w-0 break-words">Handelsstatus: {status.title}</span></p>
+    <p className="mb-0 mt-1 break-words">{status.detail}</p>
+  </section>;
+}
 
 type AIConnectionSettingsProps = {
   provider: 'chatgpt' | 'api'; setProvider: (provider: 'chatgpt' | 'api') => void;
@@ -559,6 +578,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
               <div className="flex justify-between items-start gap-3"><span className="font-bold text-sm text-white">{assets.find(a => a.ID === rec.assetId)?.name || `Asset ${rec.assetId}`}</span>
                 <span className={`text-xs font-bold ${rec.action === 'Kaufen' ? 'text-emerald-400' : rec.action === 'Verkaufen' ? 'text-red-400' : rec.action === 'Prüfen' ? 'text-amber-300' : 'text-indigo-300'}`}>{rec.action}</span>
               </div>
+              <AssetTradeStatus recommendation={rec} assetName={assets.find(a => a.ID === rec.assetId)?.name || `Asset ${rec.assetId}`} />
               {(() => {
                 const status = researchStatus.find(item => item.assetId === rec.assetId);
                 const reusable = !!status?.expiresAt && Date.parse(status.expiresAt) > now;
@@ -596,6 +616,12 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
               {rec.tradeDecision ? <TradeDecisionReview decision={rec.tradeDecision} />
                 : rec.action === 'Verkaufen' && <p className="text-xs text-sky-200">Diese gespeicherte Empfehlung enthält noch keine Abwägung von Halten und Reduzieren mit Kursszenarien. Über „Neu analysieren“ ergänzen.</p>}
               {typeof rec.plannedAmountEUR === 'number' && !result.allocationPlan?.positions.some(position => position.key === String(rec.assetId)) && <p className="text-xs text-gray-400">Geplanter {rec.action === 'Verkaufen' ? 'Brutto-Verkaufsbetrag' : 'Kaufbetrag'} im Szenario: {euros(rec.plannedAmountEUR)}</p>}
+              {rec.orderRecommendation && <div className="rounded border border-indigo-400/20 bg-indigo-500/5 p-3 text-xs text-gray-300 space-y-1" aria-label="Empfohlene Orderart">
+                <p className="m-0"><span className="font-bold text-white">Orderart:</span> {rec.orderRecommendation.type === 'market' ? 'Market' : rec.orderRecommendation.type === 'limit' ? 'Limit' : rec.orderRecommendation.type === 'stop' ? 'Stop-Market' : 'Trailing Stop Loss'}{rec.orderRecommendation.validity === 'day' ? ' · tagesgültig' : rec.orderRecommendation.validity === '360-days' ? ' · 360 Tage' : ''}</p>
+                <p className="m-0"><span className="font-bold text-white">Ausführung:</span> {rec.orderRecommendation.execution === 'finpal-preview' ? 'FinPal-Preview vor Bestätigung' : 'manuell bei Trade Republic'}</p>
+                <p className="m-0">{rec.orderRecommendation.priceInstruction}</p><p className="m-0">{rec.orderRecommendation.rationale}</p>
+                {rec.orderRecommendation.type === 'trailing-stop' && <p className="m-0 text-amber-200">Manuell in der aktuellen Trade-Republic-Ordermaske prüfen: Referenzkurs, Nachlaufabstand und Gültigkeit werden nicht von FinPal übermittelt.</p>}
+              </div>}
               <div className="flex flex-wrap gap-2">
                 <Button small disabled={busy || !positions.some(position => position.id === rec.assetId)} onClick={() => analyze(rec.assetId)} aria-label={`Asset ${rec.assetId} neu analysieren`}>Neu analysieren</Button>
                 <Button small icon="refresh" disabled={busy || !positions.some(position => position.id === rec.assetId)} onClick={() => refreshForecast(rec.assetId)} aria-label={`Forecast für Asset ${rec.assetId} neu laden`}>Forecast neu laden</Button>
@@ -634,6 +660,12 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                 <AssetOptimizationDetails plan={result.allocationPlan} allocationKey={allocationCandidateKey(rec)} assetType={rec.type} onOpenSource={openSource} />
                 <p className="text-sm text-gray-300 whitespace-pre-wrap">{rec.rationale}</p>
                 {typeof rec.plannedAmountEUR === 'number' && !result.allocationPlan?.positions.some(position => position.key === allocationCandidateKey(rec)) && <p className="text-xs text-gray-400">Geplanter Kaufbetrag im Szenario: {euros(rec.plannedAmountEUR)}</p>}
+                {rec.orderRecommendation && <div className="rounded border border-indigo-400/20 bg-indigo-500/5 p-3 text-xs text-gray-300 space-y-1" aria-label="Empfohlene Orderart">
+                  <p className="m-0"><span className="font-bold text-white">Orderart:</span> {rec.orderRecommendation.type === 'market' ? 'Market' : rec.orderRecommendation.type === 'limit' ? 'Limit' : rec.orderRecommendation.type === 'stop' ? 'Stop-Market' : 'Trailing Stop Loss'}{rec.orderRecommendation.validity === 'day' ? ' · tagesgültig' : rec.orderRecommendation.validity === '360-days' ? ' · 360 Tage' : ''}</p>
+                  <p className="m-0"><span className="font-bold text-white">Ausführung:</span> {rec.orderRecommendation.execution === 'finpal-preview' ? 'FinPal-Preview vor Bestätigung' : 'manuell bei Trade Republic'}</p>
+                  <p className="m-0">{rec.orderRecommendation.priceInstruction}</p><p className="m-0">{rec.orderRecommendation.rationale}</p>
+                  {rec.orderRecommendation.type === 'trailing-stop' && <p className="m-0 text-amber-200">Manuell in der aktuellen Trade-Republic-Ordermaske prüfen: Referenzkurs, Nachlaufabstand und Gültigkeit werden nicht von FinPal übermittelt.</p>}
+                </div>}
                 <p className="text-xs text-amber-200 whitespace-pre-wrap">Risiken: {rec.risk}</p>
                 <div className="flex flex-wrap gap-2 mt-2">{[...new Set(rec.sourceIndexes)].map(index => <a key={index} href={result.sources[index].url} onClick={e => openSource(e, result.sources[index].url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">[{index}] {result.sources[index].title}</a>)}</div>
               </article>)}

@@ -484,7 +484,8 @@ it('closes Munich Re financing only with liquidity, maturities, current cash and
   excerpt: riskExcerpt('Munich Re. Our objective in managing liquidity risk is to ensure that we are in a position to meet our payment obligations at all times. The use of quantitative risk criteria also ensures that sufficient liquidity is available even under adverse scenarios. The overview below shows the liquidity requirements arising from our financial liabilities, divided into maturity bands.', 'Stock', true) };
   const halfYear = { ...document, period: '2026-06-30', source: { title: 'Half-Year Financial Report 2026',
     url: 'https://www.munichre.com/content/dam/munichre/mrwebsiteslaunches/2026-half-year-financial-report/MunichRe-Half-Year-Financial-Report-2026-en.pdf' },
-  excerpt: riskExcerpt('Munich Re. The statements relating to opportunities and risks as presented in the Munich Re Group Annual Report 2025 apply unchanged. Consolidated balance sheet as at 30 June 2026. €m. H. Cash and cash equivalents 5,819 5,502 317.', 'Stock', true) };
+  // The production excerpt can start inside the matched context window and omit "statements relating to".
+  excerpt: riskExcerpt('Munich Re. Opportunities and risks as\npresented in the Munich Re Group Annual Report 2025\napply unchanged. Consolidated balance sheet as at 30 June 2026. €m. H. Cash and cash equivalents 5,819 5,502 317.', 'Stock', true) };
   const sourceSet: RiskDocumentSet = { documents: [annual, halfYear], discoveryChecked: true, gaps: [] };
   const result = validateRiskAssessment(insurer, sourceSet, { checks: [
     { flag: 'financing', finding: 'unknown', reason: 'To be checked.', documentIndex: null, quote: '' },

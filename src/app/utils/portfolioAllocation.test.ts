@@ -141,6 +141,16 @@ it('resizes buys to actual cash when the analysis defers a modeled sale, includi
   expect(checkPortfolioFunding(request, { recommendations: decisions })).toMatchObject({ status: 'conditional', saleProceedsEUR: 0 });
 });
 
+it('rejects stale funding-only after the local recalculation found no economic trade', () => {
+  const request = req([pos(1, 'ETF', 1000)], 10);
+  const plan = buildPortfolioAllocation(request, [], undefined, [rec(1, 'Halten', null)]);
+  expect(plan.positions[0]).toMatchObject({ action: 'Halten', amountEUR: null });
+  const decision = { ...rec(1, 'Prüfen', null), executionBlocker: 'funding-only' as const };
+  expect(allocationMismatch(plan, [decision])).toContain('bereits neu berechnet');
+  expect(allocationMismatch(plan, [decision])).toContain('keine ausstehende Neuberechnung');
+  expect(allocationMismatch(plan, [{ ...decision, action: 'Halten', executionBlocker: null }])).toBeNull();
+});
+
 it('reserves unchanged buy commitments during a single-asset update and blocks unknown existing fees', () => {
   const request = withFacts(req([pos(1, 'ETF', 1000), pos(2, 'Crypto', 1000)], 10000), {
     1: { percent: 70, minPercent: 65, maxPercent: 75 }, 2: { percent: 10, minPercent: 8, maxPercent: 12 },

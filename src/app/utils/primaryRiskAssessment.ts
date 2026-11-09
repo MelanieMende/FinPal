@@ -355,7 +355,7 @@ const munichAnnualReport = (document: RiskDocument) => document.period === '2025
 const munichHalfYearReport = (document: RiskDocument) => document.period === '2026-06-30'
   && /^https:\/\/www\.munichre\.com\/.*\/MunichRe-Half-Year-Financial-Report-2026-en\.pdf(?:$|\/)/i.test(document.source.url);
 const munichRiskCarriedForward = (document: RiskDocument) => munichHalfYearReport(document)
-  && /statements relating to opportunities and risks\s+as presented in the Munich Re Group Annual Report 2025\s+apply unchanged/i.test(document.excerpt);
+  && /(?:statements relating to\s+)?opportunities and risks\s+as\s+presented in the Munich Re Group Annual Report 2025\s+apply unchanged/i.test(document.excerpt);
 const munichFinancingOpen = 'Verfügbare Primärberichte geprüft: Liquiditätssteuerung, Fälligkeiten und aktueller Zahlungsmittelbestand sind noch nicht gemeinsam belegt.';
 const munichGoingConcernOpen = 'Verfügbare Primärberichte geprüft: Eine konkrete unternehmensbezogene Aussage zu wesentlichen Fortführungsunsicherheiten fehlt. Allgemeine Prüferpflichten sind keine Entwarnung.';
 function qualifyMunichFinancingAndContinuity(position: AnalysisPosition, check: RiskCheck, documents: RiskDocument[]): RiskCheck {
@@ -456,6 +456,7 @@ function qualifyMcdRegulatoryRisk(position: AnalysisPosition, check: RiskCheck, 
 export function riskFingerprint(position: AnalysisPosition, set: RiskDocumentSet): string {
   return createHash('sha256').update(JSON.stringify({ policy: RISK_POLICY, isin: position.isin.trim().toUpperCase(),
     type: position.type, ...(position.isin.trim().toUpperCase() === 'US5801351017' ? { mcdReviewVersion: 2 } : {}),
+    ...(position.isin.trim().toUpperCase() === 'DE0008430026' ? { munichReviewVersion: 3 } : {}),
     ...(position.type === 'Crypto' && set.reviewContext ? { cryptoReviewContext: {
       custody: set.reviewContext.custody && { kind: set.reviewContext.custody.kind,
         provider: set.reviewContext.custody.provider, source: set.reviewContext.custody.source },

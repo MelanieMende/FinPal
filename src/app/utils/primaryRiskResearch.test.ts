@@ -327,11 +327,11 @@ it('loads Munich Re issuer reports for its German ISIN and reuses their dated ex
     expect(second.documents.map(doc => doc.hash)).toEqual(first.documents.map(doc => doc.hash));
     const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
     const oldAnnual = saved.documents.find((doc: { source: { url: string } }) => doc.source.url.includes('Group-Annual-Report-2025'));
-    delete oldAnnual.excerptVersion;
+    oldAnnual.excerptVersion = 2;
     fs.writeFileSync(file, JSON.stringify(saved));
     const upgraded = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
     expect(fetcher).toHaveBeenCalledTimes(5);
-    expect(upgraded.documents.find(doc => doc.source.url.includes('Group-Annual-Report-2025'))?.excerptVersion).toBe(2);
+    expect(upgraded.documents.find(doc => doc.source.url.includes('Group-Annual-Report-2025'))?.excerptVersion).toBe(3);
     const wrongFetcher = jest.fn(async () => new Response(report.replaceAll('Munich Re', 'Other Company'), { headers: { 'content-type': 'application/pdf' } }));
     const wrong = await new PrimaryRiskResearch(path.join(folder, 'wrong.json'), wrongFetcher as unknown as typeof fetch, () => now).collect(position);
     expect(wrong.discoveryChecked).toBe(false);

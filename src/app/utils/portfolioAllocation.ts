@@ -237,9 +237,10 @@ export function allocationMismatch(plan: PortfolioAllocation, recommendations: A
       continue;
     }
     if (plan.status === 'calculated' && target?.action === 'Prüfen' && !['Prüfen', 'Halten'].includes(rec.action)) return `${key}: Die Position ist wegen eines konkreten Prüfgrunds unverändert eingefroren. Prüfen oder begründet Halten wählen und die Datenlücke nennen.`;
-    if ('assetId' in rec && ['funding-only', 'scale-only'].includes(rec.executionBlocker ?? '') && target?.amountEUR !== null
-      && (target?.action === 'Kaufen' || target?.action === 'Verkaufen')) {
-      return `${key}: Der lokale Teilplan hat den finanzierungs- oder größenabhängigen Trade ohne zurückgestellte Verkaufserlöse neu berechnet. Beurteile nur den neuen Betrag und die neue Zielquote. ${target.action} mit plannedAmountEUR ${target.amountEUR.toFixed(2)} EUR und executionBlocker null übernehmen oder einen konkreten, auch für diese kleinere Variante geltenden unabhängigen Asset-Blocker nennen.`;
+    if ('assetId' in rec && ['funding-only', 'scale-only'].includes(rec.executionBlocker ?? '')) {
+      if (target?.amountEUR !== null && (target?.action === 'Kaufen' || target?.action === 'Verkaufen'))
+        return `${key}: Der lokale Teilplan hat den finanzierungs- oder größenabhängigen Trade ohne zurückgestellte Verkaufserlöse neu berechnet. Beurteile nur den neuen Betrag und die neue Zielquote. ${target.action} mit plannedAmountEUR ${target.amountEUR.toFixed(2)} EUR und executionBlocker null übernehmen oder einen konkreten, auch für diese kleinere Variante geltenden unabhängigen Asset-Blocker nennen.`;
+      return `${key}: Der lokale Teilplan wurde ohne zurückgestellte Verkaufserlöse bereits neu berechnet und enthält für dieses Asset keinen wirtschaftlichen Trade. Nicht weiter funding-only oder scale-only und keine ausstehende Neuberechnung behaupten. Halten mit plannedAmountEUR null und executionBlocker null als lokales Modellergebnis erklären oder einen konkreten unabhängigen Asset-Blocker nennen.`;
     }
     if (rec.action !== 'Kaufen' && rec.action !== 'Verkaufen') continue;
     if (!target || target.action !== rec.action || target.amountEUR === null) return `${key}: Kein berechneter ${rec.action === 'Kaufen' ? 'Kauf' : 'Verkauf'} möglich. Halten oder Prüfen wählen und den konkreten Modell-/Datengrund nennen.`;

@@ -7,7 +7,7 @@ import { setDividendsInternal } from '../../../../store/dividends/dividends.redu
 import { analyzePortfolio } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
 import AssetList from '../../AssetsRoute/components/AssetList/AssetList';
 import { buildAnalysisPositions } from '../../../../utils/portfolioAnalysis';
-import PortfolioAnalysis, { ANALYSIS_PROFILE_KEY, ANALYSIS_MODEL_KEY, AssetResearchIndicator, AssetTradeStatus } from './PortfolioAnalysis';
+import PortfolioAnalysis, { ANALYSIS_PROFILE_KEY, ANALYSIS_MODEL_KEY, AssetRecommendationStatus, AssetResearchIndicator, comparableAnalysisSnapshot } from './PortfolioAnalysis';
 import AnalysisRoute from '../AnalysisRoute';
 import { MARKET_PRICE_UPDATED_AT_KEY, MARKET_PRICE_UPDATED_EVENT } from '../../../../utils/syncTimestamps';
 import { tradeDecisionFixture } from '../../../../../testing/fixtures/tradeDecision';
@@ -60,21 +60,43 @@ async function openAISettings() {
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'KI-Einstellungen' })); });
 }
 
-it('shows an explicit per-asset trade blocking status', () => {
+it('shows a blocked card status and moves the trade status details into its tooltip', async () => {
   const base = { assetId: 1, action: 'Halten' as const, rationale: 'Begründung', risk: 'Risiko', sourceIndexes: [] as number[] };
   const view = render(<div>
-    <AssetTradeStatus assetName="Frei" recommendation={{ ...base, action: 'Kaufen', plannedAmountEUR: 100, executionBlocker: null }} />
-    <AssetTradeStatus assetName="Blockiert" recommendation={{ ...base, executionBlocker: 'independent' }} />
-    <AssetTradeStatus assetName="Finanzierung" recommendation={{ ...base, executionBlocker: 'funding-only' }} />
-    <AssetTradeStatus assetName="Größe" recommendation={{ ...base, executionBlocker: 'scale-only' }} />
-    <AssetTradeStatus assetName="Ohne Trade" recommendation={{ ...base, executionBlocker: null }} />
+    <AssetRecommendationStatus assetName="Frei" recommendation={{ ...base, action: 'Kaufen', plannedAmountEUR: 100, executionBlocker: null }} />
+    <AssetRecommendationStatus assetName="Blockiert" recommendation={{ ...base, executionBlocker: 'independent' }} />
+    <AssetRecommendationStatus assetName="Finanzierung" recommendation={{ ...base, executionBlocker: 'funding-only' }} />
+    <AssetRecommendationStatus assetName="Größe" recommendation={{ ...base, executionBlocker: 'scale-only' }} />
+    <AssetRecommendationStatus assetName="Prüfbedarf" recommendation={{ ...base, action: 'Prüfen', executionBlocker: null }} />
+    <AssetRecommendationStatus assetName="Ohne Trade" recommendation={{ ...base, executionBlocker: null }} />
   </div>);
-  expect(screen.getByLabelText('Handelsstatus für Frei')).toHaveTextContent('Nicht blockiert – Kaufen empfohlen');
-  expect(screen.getByLabelText('Handelsstatus für Blockiert')).toHaveTextContent('Blockiert – eigener Prüfgrund');
-  expect(screen.getByLabelText('Handelsstatus für Finanzierung')).toHaveTextContent('Nur Finanzierung offen');
-  expect(screen.getByLabelText('Handelsstatus für Größe')).toHaveTextContent('Nur Größenprüfung offen');
-  expect(screen.getByLabelText('Handelsstatus für Ohne Trade')).toHaveTextContent('Kein Modelltrade vorgesehen');
+  expect(screen.getByLabelText('Kaufen – Handelsstatus für Frei')).toHaveTextContent('Kaufen');
+  expect(screen.getByLabelText('Blockiert – Handelsstatus für Blockiert')).toHaveTextContent('Blockiert');
+  expect(screen.getByLabelText('Blockiert – Handelsstatus für Finanzierung')).toHaveTextContent('Blockiert');
+  expect(screen.getByLabelText('Blockiert – Handelsstatus für Größe')).toHaveTextContent('Blockiert');
+  expect(screen.getByLabelText('Blockiert – Handelsstatus für Prüfbedarf')).toHaveTextContent('Blockiert');
+  expect(screen.getByLabelText('Halten – Handelsstatus für Ohne Trade')).toHaveTextContent('Halten');
+  expect(screen.queryByRole('region', { name: /Handelsstatus für/ })).not.toBeInTheDocument();
+  fireEvent.mouseEnter(screen.getByLabelText('Blockiert – Handelsstatus für Blockiert'));
+  expect(await screen.findByText('Handelsstatus: Blockiert – eigener Prüfgrund')).toBeInTheDocument();
+  expect(screen.getByText('Dieser Trade bleibt unabhängig von der Finanzierung gesperrt. Der konkrete Grund steht in der Empfehlung.')).toBeInTheDocument();
   view.unmount();
+});
+
+it('does not mark an analysis stale only because identical quotes were fetched again', () => {
+  const position = buildAnalysisPositions([{ ...assets[0], quote: {
+    originalPrice: 50, originalCurrency: 'EUR', valuationCurrency: 'EUR', source: 'yahoo-finance',
+    quoteAsOf: '2026-11-09T11:00:00.000Z', fetchedAt: '2026-11-09T11:01:00.000Z', exchange: 'XETRA',
+    convertedAt: null, fxRateToEUR: 1, fxSource: null, fxAsOf: null, fxFetchedAt: null,
+  } }])[0];
+  const earlier = JSON.stringify({ positions: [position], profile: { goal: 'growth' }, priceUpdatedAt: '2026-11-09T11:01:00.000Z',
+    investorContext: { assets: [] }, transactionIds: [1] });
+  const later = JSON.stringify({ positions: [{ ...position, quote: { ...position.quote!, fetchedAt: '2026-11-09T11:21:00.000Z' } }],
+    profile: { goal: 'growth' }, priceUpdatedAt: '2026-11-09T11:21:00.000Z', investorContext: { assets: [] } });
+  expect(comparableAnalysisSnapshot(earlier)).toBe(comparableAnalysisSnapshot(later));
+  expect(comparableAnalysisSnapshot(later)).not.toBe(comparableAnalysisSnapshot(JSON.stringify({
+    positions: [{ ...position, price: 51 }], profile: { goal: 'growth' }, investorContext: { assets: [] },
+  })));
 });
 
 it('persists personal decision details, restores them for local requests, and clears them with stale-result detection', async () => {

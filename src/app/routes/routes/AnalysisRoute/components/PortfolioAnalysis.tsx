@@ -1,5 +1,5 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
-import { Button, Card, Dialog, H5, Icon, Intent, Spinner } from '@blueprintjs/core';
+import { Button, Card, Dialog, H5, Icon, Intent, Spinner, Tooltip } from '@blueprintjs/core';
 import { useAppSelector, useAppDispatch } from '../../../../hooks';
 import { ANALYSIS_TIMEOUT_MS, buildAnalysisPositions, validateAnalysisRequest, type InvestmentProfile, type PortfolioAnalysisProgress } from '../../../../utils/portfolioAnalysis';
 import type { ChatGptModel, ChatGptStatus } from '../../../../utils/chatGptAuth';
@@ -74,11 +74,27 @@ export function AssetResearchIndicator({ status, now }: { status?: AssetResearch
         : 'Status der gespeicherten Online-Recherche nicht verfügbar.'}
   </p>;
 }
-const compareRecommendations = (a: { action: keyof typeof actionOrder }, b: { action: keyof typeof actionOrder }) => actionOrder[a.action] - actionOrder[b.action];
+const isBlockedRecommendation = (recommendation: Pick<AssetRecommendation, 'action' | 'executionBlocker'>) =>
+  recommendation.action === 'Prüfen' || !!recommendation.executionBlocker;
+const compareRecommendations = (a: Pick<AssetRecommendation, 'action' | 'executionBlocker'>, b: Pick<AssetRecommendation, 'action' | 'executionBlocker'>) =>
+  Number(isBlockedRecommendation(b)) - Number(isBlockedRecommendation(a)) || actionOrder[a.action] - actionOrder[b.action];
 
-export function AssetTradeStatus({ recommendation, assetName }: { recommendation: AssetRecommendation; assetName: string }) {
+export function comparableAnalysisSnapshot(value: string): string {
+  try {
+    const parsed = JSON.parse(value) as { positions?: AnalysisPosition[]; profile?: unknown; investorContext?: unknown };
+    const positions = parsed.positions?.map(position => ({ ...position,
+      ...(position.quote ? { quote: {
+        ...position.quote, fetchedAt: undefined, convertedAt: undefined, fxFetchedAt: undefined,
+      } } : {}),
+    }));
+    // Refresh timestamps describe when identical values were fetched, not a changed investment decision basis.
+    return JSON.stringify({ positions, profile: parsed.profile, investorContext: parsed.investorContext });
+  } catch { return value; }
+}
+
+function tradeStatus(recommendation: AssetRecommendation) {
   const executable = recommendation.action === 'Kaufen' || recommendation.action === 'Verkaufen';
-  const status = executable
+  return executable
     ? { title: `Nicht blockiert – ${recommendation.action} empfohlen`, detail: 'Der Trade ist freigegeben. Betrag, Kosten und Orderart vor der Ausführung noch einmal prüfen.', color: 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200', icon: 'tick-circle' as const }
     : recommendation.executionBlocker === 'independent'
       ? { title: 'Blockiert – eigener Prüfgrund', detail: 'Dieser Trade bleibt unabhängig von der Finanzierung gesperrt. Der konkrete Grund steht in der Empfehlung.', color: 'border-red-400/30 bg-red-500/10 text-red-200', icon: 'ban-circle' as const }
@@ -89,10 +105,17 @@ export function AssetTradeStatus({ recommendation, assetName }: { recommendation
           : recommendation.action === 'Prüfen'
             ? { title: 'Blockiert – Prüfbedarf', detail: 'Vor einem Trade muss der in der Empfehlung genannte offene Punkt geklärt werden.', color: 'border-amber-400/30 bg-amber-500/10 text-amber-200', icon: 'warning-sign' as const }
             : { title: 'Kein Modelltrade vorgesehen', detail: 'Halten ist die aktuelle Entscheidung; es besteht kein gesondert ausgewiesener Ausführungsblocker.', color: 'border-white/15 bg-white/5 text-gray-300', icon: 'pause' as const };
-  return <section aria-label={`Handelsstatus für ${assetName}`} className={`my-2 min-w-0 rounded border p-2 text-xs ${status.color}`}>
-    <p className="m-0 flex min-w-0 items-start gap-2 font-bold"><Icon icon={status.icon} size={13} aria-hidden="true" /><span className="min-w-0 break-words">Handelsstatus: {status.title}</span></p>
-    <p className="mb-0 mt-1 break-words">{status.detail}</p>
-  </section>;
+}
+
+export function AssetRecommendationStatus({ recommendation, assetName }: { recommendation: AssetRecommendation; assetName: string }) {
+  const status = tradeStatus(recommendation);
+  const blocked = isBlockedRecommendation(recommendation);
+  const label = blocked ? 'Blockiert' : recommendation.action;
+  return <Tooltip hoverOpenDelay={0} content={<span className="block max-w-xs text-xs"><strong>Handelsstatus: {status.title}</strong><br />{status.detail}</span>}>
+    <span tabIndex={0} aria-label={`${label} – Handelsstatus für ${assetName}`} className={`cursor-help text-xs font-bold outline-none focus:underline ${blocked ? 'text-red-400' : recommendation.action === 'Kaufen' ? 'text-emerald-400' : recommendation.action === 'Verkaufen' ? 'text-red-400' : 'text-indigo-300'}`}>
+      {label}
+    </span>
+  </Tooltip>;
 }
 
 type AIConnectionSettingsProps = {
@@ -283,12 +306,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [open, researchAssets, result, analyzing]);
   const snapshot = JSON.stringify({ positions, profile, priceUpdatedAt, investorContext });
-  let comparableSnapshot = resultSnapshot;
-  try {
-    const { transactionIds: _transactionIds, ...saved } = JSON.parse(resultSnapshot);
-    comparableSnapshot = JSON.stringify(saved);
-  } catch { /* Legacy snapshots may not be JSON. */ }
-  const stale = !!result && comparableSnapshot !== snapshot;
+  const stale = !!result && comparableAnalysisSnapshot(resultSnapshot) !== comparableAnalysisSnapshot(snapshot);
   const aiConnected = provider === 'chatgpt' ? chatGpt.connected : hasKey;
   const activeAccount = chatGpt.accounts.find(a => a.clientId === chatGpt.activeClientId)?.label;
   const providerLabel = provider === 'chatgpt' ? 'ChatGPT' : 'OpenAI API';
@@ -576,9 +594,8 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
             {result.recommendations.slice().sort(compareRecommendations).map(rec => <article key={rec.assetId} className="min-w-0 rounded-lg border border-white/10 p-4">
               <div className="flex justify-between items-start gap-3"><span className="font-bold text-sm text-white">{assets.find(a => a.ID === rec.assetId)?.name || `Asset ${rec.assetId}`}</span>
-                <span className={`text-xs font-bold ${rec.action === 'Kaufen' ? 'text-emerald-400' : rec.action === 'Verkaufen' ? 'text-red-400' : rec.action === 'Prüfen' ? 'text-amber-300' : 'text-indigo-300'}`}>{rec.action}</span>
+                <AssetRecommendationStatus recommendation={rec} assetName={assets.find(a => a.ID === rec.assetId)?.name || `Asset ${rec.assetId}`} />
               </div>
-              <AssetTradeStatus recommendation={rec} assetName={assets.find(a => a.ID === rec.assetId)?.name || `Asset ${rec.assetId}`} />
               {(() => {
                 const status = researchStatus.find(item => item.assetId === rec.assetId);
                 const reusable = !!status?.expiresAt && Date.parse(status.expiresAt) > now;

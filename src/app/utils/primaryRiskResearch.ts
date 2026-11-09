@@ -32,6 +32,8 @@ const TREASURY_OFFERING_2020 = 'https://www.treasurydirect.gov/instit/annceresul
 const APOLLO_ELTIF_ISIN = 'LU3170240538';
 const APOLLO_ELTIF_KID_ARCHIVE = 'https://www.francetransactions.com/IMG/pdf/dic-apollo-private-equity.pdf';
 const APOLLO_ELTIF_PAGE = 'https://www.apollo.com/agpm-eltif';
+const stockExcerptVersion = (isin: string) => ['US5801351017', 'DK0062498333', 'US6701002056', 'DE0007030009', 'US6092071058',
+  'DE0008430026'].includes(isin) ? 3 : 2;
 const apolloEltifDocumentUrl = (url: string) => url === APOLLO_ELTIF_KID_ARCHIVE;
 const treasuryAuctionUrl = (url: string) => /^https:\/\/www\.treasurydirect\.gov\/instit\/annceresult\/press\/preanre\/2020\/(?:R_20200819_3|A_20201015_1)\.pdf$/i.test(url);
 const treasuryGeneralUrl = (url: string) => [
@@ -124,7 +126,7 @@ const rheinmetallKeywords = [
 ];
 const insuranceKeywords = [
   /Legal risks\s+As part of the normal course of business/ig,
-  /statements relating to opportunities and risks\s+as presented in the Munich Re Group Annual Report 2025\s+apply unchanged/ig,
+  /statements relating to opportunities and risks\s+as\s+presented in the Munich Re Group Annual Report 2025\s+apply unchanged/ig,
   /Our objective in managing liquidity risk is to ensure that we\s+are in a position to meet our payment obligations at all\s+times/ig,
   /quantitative risk criteria also ensures that sufficient liquidity\s+is available even under adverse scenarios/ig,
   /The overview below shows the liquidity requirements\s+arising from our financial liabilities, divided into maturity\s+bands/ig,
@@ -516,7 +518,7 @@ export class PrimaryRiskResearch {
       .slice(0, position.type === 'Bond' && position.isin.trim().toUpperCase() === TREASURY_BOND_ISIN ? 5 : MAX_DOCUMENTS)) {
       const stored = this.cache.get(url);
       if (!forceRefresh && stored && this.now() - stored.fetchedAt < DAY &&
-        (position.type !== 'Stock' || stored.excerptVersion === (['US5801351017', 'DK0062498333', 'US6701002056', 'DE0007030009', 'US6092071058'].includes(position.isin.trim().toUpperCase()) ? 3 : 2)) &&
+        (position.type !== 'Stock' || stored.excerptVersion === stockExcerptVersion(position.isin.trim().toUpperCase())) &&
         (position.isin.trim().toUpperCase() !== 'IE00B3WJKG14' || stored.excerptVersion === 3) &&
         (position.isin.trim().toUpperCase() !== 'IE00B8GKDB10' || stored.excerptVersion === 2) &&
         (position.isin.trim().toUpperCase() !== APOLLO_ELTIF_ISIN || stored.excerptVersion === 3) &&
@@ -583,7 +585,7 @@ export class PrimaryRiskResearch {
             : decodeURIComponent(new URL(url).pathname.split('/').filter(Boolean).pop() || new URL(url).hostname));
         const document: RiskDocument = { source: { title: documentTitle, url }, excerpt,
           hash: createHash('sha256').update(data).digest('hex'), fetchedAt: this.now(), period,
-          ...(position.type === 'Stock' ? { excerptVersion: ['US5801351017', 'DK0062498333', 'US6701002056', 'DE0007030009', 'US6092071058'].includes(position.isin.trim().toUpperCase()) ? 3 : 2 } : {}),
+          ...(position.type === 'Stock' ? { excerptVersion: stockExcerptVersion(position.isin.trim().toUpperCase()) } : {}),
           ...(position.isin.trim().toUpperCase() === 'IE00B3WJKG14' ? { excerptVersion: 3 } : {}),
           ...(position.isin.trim().toUpperCase() === 'IE00B8GKDB10' ? { excerptVersion: 2 } : {}),
           ...(position.isin.trim().toUpperCase() === APOLLO_ELTIF_ISIN ? { excerptVersion: 3 } : {}),

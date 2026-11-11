@@ -1,5 +1,6 @@
 import type { AnalysisPosition } from './portfolioAnalysis';
 import type { InvestorContext } from './investorFacts';
+import { analysisUnitValueEUR } from './eltifProductTerms';
 
 export const tradeCheckResearchInstructions = ' Prüfe zusätzlich die aktuellen Kosten für manuelle Käufe und Verkäufe bei Trade Republic anhand des offiziellen Preisverzeichnisses beziehungsweise der Support-Seite https://support.traderepublic.com/de-de/784-Is-there-commission-for-order-execution . Berücksichtige Spreads, Fremdkosten und mögliche getrennte Orders für ganze Stücke und Bruchstücke; keine tatsächliche Orderkostenbestätigung behaupten. Prüfe für das ausdrücklich bedingte Szenario einer deutschen Privatperson die geltende Verlustverrechnung nach § 20 EStG anhand https://esth.bundesfinanzministerium.de/lsth/2026/A-Einkommensteuergesetz/II-Einkommen-2-24b/8-Die-einzelnen-Einkunftsarten-13-24b/e-Kapitalvermoegen-20/Paragraf-20/paragraf-20.html . Aktienverluste, andere Kapitalerträge und gegebenenfalls anders besteuerte Assets trennen. Bei direkt gehaltenen Kryptowerten im deutschen Privatvermögen muss die Recherche das amtliche BMF-Schreiben vom 06.03.2025 https://www.bundesfinanzministerium.de/Content/DE/Downloads/BMF_Schreiben/Steuerarten/Einkommensteuer/2025-03-06-einzelfragen-kryptowerte-bmf-schreiben.html und § 23 EStG https://www.gesetze-im-internet.de/estg/__23.html öffnen und auswerten: Haltefrist, Anschaffungszeitpunkte, Veräußerungserlös, Anschaffungskosten, Verbrauchsfolge und sonstige Kryptovorgänge getrennt prüfen. Nenne Quelle und Stand; Wenn taxJurisdiction bekannt ist, recherchiere vorrangig dessen geltende Behandlung anhand aktueller amtlicher Primärquellen, insbesondere für direkt gehaltene Kryptowerte; das deutsche Szenario nur bei DE oder ausdrücklich als bedingtes Beispiel bei unbekanntem Steuerland verwenden. Persönliche Verlusttöpfe, Freistellungsauftrag, bestätigte steuerliche FIFO-Anschaffungskosten und andere Depots sind ohne explizite Angaben unbekannt. Keine persönliche Steuerersparnis oder Erstattung erfinden.';
 
@@ -8,8 +9,8 @@ export function buildTradeEconomics(position: AnalysisPosition, investorContext?
   const today = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Berlin' }).format(new Date());
   const taxResidence = investorContext?.taxResidencies.filter(v => v.validFrom <= today)
     .sort((a, b) => a.validFrom.localeCompare(b.validFrom)).slice(-1)[0] ?? null;
-  const marketValueEUR = position.currency === 'EUR' && position.price !== null
-    ? position.shares * position.price : null;
+  const unitValueEUR = analysisUnitValueEUR(position);
+  const marketValueEUR = unitValueEUR === null ? null : position.shares * unitValueEUR;
   // These are explicit scenarios, not an order quote or proof of the custody broker.
   const orderFeeEUR = facts ? facts.custody.orderFeeEUR : investorContext ? null : 1;
   const feeScenarios = (orderFeeEUR === null ? [] : [orderFeeEUR, orderFeeEUR * 2]).map(feeEUR => ({

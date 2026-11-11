@@ -2,6 +2,7 @@ import type { AssetRecommendation, NewAssetRecommendation, PortfolioAnalysisRequ
 import { isEltif } from './eltifValuation';
 import { protectedCashEUR } from './decisionProfile';
 import { validForecastOptimizationDetails } from './portfolioForecastOptimization';
+import { analysisUnitValueEUR } from './eltifProductTerms';
 
 type Bucket = 'funds' | 'stocks' | 'bonds' | 'crypto' | 'alternatives';
 type Target = { percent: number; minPercent: number; maxPercent: number };
@@ -19,6 +20,7 @@ export interface AllocationPosition {
   projectedWeightPercent: number | null;
   feeEUR: number | null;
   executionConstraint?: 'eltif-nav-and-redemption-unverified';
+  valuationBasis?: 'user-confirmed-indicative-nav';
   reason: string;
 }
 export interface PortfolioAllocation {
@@ -71,8 +73,10 @@ export function buildPortfolioAllocation(request: PortfolioAnalysisRequest, cand
   const { weights, stockCap } = policy(request);
   const warnings: string[] = [];
   const policyCash = 100 - Object.values(weights).reduce((sum, n) => sum + n, 0);
-  const values = request.positions.map(p => p.currency === 'EUR' && p.price !== null
-    && Number.isFinite(p.price * p.shares) && p.price > 0 ? cents(p.price * p.shares) : null);
+  const values = request.positions.map(p => {
+    const unitValue = analysisUnitValueEUR(p);
+    return unitValue !== null && Number.isFinite(unitValue * p.shares) && unitValue > 0 ? cents(unitValue * p.shares) : null;
+  });
   const total = values.reduce<number>((sum, n) => sum + (n ?? 0), cents(request.profile.buyBudget));
   const positions: AllocationPosition[] = request.positions.map((p, index): AllocationPosition => {
     const facts = request.investorContext?.assets.find(f => f.assetId === p.id);
@@ -87,7 +91,10 @@ export function buildPortfolioAllocation(request: PortfolioAnalysisRequest, cand
       targetWeight: confirmed ? { ...confirmed } : cash && weight !== null
         ? { percent: weight, minPercent: weight, maxPercent: weight } : null,
       targetValueEUR: null, action: 'Halten', amountEUR: null, projectedWeightPercent: weight,
-      ...(isEltif(p) ? { executionConstraint: 'eltif-nav-and-redemption-unverified' as const } : {}),
+      ...(isEltif(p) && !p.eltifProductTerms?.indicativeNav.useForPlanning
+        ? { executionConstraint: 'eltif-nav-and-redemption-unverified' as const } : {}),
+      ...(p.eltifProductTerms?.indicativeNav.useForPlanning
+        ? { valuationBasis: 'user-confirmed-indicative-nav' as const } : {}),
       feeEUR: fee, reason: cash && !confirmed ? 'Cash Equivalent bleibt ohne eigene Zielvorgabe bestehen.' : '',
     };
   });
@@ -226,6 +233,18 @@ export function allocationMismatch(plan: PortfolioAllocation, recommendations: A
   for (const rec of [...recommendations, ...candidates]) {
     const key = 'assetId' in rec ? String(rec.assetId) : allocationCandidateKey(rec);
     const target = plan.positions.find(p => p.key === key);
+    if ('assetId' in rec && target?.valuationBasis === 'user-confirmed-indicative-nav'
+      && (rec.action === 'Prüfen' || rec.executionBlocker === 'independent')) {
+      const explanation = [rec.rationale, rec.risk, rec.tradeCheck?.conclusion, ...(rec.warnings ?? [])].filter(Boolean).join(' ');
+      const mentionsUnavailableOfficialNav = /\bNAV\b|Bewertungsstichtag|Veröffentlichungszyklus/i.test(explanation);
+      const namesIndependentBlocker = /Illiquid|Rückgab|Rücknahm|Redemption|Kündigungs|Sperrfrist|Lock[ -]?up|Gate\b|Auszahl|Handel(?:bar|barkeit|splatz)|Ausführ(?:ung|bar)|Produkt(?:risiko|beschränkung)|Kosten|Gebühr|Spread|Steuer|Verlusttrag|Anlagehorizont|Strategie|Konzentration/i.test(explanation);
+      if (mentionsUnavailableOfficialNav && !namesIndependentBlocker) {
+        const expected = target.action === 'Kaufen' || target.action === 'Verkaufen'
+          ? `${target.action} mit dem lokal berechneten indikativen Betrag ${target.amountEUR?.toFixed(2)} EUR und executionBlocker null`
+          : 'Halten mit plannedAmountEUR null und executionBlocker null';
+        return `${key}: Der Nutzer hat 111,29 EUR ausdrücklich als nicht offiziellen, aber für Planbeträge zulässigen NAV bestätigt. Ein fehlender offizieller NAV-Stichtag, NAV-Veröffentlichungszyklus oder offizieller NAV ist daher kein unabhängiger Prüf- oder Ausführungsblocker. Übernimm ${expected}. Nur ein anderer konkreter, vom NAV unabhängiger Produkt-, Risiko-, Steuer- oder Ausführungsgrund darf Prüfen beziehungsweise independent begründen; benenne ihn dann ausdrücklich.`;
+      }
+    }
     if (target?.executionConstraint === 'eltif-nav-and-redemption-unverified'
       && (rec.action === 'Kaufen' || rec.action === 'Verkaufen')) {
       if (rec.plannedAmountEUR !== null && rec.plannedAmountEUR !== undefined)
@@ -268,6 +287,7 @@ export function validPortfolioAllocation(plan: PortfolioAllocation): boolean {
       && ['user-confirmed', 'profile-model', 'cash-holding', 'forecast-optimization'].includes(p.source)
       && ['Kaufen', 'Verkaufen', 'Halten', 'Prüfen'].includes(p.action)
       && (p.executionConstraint === undefined || p.executionConstraint === 'eltif-nav-and-redemption-unverified')
+      && (p.valuationBasis === undefined || p.valuationBasis === 'user-confirmed-indicative-nav')
       && [p.currentValueEUR, p.targetValueEUR, p.amountEUR, p.feeEUR].every(n => nullable(n) && (n === null || n >= 0))
       && [p.currentWeightPercent, p.projectedWeightPercent].every(n => n === null || percentage(n))
       && (p.targetWeight === null || !!p.targetWeight
@@ -275,4 +295,4 @@ export function validPortfolioAllocation(plan: PortfolioAllocation): boolean {
         && p.targetWeight.minPercent <= p.targetWeight.percent && p.targetWeight.percent <= p.targetWeight.maxPercent));
 }
 
-export const portfolioAllocationInstructions = ' allocationPlan ist ein lokal berechnetes Profilmodell mit transparenten Modellannahmen, keine Renditeoptimierung und keine Marktprognose. Eigene bestätigte Zielgewichte haben Vorrang. Nenne berechnete Zielgewichtung und Bandbreite, nicht pauschal optimale zukünftige Rendite. Für Kaufen/Verkaufen sind Richtung und plannedAmountEUR aus allocationPlan verbindlich; keine beispielhaften oder frei erfundenen Beträge. Ausnahme: executionConstraint eltif-nav-and-redemption-unverified erlaubt eine belegte qualitative Kauf- oder Reduzierungsrichtung mit plannedAmountEUR null. Diese ist keine ausführbare Order; nenne NAV-, Rückgabefenster- und Bewertungsbedingung ausdrücklich und verwende einen möglichen Verkaufserlös nicht zur Finanzierung anderer Käufe. Halten oder Prüfen bleibt bei belegten Kosten-, Steuer-, Produkt- oder Markthindernissen möglich; den konkreten Grund gegenüber dem Modell nennen. Bei blockierter Bewertung oder widersprüchlichen Zielen keine Umschichtungsbeträge erfinden. Neue belegte Kaufideen dürfen vorgeschlagen werden; ihre gemeinsamen Modellbeträge werden lokal berechnet und gegebenenfalls mit correction.allocationPlan zurückgegeben. Dann Beträge, Empfehlungen, Kostenprüfung und Erklärungen anhand dieses Plans gemeinsam korrigieren. Zielwerte und projectedWeightPercent gelten bei Umsetzung aller Modelltrades, Gebühren berücksichtigt; bei verschobenen Trades sind dies keine Gewichte des tatsächlichen empfohlenen Teilplans. Cashanteile für fehlende Kategorien sind reserviert und kein frei zusätzliches Kaufbudget. Unbekannte Steuern oder Spreads niemals als bereits berücksichtigt darstellen.';
+export const portfolioAllocationInstructions = ' allocationPlan ist ein lokal berechnetes Profilmodell mit transparenten Modellannahmen, keine Renditeoptimierung und keine Marktprognose. Eigene bestätigte Zielgewichte haben Vorrang. Nenne berechnete Zielgewichtung und Bandbreite, nicht pauschal optimale zukünftige Rendite. Für Kaufen/Verkaufen sind Richtung und plannedAmountEUR aus allocationPlan verbindlich; keine beispielhaften oder frei erfundenen Beträge. Ausnahme: executionConstraint eltif-nav-and-redemption-unverified erlaubt eine belegte qualitative Kauf- oder Reduzierungsrichtung mit plannedAmountEUR null. Diese ist keine ausführbare Order; nenne NAV-, Rückgabefenster- und Bewertungsbedingung ausdrücklich und verwende einen möglichen Verkaufserlös nicht zur Finanzierung anderer Käufe. eltifProductTerms.indicativeNav mit useForPlanning true ist dagegen eine vom Nutzer bestätigte, nicht offizielle Bewertungsgrundlage: Die lokal berechneten Kauf- oder Verkaufsbeträge dürfen verwendet werden, müssen aber als indikativ bezeichnet werden; die tatsächliche Abrechnung kann abweichen und ist vor Ausführung beim Anbieter zu prüfen. Halten oder Prüfen bleibt bei belegten Kosten-, Steuer-, Produkt- oder Markthindernissen möglich; den konkreten Grund gegenüber dem Modell nennen. Bei blockierter Bewertung oder widersprüchlichen Zielen keine Umschichtungsbeträge erfinden. Neue belegte Kaufideen dürfen vorgeschlagen werden; ihre gemeinsamen Modellbeträge werden lokal berechnet und gegebenenfalls mit correction.allocationPlan zurückgegeben. Dann Beträge, Empfehlungen, Kostenprüfung und Erklärungen anhand dieses Plans gemeinsam korrigieren. Zielwerte und projectedWeightPercent gelten bei Umsetzung aller Modelltrades, Gebühren berücksichtigt; bei verschobenen Trades sind dies keine Gewichte des tatsächlichen empfohlenen Teilplans. Cashanteile für fehlende Kategorien sind reserviert und kein frei zusätzliches Kaufbudget. Unbekannte Steuern oder Spreads niemals als bereits berücksichtigt darstellen.';

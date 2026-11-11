@@ -1,5 +1,5 @@
 import { buildAnalysisPositions } from './portfolioAnalysis';
-import { buildResearchSecurities, fundResearchInstructions } from './portfolioResearch';
+import { buildResearchSecurities, fundResearchInstructions, knownResearchSources } from './portfolioResearch';
 
 it('provides filing discovery pointers by normalized ISIN without exposing holdings', () => {
   const positions = buildAnalysisPositions([
@@ -26,6 +26,12 @@ it('identifies the Apollo share class and requires a separately evidenced NAV da
   ] });
   expect(fundResearchInstructions).toContain('Bewertungsstichtag');
   expect(fundResearchInstructions).toContain('kein Nachweis eines offiziellen Fonds-NAV');
+});
+
+it('adds current German tax primary sources to direct Bitcoin research', () => {
+  const sources = knownResearchSources({ isin: '', symbol: 'BTC', type: 'Crypto' });
+  expect(sources).toContain('https://www.bundesfinanzministerium.de/Content/DE/Downloads/BMF_Schreiben/Steuerarten/Einkommensteuer/2025-03-06-einzelfragen-kryptowerte-bmf-schreiben.html');
+  expect(sources).toContain('https://www.gesetze-im-internet.de/estg/__23.html');
 });
 
 it('provides the listed SpaceX Class A identity and SEC discovery pointers', () => {

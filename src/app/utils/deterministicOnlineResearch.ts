@@ -53,7 +53,9 @@ export function createDeterministicOnlineResearchProvider(client: OnlineSearchCl
   return async (position, options = {}) => {
     const identity = [position.symbol, position.isin, position.name].map(value => value.trim()).filter(Boolean);
     const query = identity.join(' ');
-    const key = JSON.stringify({ id: position.id, identity });
+    // Curated sources are part of the research policy and must invalidate a
+    // fresh discovery cache when a newly required primary source is added.
+    const key = JSON.stringify({ id: position.id, identity, knownSources: knownResearchSources(position) });
     const cached = cache.get(key);
     if (!options.forceRefresh && cached && now() - cached.fetchedAt < ttl) return cached;
     let timer: ReturnType<typeof setTimeout> | undefined;

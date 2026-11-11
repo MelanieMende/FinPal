@@ -1,6 +1,7 @@
 import { validQuote, type QuoteMetadata } from './quoteMetadata';
 import { validInvestorContext, type InvestorContext } from './investorFacts';
 import { validDecisionDetails, type DecisionDetails } from './decisionProfile';
+import { eltifProductTerms, validEltifProductTerms, type EltifProductTerms } from './eltifProductTerms';
 
 export const DEFAULT_ANALYSIS_MODEL = 'gpt-5.4-mini';
 export const ANALYSIS_TIMEOUT_MS = 10 * 60 * 1000;
@@ -30,6 +31,7 @@ export interface AnalysisPosition {
   costBasis: number | null;
   dividendsEarned: number;
   realizedGainLoss: number | null;
+  eltifProductTerms?: EltifProductTerms;
 }
 
 export interface PortfolioAnalysisRequest {
@@ -109,7 +111,9 @@ export function buildAnalysisPositions(assets: Asset[]): AnalysisPosition[] {
     const flow = finiteOrNull(asset.current_sum_in_out);
     const dividends = finiteOrNull(asset.dividends_earned) ?? 0;
     const price = finiteOrNull(asset.price);
-    return {
+    const identity = { isin: asset.isin || '', type: asset.type || 'Stock' };
+    const terms = eltifProductTerms(identity);
+    const base = {
       id: asset.ID, name: asset.name || '', symbol: asset.symbol || '', isin: asset.isin || '',
       type: asset.type || 'Stock', shares: asset.current_shares,
       price: asset.quote?.valuationCurrency === 'unknown' ? null : price !== null && price > 0 ? price : null,
@@ -117,10 +121,11 @@ export function buildAnalysisPositions(assets: Asset[]): AnalysisPosition[] {
       currency: asset.quote?.valuationCurrency || (asset.currencySymbol === '€' ? 'EUR' : asset.currencySymbol || 'unknown'),
       quote: asset.quote, ...(asset.bondHolding ? { bondHolding: asset.bondHolding } : {}),
       currencyExposure: asset.type === 'Bond' && asset.bondHolding?.source === 'user-confirmed'
-        ? { kind: 'direct-nominal' as const, currency: asset.bondHolding.currency, source: 'user-confirmed' as const } : 'unknown',
+        ? { kind: 'direct-nominal' as const, currency: asset.bondHolding.currency, source: 'user-confirmed' as const } : 'unknown' as const,
       costBasis: invest === null ? null : Math.abs(invest),
       dividendsEarned: dividends, realizedGainLoss: flow === null || invest === null ? null : flow - invest + dividends,
     };
+    return { ...base, ...(terms ? { eltifProductTerms: terms } : {}) };
   });
 }
 
@@ -148,6 +153,10 @@ export function validateAnalysisRequest(request: PortfolioAnalysisRequest): void
       || !Number.isFinite(position.dividendsEarned)) throw new Error('Die Portfolio-Daten sind ungültig.');
     ids.add(position.id);
     const holding = position.bondHolding;
+    if (position.eltifProductTerms !== undefined
+      && (position.isin.trim().toUpperCase() !== 'LU3170240538' || !validEltifProductTerms(position.eltifProductTerms))) {
+      throw new Error('Die ELTIF-Produktbedingungen sind ungültig.');
+    }
     if (holding && (position.type !== 'Bond' || holding.source !== 'user-confirmed'
       || !Number.isFinite(holding.nominal) || holding.nominal <= 0 || !/^[A-Z]{3}$/.test(holding.currency)
       || !Number.isFinite(holding.purchaseAccruedInterestEUR)

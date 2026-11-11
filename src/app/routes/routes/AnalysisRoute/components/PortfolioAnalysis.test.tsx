@@ -65,6 +65,9 @@ it('shows a blocked card status and moves the trade status details into its tool
   const view = render(<div>
     <AssetRecommendationStatus assetName="Frei" recommendation={{ ...base, action: 'Kaufen', plannedAmountEUR: 100, executionBlocker: null }} />
     <AssetRecommendationStatus assetName="Blockiert" recommendation={{ ...base, executionBlocker: 'independent' }} />
+    <AssetRecommendationStatus assetName="Kostenblock" recommendation={{ ...base, executionBlocker: 'independent',
+      rationale: 'Die Restposition bleibt aus Kostengründen unverändert, weil die Gebühr den Wert übersteigt.',
+      tradeCheck: { costs: 'Marktwert 0,68 EUR; 1 EUR Gebühr.', taxes: 'Nicht relevant.', conclusion: 'Kostenpflichtigen Kleinverkauf vermeiden.' } }} />
     <AssetRecommendationStatus assetName="Finanzierung" recommendation={{ ...base, executionBlocker: 'funding-only' }} />
     <AssetRecommendationStatus assetName="Größe" recommendation={{ ...base, executionBlocker: 'scale-only' }} />
     <AssetRecommendationStatus assetName="Prüfbedarf" recommendation={{ ...base, action: 'Prüfen', executionBlocker: null }} />
@@ -72,6 +75,7 @@ it('shows a blocked card status and moves the trade status details into its tool
   </div>);
   expect(screen.getByLabelText('Kaufen – Handelsstatus für Frei')).toHaveTextContent('Kaufen');
   expect(screen.getByLabelText('Blockiert – Handelsstatus für Blockiert')).toHaveTextContent('Blockiert');
+  expect(screen.getByLabelText('Halten – Handelsstatus für Kostenblock')).toHaveTextContent('Halten');
   expect(screen.getByLabelText('Blockiert – Handelsstatus für Finanzierung')).toHaveTextContent('Blockiert');
   expect(screen.getByLabelText('Blockiert – Handelsstatus für Größe')).toHaveTextContent('Blockiert');
   expect(screen.getByLabelText('Blockiert – Handelsstatus für Prüfbedarf')).toHaveTextContent('Blockiert');
@@ -80,6 +84,9 @@ it('shows a blocked card status and moves the trade status details into its tool
   fireEvent.mouseEnter(screen.getByLabelText('Blockiert – Handelsstatus für Blockiert'));
   expect(await screen.findByText('Handelsstatus: Blockiert – eigener Prüfgrund')).toBeInTheDocument();
   expect(screen.getByText('Dieser Trade bleibt unabhängig von der Finanzierung gesperrt. Der konkrete Grund steht in der Empfehlung.')).toBeInTheDocument();
+  fireEvent.mouseEnter(screen.getByLabelText('Halten – Handelsstatus für Kostenblock'));
+  expect(await screen.findByText('Handelsstatus: Halten – Verkauf aus Kostengründen blockiert')).toBeInTheDocument();
+  expect(screen.getByText('Halten ist die aktuelle Entscheidung. Ein Verkauf ist wirtschaftlich nicht sinnvoll, weil seine Gebühren den Positionswert beziehungsweise Erlös aufzehren.')).toBeInTheDocument();
   view.unmount();
 });
 
@@ -242,6 +249,7 @@ it('restores the detailed sale decision and links scenario evidence outside the 
 
 it('shows forecast, target weighting and AI result in one asset card', async () => {
   const savedReport = await window.API.analyzePortfolio({} as never);
+  savedReport.mode = 'ai';
   const request = { provider: 'api' as const, priceUpdatedAt: new Date(Date.now()).toISOString(),
     profile: { goal: 'growth' as const, risk: 'high' as const, horizonYears: 10, buyBudget: 1000 },
     positions: buildAnalysisPositions(assets.map(asset => ({ ...asset, currencySymbol: '€' }))),
@@ -251,6 +259,10 @@ it('shows forecast, target weighting and AI result in one asset card', async () 
   await act(async () => { render(<PortfolioAnalysis standalone priceUpdatedAt={null} />, { preloadedState: { assets } }); });
   const details = screen.getByRole('region', { name: 'Prognose und Zielgewichtung Stock Asset' });
   const article = details.closest('article')!;
+  const analysis = within(article).getByRole('region', { name: 'KI-Analyseergebnis für Stock Asset' });
+  expect(within(analysis).getByText('KI-Analyseergebnis')).toBeInTheDocument();
+  expect(analysis).toHaveTextContent('Begründung');
+  expect(analysis.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(details).toHaveTextContent('Kursziel: 60 EUR');
   expect(details).toHaveTextContent('Modellaktion:');
   expect(within(article).getByText('Begründung')).toBeInTheDocument();
@@ -777,7 +789,14 @@ it.each([true, false])('shows separate ELTIF broker price and NAV status (NAV ev
     const { store } = render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets: [asset] } });
     await open(); fillProfile();
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
-    const section = within(screen.getByRole('region', { name: 'Brokerpreis und NAV' }));
+    await waitFor(() => expect(window.API.analyzePortfolio).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(store.getState().portfolioAnalysis.result).not.toBeNull());
+    const section = within(await screen.findByRole('region', { name: 'Brokerpreis und NAV' }));
+    expect(section.getByText('Produktbedingungen (Primärdokumente 2026)')).toBeInTheDocument();
+    expect(section.getByText(/Bewertung und Zeichnung monatlich/)).toHaveTextContent('Rückgabe quartalsweise');
+    expect(section.getByText(/NAV-Veröffentlichung:/)).toHaveTextContent('25 bzw. 35 Geschäftstage');
+    expect(section.getByText(/Empfohlene Haltedauer 5 Jahre/)).toHaveTextContent('Risiko 4/7');
+    expect(section.getByText(/Indikative Bewertungsgrundlage:/)).toHaveTextContent('111,29 EUR');
     expect(section.getByText('109.395 EUR je Anteil')).toBeInTheDocument();
     expect(section.getByText(/Brokerkursalter:/)).toHaveTextContent('Kein Nachweis eines veralteten NAV');
     expect(section.getByText(/NAV-Aktualit\u00e4t:/)).toHaveTextContent(evidenced ? 'Innerhalb des belegten Bewertungszyklus' : 'Ungekl\u00e4rt');

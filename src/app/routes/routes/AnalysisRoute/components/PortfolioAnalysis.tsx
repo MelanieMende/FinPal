@@ -76,6 +76,12 @@ export function AssetResearchIndicator({ status, now }: { status?: AssetResearch
 }
 const isBlockedRecommendation = (recommendation: Pick<AssetRecommendation, 'action' | 'executionBlocker'>) =>
   recommendation.action === 'Prüfen' || !!recommendation.executionBlocker;
+const isCostBlockedHold = (recommendation: AssetRecommendation) => {
+  if (recommendation.action !== 'Halten' || recommendation.executionBlocker !== 'independent') return false;
+  const explanation = [recommendation.rationale, recommendation.tradeCheck?.costs, recommendation.tradeCheck?.conclusion,
+    ...(recommendation.warnings ?? [])].filter(Boolean).join(' ');
+  return /Gebühr.{0,80}(?:Wert übersteigt|höher als (?:der )?Wert)|Nettoerlös.{0,20}(?:−|-) ?\d|kostenpflichtigen Kleinverkauf vermeiden|Verkauf.{0,60}(?:unwirtschaftlich|aus Kostengründen)|Kosten.{0,60}(?:Verkauf|Trade).{0,40}(?:blockiert|vermeiden|nicht sinnvoll)/i.test(explanation);
+};
 const compareRecommendations = (a: Pick<AssetRecommendation, 'action' | 'executionBlocker'>, b: Pick<AssetRecommendation, 'action' | 'executionBlocker'>) =>
   Number(isBlockedRecommendation(b)) - Number(isBlockedRecommendation(a)) || actionOrder[a.action] - actionOrder[b.action];
 
@@ -96,6 +102,8 @@ function tradeStatus(recommendation: AssetRecommendation) {
   const executable = recommendation.action === 'Kaufen' || recommendation.action === 'Verkaufen';
   return executable
     ? { title: `Nicht blockiert – ${recommendation.action} empfohlen`, detail: 'Der Trade ist freigegeben. Betrag, Kosten und Orderart vor der Ausführung noch einmal prüfen.', color: 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200', icon: 'tick-circle' as const }
+    : isCostBlockedHold(recommendation)
+      ? { title: 'Halten – Verkauf aus Kostengründen blockiert', detail: 'Halten ist die aktuelle Entscheidung. Ein Verkauf ist wirtschaftlich nicht sinnvoll, weil seine Gebühren den Positionswert beziehungsweise Erlös aufzehren.', color: 'border-indigo-400/30 bg-indigo-500/10 text-indigo-200', icon: 'pause' as const }
     : recommendation.executionBlocker === 'independent'
       ? { title: 'Blockiert – eigener Prüfgrund', detail: 'Dieser Trade bleibt unabhängig von der Finanzierung gesperrt. Der konkrete Grund steht in der Empfehlung.', color: 'border-red-400/30 bg-red-500/10 text-red-200', icon: 'ban-circle' as const }
       : recommendation.executionBlocker === 'funding-only'
@@ -109,7 +117,7 @@ function tradeStatus(recommendation: AssetRecommendation) {
 
 export function AssetRecommendationStatus({ recommendation, assetName }: { recommendation: AssetRecommendation; assetName: string }) {
   const status = tradeStatus(recommendation);
-  const blocked = isBlockedRecommendation(recommendation);
+  const blocked = isBlockedRecommendation(recommendation) && !isCostBlockedHold(recommendation);
   const label = blocked ? 'Blockiert' : recommendation.action;
   return <Tooltip hoverOpenDelay={0} content={<span className="block max-w-xs text-xs"><strong>Handelsstatus: {status.title}</strong><br />{status.detail}</span>}>
     <span tabIndex={0} aria-label={`${label} – Handelsstatus für ${assetName}`} className={`cursor-help text-xs font-bold outline-none focus:underline ${blocked ? 'text-red-400' : recommendation.action === 'Kaufen' ? 'text-emerald-400' : recommendation.action === 'Verkaufen' ? 'text-red-400' : 'text-indigo-300'}`}>
@@ -216,7 +224,17 @@ function EltifValuation({ position, evidence }: { position?: AnalysisPosition; e
   const status = assessNavFreshness(evidence);
   const broker = assessQuoteFreshness(position);
   const statusText = { current: 'Innerhalb des belegten Bewertungszyklus', stale: 'Veröffentlichung überfällig', unknown: 'Ungeklärt' };
+  const terms = position.eltifProductTerms;
   return <section aria-label="Brokerpreis und NAV" className="mt-3 space-y-2 text-xs">
+    {terms && <div className="rounded border border-emerald-400/30 bg-emerald-500/10 p-3 text-emerald-100">
+      <p className="m-0 font-bold">Produktbedingungen (Primärdokumente 2026)</p>
+      <p className="m-0">Anteilsklasse {terms.shareClass}: {terms.shareClassCurrency}, nicht währungsgesichert, thesaurierend.</p>
+      <p className="m-0">Bewertung und Zeichnung monatlich; Rückgabe quartalsweise mit mindestens {terms.redemptionNoticeDays} Tagen Vorlauf und erstmals nach {terms.initialRedemptionLockMonths} Monaten.</p>
+      <p className="m-0">Rückgabelimit: {terms.redemptionGate}.</p>
+      <p className="m-0">NAV-Veröffentlichung: {terms.navPublicationDelay}.</p>
+      <p className="m-0">Empfohlene Haltedauer {terms.recommendedHoldingYears} Jahre; Risiko {terms.riskClass}/7; Verwaltungsgebühr {terms.managementFeePercent.toLocaleString('de-DE')} %; jährliche Kostenwirkung laut KID {terms.annualCostImpactPercent.toLocaleString('de-DE')} %.</p>
+      <p className="m-0 font-semibold">Indikative Bewertungsgrundlage: {terms.indicativeNav.value.toLocaleString('de-DE', { minimumFractionDigits: 2 })} {terms.indicativeNav.currency}, vom Nutzer anhand der Brokeranzeige am {new Date(terms.indicativeNav.observedOn + 'T00:00:00').toLocaleDateString('de-DE')} bestätigt. Kein offiziell bestätigter NAV-Stichtag; für Planbeträge freigegeben.</p>
+    </div>}
     <div className="rounded border border-sky-400/30 bg-sky-500/10 p-3 text-sky-200">
       <p className="m-0 font-bold">Brokerpreis im Portfolio</p>
       <p className="m-0">{position.price === null ? 'Unbekannt' : position.price + ' ' + position.currency} je Anteil</p>
@@ -596,6 +614,10 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
               <div className="flex justify-between items-start gap-3"><span className="font-bold text-sm text-white">{assets.find(a => a.ID === rec.assetId)?.name || `Asset ${rec.assetId}`}</span>
                 <AssetRecommendationStatus recommendation={rec} assetName={assets.find(a => a.ID === rec.assetId)?.name || `Asset ${rec.assetId}`} />
               </div>
+              <section aria-label={`${result.mode === 'ai' ? 'KI-Analyseergebnis' : 'Lokales Analyseergebnis'} für ${assets.find(a => a.ID === rec.assetId)?.name || `Asset ${rec.assetId}`}`} className="mt-3 min-w-0 rounded border border-indigo-400/20 bg-indigo-500/5 p-3">
+                <p className="m-0 text-xs font-bold text-indigo-200">{result.mode === 'ai' ? 'KI-Analyseergebnis' : 'Lokales Analyseergebnis'}</p>
+                <p className="mb-0 mt-1 whitespace-pre-wrap break-words text-sm text-gray-200">{rec.rationale}</p>
+              </section>
               {(() => {
                 const status = researchStatus.find(item => item.assetId === rec.assetId);
                 const reusable = !!status?.expiresAt && Date.parse(status.expiresAt) > now;
@@ -629,7 +651,6 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                 {executions[rec.assetId].remainingEUR !== null && executions[rec.assetId].status !== 'done' && ` · ${euros(executions[rec.assetId].remainingEUR!)} offen`}
               </p>}
               <AssetOptimizationDetails plan={result.allocationPlan} allocationKey={String(rec.assetId)} assetType={assets.find(asset => asset.ID === rec.assetId)?.type} onOpenSource={openSource} />
-              <p className="text-sm text-gray-300 whitespace-pre-wrap">{rec.rationale}</p>
               {rec.tradeDecision ? <TradeDecisionReview decision={rec.tradeDecision} />
                 : rec.action === 'Verkaufen' && <p className="text-xs text-sky-200">Diese gespeicherte Empfehlung enthält noch keine Abwägung von Halten und Reduzieren mit Kursszenarien. Über „Neu analysieren“ ergänzen.</p>}
               {typeof rec.plannedAmountEUR === 'number' && !result.allocationPlan?.positions.some(position => position.key === String(rec.assetId)) && <p className="text-xs text-gray-400">Geplanter {rec.action === 'Verkaufen' ? 'Brutto-Verkaufsbetrag' : 'Kaufbetrag'} im Szenario: {euros(rec.plannedAmountEUR)}</p>}

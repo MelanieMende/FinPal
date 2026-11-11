@@ -3,9 +3,18 @@ import { buildAnalysisPositions, validateAnalysisRequest, type PortfolioAnalysis
 it('accepts a fund as a separate asset class without converting it to a stock or ETF', () => {
   const positions = buildAnalysisPositions([{ ID: 32, name: 'Apollo Global Private Markets ELTIF – A2 UNH', isin: 'LU3170240538', type: 'Fund', current_shares: 0.1, price: 109, currencySymbol: '€' }] as Asset[]);
   expect(positions[0].type).toBe('Fund');
+  expect(positions[0].price).toBe(109);
+  expect(positions[0].eltifProductTerms).toMatchObject({ shareClass: 'A2 UNH', shareClassCurrency: 'EUR',
+    valuationFrequency: 'monthly', redemptionFrequency: 'quarterly', recommendedHoldingYears: 5,
+    managementFeePercent: 2.2, annualCostImpactPercent: 6.8,
+    indicativeNav: { value: 111.29, currency: 'EUR', official: false, useForPlanning: true } });
   expect(() => validateAnalysisRequest({ provider: 'api', priceUpdatedAt: null, positions,
     profile: { goal: 'growth', risk: 'medium', horizonYears: 10, buyBudget: 0 },
   })).not.toThrow();
+  expect(() => validateAnalysisRequest({ provider: 'api', priceUpdatedAt: null,
+    positions: [{ ...positions[0], eltifProductTerms: { ...positions[0].eltifProductTerms!, riskClass: 3 } }],
+    profile: { goal: 'growth', risk: 'medium', horizonYears: 10, buyBudget: 0 },
+  })).toThrow(/ELTIF-Produktbedingungen/);
 });
 
 it('includes only held assets and keeps realized gains separate from their current market value', () => {

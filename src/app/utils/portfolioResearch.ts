@@ -110,6 +110,11 @@ export const bitcoinPrimarySources = [
   { title: 'Trade Republic: Crypto Execution Policy (MiCAR)', url: 'https://assets.traderepublic.com/assets/files/EN_ExecutionPolicy.pdf' },
 ] as const;
 
+export const germanPrivateCryptoTaxSources = [
+  { title: 'BMF: Ertragsteuerrechtliche Behandlung bestimmter Kryptowerte (06.03.2025)', url: 'https://www.bundesfinanzministerium.de/Content/DE/Downloads/BMF_Schreiben/Steuerarten/Einkommensteuer/2025-03-06-einzelfragen-kryptowerte-bmf-schreiben.html' },
+  { title: 'Bundesministerium der Justiz: § 23 EStG', url: 'https://www.gesetze-im-internet.de/estg/__23.html' },
+] as const;
+
 // This identifies network research only, never the legal product or custody arrangement.
 export function isBitcoinResearchPosition(position: Pick<AnalysisPosition, 'isin'> & Partial<Pick<AnalysisPosition, 'type' | 'symbol'>>) {
   if (position.type !== 'Crypto') return false;
@@ -119,7 +124,7 @@ export function isBitcoinResearchPosition(position: Pick<AnalysisPosition, 'isin
 }
 
 export function knownResearchSources(position: Pick<AnalysisPosition, 'isin'> & Partial<Pick<AnalysisPosition, 'type' | 'symbol'>>) {
-  if (isBitcoinResearchPosition(position)) return bitcoinPrimarySources.map(source => source.url);
+  if (isBitcoinResearchPosition(position)) return [...bitcoinPrimarySources, ...germanPrivateCryptoTaxSources].map(source => source.url);
   return issuerHints[position.isin.trim().toUpperCase()]?.sourceUrls ?? [];
 }
 

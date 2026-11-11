@@ -1,5 +1,6 @@
 import { allocationCandidateKey, allocationMismatch, buildPortfolioAllocation, validPortfolioAllocation } from './portfolioAllocation';
 import type { AnalysisPosition, AssetRecommendation, NewAssetRecommendation, PortfolioAnalysisRequest } from './portfolioAnalysis';
+import { buildAnalysisPositions } from './portfolioAnalysis';
 import type { InvestorContext } from './investorFacts';
 import { checkPortfolioFunding } from './portfolioFunding';
 
@@ -33,6 +34,31 @@ it('allows only amount-free qualitative directions for an ELTIF with unverified 
   expect(allocationMismatch(plan, [rec(32, 'Kaufen', null)])).toBeNull();
   expect(allocationMismatch(plan, [rec(32, 'Verkaufen', 100)])).toContain('plannedAmountEUR muss');
   expect(validPortfolioAllocation(plan)).toBe(true);
+});
+
+it('uses the user-confirmed indicative Apollo NAV for allocation amounts without the ELTIF amount constraint', () => {
+  const apollo = buildAnalysisPositions([{ ID: 32, name: 'Apollo Global Private Markets ELTIF', isin: 'LU3170240538',
+    type: 'Fund', current_shares: 1, price: 109, currencySymbol: '€' }] as Asset[])[0];
+  const plan = buildPortfolioAllocation(req([apollo], 1000));
+  expect(apollo.price).toBe(109);
+  expect(plan.positions[0].currentValueEUR).toBe(111.29);
+  expect(plan.positions[0].executionConstraint).toBeUndefined();
+  expect(plan.positions[0].valuationBasis).toBe('user-confirmed-indicative-nav');
+  expect(validPortfolioAllocation(plan)).toBe(true);
+});
+
+it('rejects an Apollo block that merely repeats the unavailable official NAV evidence', () => {
+  const apollo = buildAnalysisPositions([{ ID: 32, name: 'Apollo Global Private Markets ELTIF', isin: 'LU3170240538',
+    type: 'Fund', current_shares: 1, price: 111.29, currencySymbol: '€' }] as Asset[])[0];
+  const plan = buildPortfolioAllocation(req([apollo], 1000));
+  const blocked = { ...rec(32, 'Prüfen', null), executionBlocker: 'independent' as const,
+    rationale: 'Der offizielle NAV und sein Bewertungsstichtag fehlen.', risk: 'NAV-Veröffentlichungszyklus ungeklärt.' };
+  expect(allocationMismatch(plan, [blocked])).toContain('kein unabhängiger Prüf- oder Ausführungsblocker');
+  expect(allocationMismatch(plan, [{ ...blocked, action: 'Halten', executionBlocker: null,
+    rationale: 'Indikative Bewertung wird verwendet.', risk: 'Illiquidität und Gates bleiben bestehen.' }])).toBeNull();
+  expect(allocationMismatch(plan, [{ ...blocked,
+    rationale: 'Der bestätigte indikative NAV ist nur die Bewertungsgrundlage.',
+    risk: 'Das vertragliche Rückgabefenster und die Ausführbarkeit sind weiterhin ungeklärt.' }])).toBeNull();
 });
 
 it('honors confirmed targets above the generic crypto limit and does not silently normalize conflicting targets', () => {

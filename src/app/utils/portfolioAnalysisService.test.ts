@@ -1310,7 +1310,8 @@ it.each([true, false])('keeps ELTIF NAV evidence and broker age separate through
   const now = jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-08T08:00:00Z'));
   const eltifRequest: PortfolioAnalysisRequest = { ...request, priceUpdatedAt: '2026-10-08T08:00:00Z', positions: [{ ...request.positions[0], id: 32, price: 109.395, type: 'Fund' as const, name: 'Apollo ELTIF', isin: 'LU3170240538', quote: { originalPrice: 109.395, originalCurrency: 'EUR', valuationCurrency: 'EUR' as const, source: 'trade-republic', quoteAsOf: '2026-09-10T15:21:10Z', fetchedAt: '2026-10-08T07:00:00Z', convertedAt: null, fxRateToEUR: 1, fxSource: null, fxAsOf: null, fxFetchedAt: null } }] };
   const navEvidence: import('./eltifValuation').NavEvidence = { isin: 'LU3170240538', value: evidenced ? 110 : null, currency: evidenced ? 'USD' : null, valuationDate: evidenced ? '2026-08-31' : null, publicationCycle: evidenced ? 'Monthly' : null, nextPublicationDue: evidenced ? '2026-10-15' : null, sourceIndexes: evidenced ? [0] : [] };
-  const answer = { ...report, warnings: [] as string[], newAssetRecommendations: [] as typeof report.newAssetRecommendations, recommendations: [{ ...report.recommendations[0], assetId: 32, navEvidence }] };
+  const existingNavWarning = 'Apollo: Offizieller NAV, Bewertungsstichtag und Veröffentlichungszyklus der exakten Anteilsklasse sind nicht belegt.';
+  const answer = { ...report, warnings: evidenced ? [] as string[] : [existingNavWarning], newAssetRecommendations: [] as typeof report.newAssetRecommendations, recommendations: [{ ...report.recommendations[0], assetId: 32, navEvidence }] };
   const mockedFetch = apiResponsesWithUnavailableDocuments(new Response(JSON.stringify(research)), new Response(JSON.stringify({ status: 'completed', output: [{ type: 'message', content: [{ type: 'output_text', text: JSON.stringify(answer) }] }] })));
   const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
   try {
@@ -1319,7 +1320,8 @@ it.each([true, false])('keeps ELTIF NAV evidence and broker age separate through
     expect(JSON.parse(input.input[0].content).quoteFreshness[0]).toMatchObject({ status: 'nav-unverified', brokerTickStatus: 'old' });
     expect((result.infos ?? []).join(' ')).toContain('Broker-Tick');
     expect(result.warnings.join(' ')).not.toContain('Assets 32:');
-    expect(result.warnings.some(message => message.includes('NAV-Aktualit\u00e4t ungekl\u00e4rt'))).toBe(!evidenced);
+    expect(result.warnings.some(message => message.includes('NAV-Aktualit\u00e4t ungekl\u00e4rt'))).toBe(false);
+    if (!evidenced) expect(result.warnings.filter(message => /NAV|Bewertungsstichtag|Veröffentlichungszyklus/.test(message))).toEqual([existingNavWarning]);
     expect(service.getLastResult()?.report.recommendations[0].navEvidence).toEqual(navEvidence);
   } finally { now.mockRestore(); }
 });

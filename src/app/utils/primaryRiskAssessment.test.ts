@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import type { AnalysisPosition } from './portfolioAnalysis';
-import { PrimaryRiskAssessmentCache, riskAssessmentSchema, riskFingerprint, riskForModel, validateRiskAssessment } from './primaryRiskAssessment';
+import { PrimaryRiskAssessmentCache, riskAssessmentSchema, riskFingerprint, riskForModel, validateRiskAssessment,
+  type PrimaryRiskRecord } from './primaryRiskAssessment';
 import { riskChecksFor, riskChecksForPosition, riskMetricsForPosition } from './assetRiskPolicy';
 import { riskExcerpt, type RiskDocumentSet } from './primaryRiskResearch';
 
@@ -580,6 +581,30 @@ it('marks only reviewed Munich Re residual uncertainty as decision-ready', () =>
   expect(riskForModel({ ...record, checks: checks.map(check => check.flag === 'financing'
     ? { ...check, finding: 'unknown' as const, reason: 'Verfügbare Primärberichte geprüft: Daten fehlen.' } : check),
     gaps: ['financing: geprüft', 'going-concern: geprüft'] }).decisionReadiness).toBeUndefined();
+  expect(riskForModel({ ...record, gaps: [...record.gaps, 'cash: fehlt'] }).decisionReadiness).toBeUndefined();
+  expect(riskForModel({ ...record, checks: checks.map(check => check.flag === 'financing'
+    ? { ...check, finding: 'risk' as const } : check) }).decisionReadiness).toBeUndefined();
+});
+
+it('separates reviewed Lufthansa gaps from its independently evidenced margin risk', () => {
+  const checks = [
+    { flag: 'loss-making', finding: 'no-risk', reason: 'Quartalsgewinn belegt.', documentIndex: 0, quote: 'Net profit attributable was EUR 123m.' },
+    { flag: 'low-margin', finding: 'risk', reason: 'Die berichtete EBIT-Marge beträgt 3,1 %.', documentIndex: 0, quote: 'EBIT margin for the quarter was 3.1 percent.' },
+    { flag: 'financing', finding: 'no-risk', reason: 'Liquidität und Kreditlinien belegt.', documentIndex: 0, quote: 'Available liquidity amounted to EUR 8,144m.' },
+    { flag: 'going-concern', finding: 'unknown', reason: 'Kein überprüfbarer Befund mit Textstelle.', documentIndex: null, quote: '' },
+    { flag: 'regulatory', finding: 'unknown', reason: 'Kein überprüfbarer Befund mit Textstelle.', documentIndex: null, quote: '' },
+  ] as PrimaryRiskRecord['checks'];
+  const record: PrimaryRiskRecord = { key: '18', isin: 'DE0008232125', fingerprint: 'same', checkedAt: Date.now(), status: 'unknown',
+    checks, metrics: [
+      { name: 'net-income', value: 123, unit: 'Mio. EUR', period: '2026-04-01/2026-06-30', documentIndex: 0, quote: 'Net profit attributable was EUR 123m.' },
+      { name: 'operating-margin', value: 3.1, unit: '%', period: '2026-04-01/2026-06-30', documentIndex: 0, quote: 'EBIT margin for the quarter was 3.1 percent.' },
+      { name: 'cash', value: 1799, unit: 'Mio. EUR', period: '2026-06-30', documentIndex: 0, quote: 'Cash and cash equivalents were EUR 1,799m.' },
+    ], gaps: ['going-concern: offen', 'regulatory: offen', 'debt-maturities: Keine periodisierte Zahl mit überprüfbarer Textstelle.'],
+    sources: [
+      { title: 'LH-QR-2026-2-e.pdf', url: 'https://investor-relations.lufthansagroup.com/fileadmin/downloads/en/financial-reports/interims-reports/LH-QR-2026-2-e.pdf' },
+      { title: 'LH-AR-2025-e.pdf', url: 'https://investor-relations.lufthansagroup.com/fileadmin/downloads/en/financial-reports/annual-reports/LH-AR-2025-e.pdf' },
+    ] };
+  expect(riskForModel(record)).toMatchObject({ decisionReadiness: 'reviewed-uncertainty', materialRisks: ['low-margin'] });
   expect(riskForModel({ ...record, gaps: [...record.gaps, 'cash: fehlt'] }).decisionReadiness).toBeUndefined();
   expect(riskForModel({ ...record, checks: checks.map(check => check.flag === 'financing'
     ? { ...check, finding: 'risk' as const } : check) }).decisionReadiness).toBeUndefined();

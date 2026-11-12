@@ -259,6 +259,9 @@ it('does not fabricate correlations or accept AI-supplied historical evidence', 
   expect(read[0].riskHistory).toBeUndefined(); expect(read[0].uncertainty).toBeUndefined();
   expect(validReturnForecast({ ...f, riskHistory: { ...f.riskHistory!, closes: [...f.riskHistory!.closes].reverse() } })).toBe(false);
   expect(readFundamentalRisks([{ key: '1', status: 'assessed', materialRisks: ['loss-making'], rationale: 'No evidence', sourceIndexes: [99] }], [source])).toEqual([]);
+  expect(readFundamentalRisks([{ key: '1', status: 'unknown', decisionReadiness: 'reviewed-uncertainty',
+    materialRisks: ['low-margin'], rationale: 'Reports reviewed; margin risk remains.', sourceIndexes: [0] }], [source]))
+    .toEqual([expect.objectContaining({ decisionReadiness: 'reviewed-uncertainty', materialRisks: ['low-margin'] })]);
   const r = request(); r.positions = [{ ...r.positions[1], id: 1, price: 50, shares: 20 }];
   const plan = buildRobustForecastAllocation(r, [returnForecastFixture('1', { targetPrice: 40 })]);
   expect(plan.optimization!.robust!.covarianceStatus).toBe('unavailable');

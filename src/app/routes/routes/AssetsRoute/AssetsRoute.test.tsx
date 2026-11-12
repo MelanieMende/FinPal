@@ -116,7 +116,7 @@ describe('AssetsRoute component', () => {
 			{ ID: 4, type: 'Bond', current_shares: 2, price: 30 },
 			{ ID: 5, type: 'Crypto', current_shares: 0.5, price: 200 },
 			{ ID: 6, type: 'Commodity', current_shares: 3, price: 10 },
-			{ ID: 7, type: 'RealEstate', current_shares: 2, price: 500 },
+			{ ID: 7, type: 'RealEstate', current_shares: 2, price: 500, current_value: 1000 },
 			{ ID: 8, type: 'CashEquivalent', current_shares: 5, price: 1 },
 			{ ID: 9, type: 'Stock', current_shares: 0, price: 1000 },
 			{ ID: 10, type: 'ETF', current_shares: 10 },

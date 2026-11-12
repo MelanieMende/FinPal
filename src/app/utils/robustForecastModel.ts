@@ -108,7 +108,7 @@ export function readFundamentalRisks(value: unknown, sources: AnalysisSource[]):
     && Array.isArray(v.sourceIndexes) && v.sourceIndexes.length <= 30 && v.sourceIndexes.every((i: unknown) => Number.isInteger(i) && Number(i) >= 0 && Number(i) < sources.length)
     && (v.status === 'unknown' || v.sourceIndexes.length > 0));
   return read.filter(v => read.filter(other => other.key === v.key).length === 1).map(v => ({ key: v.key, status: v.status,
-    ...(v.decisionReadiness === 'reviewed-uncertainty' && v.sourceIndexes.length > 0 && v.materialRisks.length === 0
+    ...(v.decisionReadiness === 'reviewed-uncertainty' && v.sourceIndexes.length > 0
       ? { decisionReadiness: 'reviewed-uncertainty' as const } : {}),
     materialRisks: v.materialRisks, rationale: v.rationale, sources: v.sourceIndexes.map((i: number) => sources[i]) }));
 }

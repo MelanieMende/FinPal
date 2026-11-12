@@ -651,6 +651,19 @@ export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessme
     && ['net-income', 'operating-margin', 'cash', 'debt-maturities'].every(name => record.metrics.some(metric => metric.name === name))
     && record.sources.some(source => /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/353278\/\d{18}\/caq[1-4]20\d{2}\.htm$/i.test(source.url) && /6-K/.test(source.title))
     && record.sources.some(source => /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/353278\/\d{18}\/nvo-20\d{6}\.htm$/i.test(source.url) && /20-F/.test(source.title));
+  const reviewedLufthansaUncertainty = record.isin === 'DE0008232125' && record.status === 'unknown'
+    && materialRisks.every(risk => risk === 'low-margin') && record.checks.length === 5
+    && record.checks.every(check => (['loss-making', 'financing'].includes(check.flag)
+      && check.finding === 'no-risk' && check.documentIndex !== null && check.quote.trim().length >= 12)
+      || (check.flag === 'low-margin' && check.finding === 'risk'
+        && check.documentIndex !== null && check.quote.trim().length >= 12)
+      || (['going-concern', 'regulatory'].includes(check.flag) && check.finding === 'unknown'))
+    && record.gaps.some(gap => gap.startsWith('going-concern:'))
+    && record.gaps.some(gap => gap.startsWith('regulatory:'))
+    && record.gaps.every(gap => /^(?:going-concern|regulatory|debt-maturities):/.test(gap))
+    && ['net-income', 'operating-margin', 'cash'].every(name => record.metrics.some(metric => metric.name === name))
+    && record.sources.some(source => /\/LH-QR-20\d{2}-[1-3]-e\.pdf$/i.test(source.url))
+    && record.sources.some(source => /\/LH-AR-20\d{2}-e\.pdf$/i.test(source.url));
   const reviewedBitcoinUncertainty = record.isin === 'BTC' && record.status === 'unknown'
     && materialRisks.length === 0 && record.checks.length === 6
     && record.checks.every(check => (check.flag === 'identity' && check.finding === 'no-risk')
@@ -693,7 +706,7 @@ export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessme
   }
   if (visible.length < lines.length) visible.push(`Weitere ${lines.length - visible.length} Befunde im gespeicherten Prüfprotokoll.`);
   return { key: record.key, status: record.status,
-    ...(reviewedMunichUncertainty || reviewedMondelezUncertainty || reviewedMcdUncertainty || reviewedNovoUncertainty || reviewedBitcoinUncertainty || reviewedApolloUncertainty
+    ...(reviewedMunichUncertainty || reviewedMondelezUncertainty || reviewedMcdUncertainty || reviewedNovoUncertainty || reviewedLufthansaUncertainty || reviewedBitcoinUncertainty || reviewedApolloUncertainty
       ? { decisionReadiness: 'reviewed-uncertainty' as const } : {}),
     materialRisks, ...(structuralRisks.length ? { structuralRisks } : {}), rationale: visible.join('\n'), sources: record.sources };
 }

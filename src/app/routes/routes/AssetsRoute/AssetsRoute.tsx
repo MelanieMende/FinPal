@@ -5,6 +5,7 @@ import type { IconName } from '@blueprintjs/icons';
 
 import CreateAndEditAssetOverlay from './components/CreateAndEditAssetOverlay';
 import TradeRepublicTradeDialog from './components/TradeRepublicTradeDialog';
+import RefreshButton from './components/RefreshButton';
 import AssetList from './components/AssetList/AssetList';
 import * as assetsSelector from './../../../store/assets/assets.selectors';
 import { selectTotalLiquidity } from '../../../store/cash/cash.selectors';
@@ -144,11 +145,12 @@ export default function AnalysisRoute() {
 			{assets.some(asset => asset.current_shares > 0 && asset.quote?.valuationCurrency === 'unknown') &&
 				<p role="status" className="text-sm text-amber-300">Die EUR-Summen sind unvollständig: Positionen ohne gültige Währungsumrechnung sind nicht enthalten.</p>}
 			<Card className="glass-card p-0 overflow-hidden min-h-[500px]">
-				<div className="p-4 border-b border-white/5 bg-white/5 flex justify-between items-center">
+				<div className="p-4 border-b border-white/5 bg-white/5 flex items-center justify-start gap-3">
 					<div className="flex items-center gap-4">
-						<H5 className="m-0 text-sm font-bold uppercase tracking-wider text-gray-300">Positions List</H5>
-						<span className="text-xs text-gray-400" data-testid="market-price-updated-at">Marktpreise zuletzt aktualisiert: {formatSyncTime(marketPriceUpdatedAt) ?? 'noch nicht'}</span>
-						<span className="bg-blue-500/10 text-blue-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-blue-500/20">
+						<H5 className="!m-0 text-sm font-bold uppercase tracking-wider text-gray-300 leading-none">Positions List</H5>
+						<RefreshButton />
+						<span className="text-xs text-gray-400 leading-none" data-testid="market-price-updated-at">Marktpreise zuletzt aktualisiert: {formatSyncTime(marketPriceUpdatedAt) ?? 'noch nicht'}</span>
+						<span className="bg-blue-500/10 text-blue-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-blue-500/20 leading-none">
 							{filteredAssets.length} Active
 						</span>
 					</div>

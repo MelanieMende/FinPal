@@ -4,7 +4,6 @@ import AssetListItem from './components/AssetListItem';
 import Table from '../../../../../components/Table/Table';
 import TableCell from '../../../../../components/Table/TableCell/TableCell';
 import * as assetsSelector from '../../../../../store/assets/assets.selectors';
-import RefreshButton from './../../components/RefreshButton';
 import NewAssetButton from './components/NewAssetButton';
 import AssetListSumRow from './components/AssetListSumRow';
 
@@ -45,7 +44,7 @@ export default function AnalysisRoute(props: { assets?: Asset[] }) {
     <Table className="w-full">
       <thead>
 				<tr className="bg-white/5">
-					<th className="p-3 text-left w-12"><RefreshButton /></th>
+					<th className="p-3 text-left w-12" aria-label="Aktionen" />
 					<th className="p-3 text-left w-12">ID</th>
 					<th className="p-3 text-left min-w-[150px] text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Name</th>
           <th className="p-3 text-center w-14 text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10" title="Empfehlung aus der letzten KI-Analyse">KI</th>

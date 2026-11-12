@@ -84,6 +84,19 @@ describe('AssetsRoute component', () => {
 		expect(screen.getByTestId('current-shares-12')).toHaveTextContent('Zuteilung offen');
 	});
 
+	it('shows IPO positions before other positions', async () => {
+		const assets = [
+			{ ID: 1, type: 'Stock', name: 'Stock', current_shares: 1, price: 100 },
+			{ ID: 2, type: 'IPO', name: 'IPO', current_shares: 0, reserved_amount: 50 },
+		] as Asset[];
+		await act(async () => {
+			render(<AssetsRoute />, { preloadedState: { assets, transactions: [], dividends: [], cash: [] } });
+		});
+
+		expect(screen.getAllByTestId(/^asset-row-/).map(row => row.getAttribute('data-testid')))
+			.toEqual(['asset-row-2', 'asset-row-1']);
+	});
+
 	it('shows a saved market price time and updates it when a new quote arrives', async () => {
 		localStorage.setItem(MARKET_PRICE_UPDATED_AT_KEY, '2026-10-01T10:30:00.000Z');
 		await act(async () => {

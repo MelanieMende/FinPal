@@ -54,6 +54,14 @@ export default function CashRoute() {
             </div>
           </div>
 
+          {totalIpoReservations > 0 && <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-500/20 flex items-center gap-3">
+            <div className="p-2 bg-amber-500/20 rounded-lg"><Icon icon="time" className="text-amber-400" size={14} /></div>
+            <div>
+              <div className="text-[10px] uppercase font-bold text-amber-400/70 tracking-widest">Für IPOs reserviert</div>
+              <div className="text-lg font-bold text-white tracking-tight">{euroFormatter.format(totalIpoReservations)}</div>
+            </div>
+          </div>}
+
           <div className="p-3 bg-emerald-500/10 rounded-xl border border-emerald-500/20 flex items-center gap-3">
             <div className="p-2 bg-emerald-500/20 rounded-lg">
               <Icon icon="layout-grid" className="text-emerald-400" size={14} />
@@ -63,14 +71,6 @@ export default function CashRoute() {
               <div className="text-lg font-bold text-white tracking-tight">{euroFormatter.format(totalLiquidity || 0)}</div>
             </div>
           </div>
-
-          {totalIpoReservations > 0 && <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-500/20 flex items-center gap-3">
-            <div className="p-2 bg-amber-500/20 rounded-lg"><Icon icon="time" className="text-amber-400" size={14} /></div>
-            <div>
-              <div className="text-[10px] uppercase font-bold text-amber-400/70 tracking-widest">Für IPOs reserviert</div>
-              <div className="text-lg font-bold text-white tracking-tight">{euroFormatter.format(totalIpoReservations)}</div>
-            </div>
-          </div>}
         </div>
       </div>
 

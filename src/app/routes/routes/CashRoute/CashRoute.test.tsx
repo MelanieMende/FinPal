@@ -60,5 +60,9 @@ describe('CashRoute component', () => {
     await act(async () => {})
     expect(within(screen.getByText('Verfügbares Cash').parentElement!).getByText('799,00 €')).toBeInTheDocument()
     expect(within(screen.getByText('Für IPOs reserviert').parentElement!).getByText('201,00 €')).toBeInTheDocument()
+    const statCards = screen.getByText('Verfügbares Cash').parentElement!.parentElement!.parentElement!.children
+    const ipoCard = screen.getByText('Für IPOs reserviert').parentElement!.parentElement!
+    const cashCard = screen.getByText('Verfügbares Cash').parentElement!.parentElement!
+    expect(Array.from(statCards).indexOf(ipoCard)).toBeLessThan(Array.from(statCards).indexOf(cashCard))
   })
 })

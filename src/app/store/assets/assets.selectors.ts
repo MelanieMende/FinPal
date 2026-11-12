@@ -53,10 +53,12 @@ export function selectAssetsWithUpcomingDividends(state: Asset[]) {
 }
 
 export function selectAssetsSortedByProfitLoss(state: Asset[], direction:'asc'|'desc') {
-  const active = state.filter((asset:Asset) => asset.current_shares != 0 && asset.current_shares != null)
-	const inactive = state.filter((asset:Asset) => asset.current_shares == 0 || asset.current_shares == null)
+  const ipoAssets = state.filter((asset:Asset) => asset.type === 'IPO')
+  const otherAssets = state.filter((asset:Asset) => asset.type !== 'IPO')
+  const active = otherAssets.filter((asset:Asset) => asset.current_shares != 0 && asset.current_shares != null)
+	const inactive = otherAssets.filter((asset:Asset) => asset.current_shares == 0 || asset.current_shares == null)
 	const sorted = active.slice().sort((a:Asset, b:Asset) => sortBy(a, b, 'current_profit_loss_percentage', direction))
-	const all = sorted.concat(inactive)
+	const all = ipoAssets.concat(sorted, inactive)
   return all
 }
 

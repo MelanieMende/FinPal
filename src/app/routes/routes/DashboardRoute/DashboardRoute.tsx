@@ -2,16 +2,17 @@ import React from 'react';
 import { useAppSelector } from '../../../hooks';
 import AssetAllocationChart from '../../../components/Charts/AssetAllocationChart';
 import { Card, H3, H5, Icon } from '@blueprintjs/core';
+import { selectCashTotals } from '../../../store/cash/cash.selectors';
 import './DashboardRoute.css';
 
 export default function DashboardRoute() {
 	const assets = useAppSelector(state => state.assets);
-	const transactions = useAppSelector(state => state.transactions) || [];
-	const dividends = useAppSelector(state => state.dividends) || [];
 	const cash = useAppSelector(state => state.cash) || [];
+	const totalCash = useAppSelector(selectCashTotals).totalLiquidity;
 
 	// Asset Valuation Helper: Fallback to invested capital if no live price exists
 	const getAssetValue = (asset: any) => {
+		if (asset.type === 'IPO') return Math.max(0, asset.reserved_amount || 0);
 		if (asset.quote?.valuationCurrency === 'unknown') return 0;
 		const shares = asset.current_shares || 0;
 		if (shares <= 0) return 0;
@@ -20,18 +21,17 @@ export default function DashboardRoute() {
 
 	// Basic calculations
 	const totalAssetsValue = assets.reduce((acc: number, asset) => acc + getAssetValue(asset), 0);
-	
-	const manualCash = cash.reduce((acc: number, c) => {
-		const amount = c.amount || 0;
-		const fee = c.fee || 0;
-		return acc + (c.type === 'Withdrawal' ? -amount : amount) - fee;
-	}, 0);
-
-	const totalTransactionFlow = transactions.reduce((acc, t) => acc + (t.in_out || 0), 0);
-	const totalDividends = dividends.reduce((acc, d) => acc + (d.income || 0), 0);
-	const totalCash = manualCash + totalTransactionFlow + totalDividends;
 
 	const netWorth = totalAssetsValue + totalCash;
+	const netContributions = cash.reduce((total, entry) => {
+		if (entry.type === 'Deposit') return total + (entry.amount || 0);
+		if (entry.type === 'Withdrawal') return total - (entry.amount || 0);
+		return total;
+	}, 0);
+	const hasNetContributions = netContributions > 0;
+	const netWorthChange = hasNetContributions ? netWorth - netContributions : 0;
+	const netWorthChangePercentage = hasNetContributions ? (netWorthChange / netContributions) * 100 : null;
+	const performanceColor = netWorthChange >= 0 ? 'text-emerald-300' : 'text-red-400';
 
 	// Chart Data: Allocation by Asset
 	const allocationData = [
@@ -96,9 +96,13 @@ export default function DashboardRoute() {
 					<div className="text-3xl font-bold text-white tracking-tight">
 						{new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(netWorth || 0)}
 					</div>
-					<div className="mt-4 text-sm text-green-400 flex items-center bg-green-400/10 w-fit px-2 py-1 rounded-full">
-						<Icon icon="trending-up" className="mr-1" size={12} />
-						<span className="font-semibold">+2.4%</span>
+					<div
+						title="Compared with personal deposits minus withdrawals"
+						className={`mt-4 text-sm font-semibold ${hasNetContributions ? performanceColor : 'text-gray-400'}`}
+					>
+						{netWorthChangePercentage === null
+							? 'No net contributions recorded'
+							: `${new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR', signDisplay: 'always' }).format(netWorthChange)} (${netWorthChangePercentage > 0 ? '+' : ''}${netWorthChangePercentage.toFixed(1)}%)`}
 					</div>
 				</Card>
 

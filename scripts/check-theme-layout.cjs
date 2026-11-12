@@ -22,6 +22,7 @@ async function render() {
       for (const route of (width === 1600 ? ['import'] : ['dashboard','assets','transactions','dividends','cash','import','analysis'])) {
         await win.webContents.executeJavaScript(`window.themeStore.dispatch({type:'appState/setSelectedTab',payload:'${route}Tab'})`);
         await new Promise(resolve => setTimeout(resolve,route === 'dashboard' || route === 'dividends' ? 1800 : 350));
+        if(route === 'import') await win.webContents.executeJavaScript(`document.querySelector('.unsupported-records-card details')?.setAttribute('open','')`);
         const result = await win.webContents.executeJavaScript(`(() => {
           const errors = [...window.fixtureErrors];
           const nav=document.querySelector('nav'), content=document.querySelector('#rootContent');
@@ -95,7 +96,8 @@ async function build() {
       getTradeRepublicStatus:async()=>({runnerAvailable:true,hasSavedCredentials:false}),
       getPortfolioAIStatus:async()=>({hasApiKey:false,secureStorageAvailable:true,chatGpt:{connected:false,accounts:[]}})};
     const assets=[{ID:1,name:'Global Equity ETF',symbol:'ETF',isin:'IE00B4L5Y983',type:'ETF',currencySymbol:'€',price:120,current_shares:25,current_invest:2500,current_sum_in_out:-2500,avg_price_paid:100,dividends_earned:25,is_watched:false},
-      {ID:2,name:'Example Stock',symbol:'EXM',isin:'US0000000001',type:'Stock',currencySymbol:'€',price:75,current_shares:10,current_invest:850,current_sum_in_out:-850,avg_price_paid:85,dividends_earned:0,is_watched:false}];
+      {ID:2,name:'Example Stock',symbol:'EXM',isin:'US0000000001',type:'Stock',currencySymbol:'€',price:75,current_shares:10,current_invest:850,current_sum_in_out:-850,avg_price_paid:85,dividends_earned:0,is_watched:false},
+      {ID:3,name:'Anthropic',symbol:'ANTH',isin:'US03703U1079',type:'IPO',currencySymbol:'€',current_shares:0,current_invest:-201,reserved_amount:201,reserved_since:'2026-11-11',dividends_earned:0,is_watched:false}];
     const transactions=[{ID:1,date:'2026-01-15',type:'Buy',asset_ID:1,depot:'Trade Republic',rank:1,amount:25,shares_cumulated:25,price_per_share:100,fee:1,solidarity_surcharge:0,invest_cumulated:2500,in_out:-2501}];
     window.themeStore=setupStore({appState:{...setupStore().getState().appState,selectedTab:'dashboardTab',theme:'bp5-dark'},assets,transactions,
       dividends:[{ID:1,asset_ID:1,date:'2026-09-01',income:25,tax:0,fee:0}],
@@ -104,6 +106,10 @@ async function build() {
         {date:'2026-10-14',type:'Dividend',assetName:'Global Equity ETF',isin:'IE00B4L5Y983',shares:0.755515,pricePerShare:0,totalAmount:0.30,fee:0,tax:0.05},
         {date:'2026-10-14',type:'Buy',assetName:'Langer Wertpapiername ohne bestehende Zuordnung',isin:'DE0000000002',shares:1,pricePerShare:125,totalAmount:125,fee:1,tax:0}
       ]}});
+    localStorage.setItem('finpal.unsupportedTradeRepublicImport.v1',JSON.stringify([{
+      date:'2026-11-01',type:'Card Cashback',description:'Sehr lange nicht unterstützte Trade-Republic-Buchung zur Prüfung',amount:12.34,
+      reason:'Buchungstyp wird noch nicht unterstützt.'
+    }]));
     Icons.loadAll().then(()=>{createRoot(document.getElementById('root')).render(<Provider store={window.themeStore}><RootRoute/></Provider>);window.fixtureReady=true;});
   `);
   const {build}=await import('vite');

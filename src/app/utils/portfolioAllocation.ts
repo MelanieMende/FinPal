@@ -233,6 +233,14 @@ export function allocationMismatch(plan: PortfolioAllocation, recommendations: A
   for (const rec of [...recommendations, ...candidates]) {
     const key = 'assetId' in rec ? String(rec.assetId) : allocationCandidateKey(rec);
     const target = plan.positions.find(p => p.key === key);
+    if ('assetId' in rec && rec.action === 'Halten' && rec.executionBlocker === 'independent') {
+      const explanation = [rec.rationale, rec.tradeCheck?.costs, rec.tradeCheck?.taxes, rec.tradeCheck?.conclusion,
+        ...(rec.warnings ?? [])].filter(Boolean).join(' ');
+      const explicitlyNotBlocked = /keine belegte aktuelle Unverkäuflichkeit|(?:Gebühr|Kosten).{0,80}(?:verhindern|blockieren).{0,30}(?:Verkauf|Trade).{0,20}nicht|kein(?:e|en)? (?:erfundenes |konkretes )?(?:Steuer|Kosten|Ausführungs)(?:hindernis|blocker)/i.test(explanation);
+      const strategicHold = /strategisch|lang(?:em|er) Horizont|Aufwärtspotenzial|Timingvorteil|unsicher(?:en|es) (?:Zwölfmonats)?modell/i.test(explanation);
+      if (explicitlyNotBlocked && strategicHold)
+        return `${key}: Die Begründung beschreibt Halten als strategische Entscheidung und verneint zugleich einen konkreten Ausführungsblocker. Setze executionBlocker null. independent ist nur zulässig, wenn ein tatsächlicher, vom Betrag unabhängiger Steuer-, Produkt-, Daten- oder Ausführungsgrund den Trade sperrt; benenne diesen dann ohne widersprüchliche Entwarnung.`;
+    }
     if ('assetId' in rec && target?.valuationBasis === 'user-confirmed-indicative-nav'
       && (rec.action === 'Prüfen' || rec.executionBlocker === 'independent')) {
       const explanation = [rec.rationale, rec.risk, rec.tradeCheck?.conclusion, ...(rec.warnings ?? [])].filter(Boolean).join(' ');

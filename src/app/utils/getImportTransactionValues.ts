@@ -1,5 +1,5 @@
 type ImportTransactionRecord = {
-    type: 'Buy' | 'Sell' | 'Dividend';
+    type: 'Buy' | 'Sell' | 'Dividend' | 'IPO';
     shares: number;
     pricePerShare: number;
     fee: number;

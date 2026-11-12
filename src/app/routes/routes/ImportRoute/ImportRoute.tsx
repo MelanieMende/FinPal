@@ -16,10 +16,12 @@ import { getImportTransactionValues } from '../../../utils/getImportTransactionV
 import { formatSyncTime } from '../../../utils/syncTimestamps';
 import { recordImportActivity } from '../../../utils/importActivity';
 import { importTradeRepublicCash } from '../../../utils/importTradeRepublicCash';
+import type { TradeRepublicUnsupportedRecord } from '../../../utils/tradeRepublicSync';
 import './ImportRoute.css';
 
 export default function ImportRoute() {
     const pendingImportStorageKey = 'finpal.pendingTradeRepublicImport.v1';
+    const unsupportedImportStorageKey = 'finpal.unsupportedTradeRepublicImport.v1';
     const dispatch = useAppDispatch();
     const assets = useAppSelector(state => state.assets);
     const sortedAssets = selectAssetsSortedByName(assets, 'asc');
@@ -40,6 +42,15 @@ export default function ImportRoute() {
     const [trMessage, setTrMessage] = useState<string | null>(null);
     const [pendingCacheReady, setPendingCacheReady] = useState(false);
     const [showDuplicates, setShowDuplicates] = useState(false);
+    const [unsupportedRecords, setUnsupportedRecords] = useState<TradeRepublicUnsupportedRecord[]>(() => {
+        try {
+            const stored = JSON.parse(localStorage.getItem(unsupportedImportStorageKey) || '[]');
+            return Array.isArray(stored) ? stored : [];
+        } catch {
+            localStorage.removeItem(unsupportedImportStorageKey);
+            return [];
+        }
+    });
 
     const recordMappingKey = (record: typeof pendingRecords[number]) => JSON.stringify([
         record.date,
@@ -79,6 +90,11 @@ export default function ImportRoute() {
     }, []);
 
     const isDuplicate = (record: typeof pendingRecords[number], assetID?: number) => {
+        if (record.type === 'IPO' && assetID) {
+            const asset = assets.find(candidate => candidate.ID === assetID);
+            return asset?.type === 'IPO' && asset.reserved_since === record.date
+                && Math.abs((asset.reserved_amount || 0) - record.totalAmount) < 0.005;
+        }
         return isImportedRecord(record, assetID, transactions, dividends);
     };
 
@@ -167,7 +183,8 @@ export default function ImportRoute() {
                 void dispatch(assetsReducer.loadPricesAndDividends(undefined));
             }
             const cashRecords = result.cashRecords ?? [];
-            if (!result.records.length && !result.quotes.length && !cashRecords.length) {
+            const nextUnsupportedRecords = result.unsupportedRecords ?? [];
+            if (!result.records.length && !result.quotes.length && !cashRecords.length && !nextUnsupportedRecords.length) {
                 throw new Error(`Keine importierbaren Transaktionen empfangen (${result.skipped} Buchungen übersprungen). Die bisherige Liste bleibt erhalten.`);
             }
             // Persist before updating Redux so a renderer reload between both
@@ -176,6 +193,9 @@ export default function ImportRoute() {
 				localStorage.setItem(pendingImportStorageKey, JSON.stringify(result.records));
 				dispatch(setPendingRecords(result.records));
 			}
+            setUnsupportedRecords(nextUnsupportedRecords);
+            if (nextUnsupportedRecords.length > 0) localStorage.setItem(unsupportedImportStorageKey, JSON.stringify(nextUnsupportedRecords));
+            else localStorage.removeItem(unsupportedImportStorageKey);
             const cashImport = await importTradeRepublicCash(cashRecords, sql => Promise.resolve(window.API.sendToDB(sql)));
             if (cashImport.imported > 0) await dispatch(cashReducer.loadCash());
             recordImportActivity();
@@ -199,6 +219,11 @@ export default function ImportRoute() {
     };
 
     const importRecord = async (record: typeof pendingRecords[number], assetID: number) => {
+        if (record.type === 'IPO') {
+            const result = await window.API.sendToDB(`UPDATE assets SET type = 'IPO', reserved_amount = ${record.totalAmount}, reserved_since = '${record.date}', is_watched = 0 WHERE ID = ${assetID}`);
+            if (typeof result === 'string') throw new Error(result);
+            return;
+        }
         if (record.type === 'Dividend') {
             const sql = `INSERT INTO dividends (date, asset_ID, income) VALUES ('${record.date}', ${assetID}, ${record.totalAmount})`;
             const result = await window.API.sendToDB(sql);
@@ -213,6 +238,10 @@ export default function ImportRoute() {
         const sql = `INSERT INTO transactions (date, type, asset_ID, amount, price_per_share, fee, solidarity_surcharge, depot) VALUES ('${record.date}', '${type}', ${assetID}, ${transactionValues.shares}, ${transactionValues.pricePerShare}, ${record.fee}, ${record.tax}, 'Trade Republic')`;
         const result = await window.API.sendToDB(sql);
         if (typeof result === 'string') throw new Error(result);
+        if (record.type === 'Buy' && mappedAsset?.type === 'IPO') {
+            const allocationResult = await window.API.sendToDB(`UPDATE assets SET type = 'Stock', reserved_amount = 0, reserved_since = NULL, is_watched = 1 WHERE ID = ${assetID}`);
+            if (typeof allocationResult === 'string') throw new Error(allocationResult);
+        }
     };
 
     const reloadPortfolioData = async () => {
@@ -360,6 +389,51 @@ export default function ImportRoute() {
                 </div>
             </Card>
 
+            {unsupportedRecords.length > 0 && (
+                <Card className="glass-card mb-6 p-5 unsupported-records-card">
+                    <details>
+                        <summary className="unsupported-records-summary">
+                            <span className="flex items-center gap-2">
+                                <Icon icon="warning-sign" intent={Intent.WARNING} />
+                                <strong>{unsupportedRecords.length} nicht unterstützte {unsupportedRecords.length === 1 ? 'Buchung' : 'Buchungen'} prüfen</strong>
+                            </span>
+                            <span className="text-sm text-gray-400">Nicht automatisch importiert</span>
+                        </summary>
+                        <div className="flex justify-between items-start gap-3 flex-wrap mt-4 mb-3">
+                            <p className="text-sm text-gray-400 m-0 max-w-3xl">Diese Buchungen wurden nicht verändert oder importiert. Prüfe den angegebenen Grund und gleiche sie bei Bedarf direkt mit Trade Republic ab.</p>
+                            <Button
+                                icon="trash"
+                                minimal
+                                intent={Intent.DANGER}
+                                onClick={() => {
+                                    setUnsupportedRecords([]);
+                                    localStorage.removeItem(unsupportedImportStorageKey);
+                                }}
+                            >
+                                Prüfliste löschen
+                            </Button>
+                        </div>
+                        <div className="unsupported-records-scroll">
+                            <HTMLTable striped className="unsupported-records-table">
+                                <thead><tr><th>Datum</th><th>Typ</th><th>Beschreibung</th><th>ISIN</th><th className="text-right">Betrag</th><th>Prüfgrund</th></tr></thead>
+                                <tbody>
+                                    {unsupportedRecords.map((record, index) => (
+                                        <tr key={`${record.date ?? 'unknown'}-${record.type ?? 'unknown'}-${index}`}>
+                                            <td className="text-nowrap">{record.date ?? '–'}</td>
+                                            <td>{record.type ?? '–'}</td>
+                                            <td>{record.description ?? record.sourcePreview ?? '–'}</td>
+                                            <td className="font-mono text-sm text-nowrap">{record.isin ?? '–'}</td>
+                                            <td className="font-mono text-right text-nowrap">{record.amount === undefined ? '–' : `${record.amount.toFixed(2)} €`}</td>
+                                            <td><Tag intent={Intent.WARNING} minimal>{record.reason}</Tag></td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </HTMLTable>
+                        </div>
+                    </details>
+                </Card>
+            )}
+
             {isLoading ? (
                 <div className="flex flex-col items-center justify-center h-64">
                     <Spinner size={50} />
@@ -476,7 +550,7 @@ export default function ImportRoute() {
                                                             small 
                                                             intent={Intent.PRIMARY}
                                                             onClick={() => {
-                                                                dispatch(assetCreationReducer.prefillFromISIN({ isin: record.isin, fallbackName: record.assetName }));
+                                                                dispatch(assetCreationReducer.prefillFromISIN({ isin: record.isin, fallbackName: record.assetName, type: record.type === 'IPO' ? 'IPO' : 'Stock' }));
                                                                 dispatch(appStateReducer.setAssetOverlayType(appStateReducer.AssetOverlayType.NEW));
                                                                 dispatch(appStateReducer.setShowAssetOverlay(true));
                                                             }}

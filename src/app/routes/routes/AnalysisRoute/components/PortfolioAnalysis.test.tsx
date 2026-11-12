@@ -66,8 +66,13 @@ it('shows a blocked card status and moves the trade status details into its tool
     <AssetRecommendationStatus assetName="Frei" recommendation={{ ...base, action: 'Kaufen', plannedAmountEUR: 100, executionBlocker: null }} />
     <AssetRecommendationStatus assetName="Blockiert" recommendation={{ ...base, executionBlocker: 'independent' }} />
     <AssetRecommendationStatus assetName="Kostenblock" recommendation={{ ...base, executionBlocker: 'independent',
-      rationale: 'Die Restposition bleibt aus Kostengründen unverändert, weil die Gebühr den Wert übersteigt.',
-      tradeCheck: { costs: 'Marktwert 0,68 EUR; 1 EUR Gebühr.', taxes: 'Nicht relevant.', conclusion: 'Kostenpflichtigen Kleinverkauf vermeiden.' } }} />
+      rationale: 'Ausschließlich die den Restwert übersteigenden Verkaufskosten sprechen für unverändertes Belassen.',
+      tradeCheck: { costs: 'Marktwert 0,68 EUR; rechnerischer Vollverkaufserlös −0,32 EUR.', taxes: 'Nicht relevant.',
+        conclusion: 'Keine reguläre Verkaufsorder, deren Gebühr den Restwert aufzehrt.' } }} />
+    <AssetRecommendationStatus assetName="Strategisch" recommendation={{ ...base, executionBlocker: 'independent',
+      rationale: 'Es gibt keine belegte aktuelle Unverkäuflichkeit. Bei langem Horizont bleibt das Aufwärtspotenzial erhalten.',
+      tradeCheck: { costs: 'Die Gebühren verhindern den Verkauf nicht.', taxes: 'Kein erfundenes Steuerhindernis.',
+        conclusion: 'Strategische Abweichung vom unsicheren Zwölfmonatsmodell.' } }} />
     <AssetRecommendationStatus assetName="Finanzierung" recommendation={{ ...base, executionBlocker: 'funding-only' }} />
     <AssetRecommendationStatus assetName="Größe" recommendation={{ ...base, executionBlocker: 'scale-only' }} />
     <AssetRecommendationStatus assetName="Prüfbedarf" recommendation={{ ...base, action: 'Prüfen', executionBlocker: null }} />
@@ -76,6 +81,7 @@ it('shows a blocked card status and moves the trade status details into its tool
   expect(screen.getByLabelText('Kaufen – Handelsstatus für Frei')).toHaveTextContent('Kaufen');
   expect(screen.getByLabelText('Blockiert – Handelsstatus für Blockiert')).toHaveTextContent('Blockiert');
   expect(screen.getByLabelText('Halten – Handelsstatus für Kostenblock')).toHaveTextContent('Halten');
+  expect(screen.getByLabelText('Halten – Handelsstatus für Strategisch')).toHaveTextContent('Halten');
   expect(screen.getByLabelText('Blockiert – Handelsstatus für Finanzierung')).toHaveTextContent('Blockiert');
   expect(screen.getByLabelText('Blockiert – Handelsstatus für Größe')).toHaveTextContent('Blockiert');
   expect(screen.getByLabelText('Blockiert – Handelsstatus für Prüfbedarf')).toHaveTextContent('Blockiert');
@@ -87,6 +93,8 @@ it('shows a blocked card status and moves the trade status details into its tool
   fireEvent.mouseEnter(screen.getByLabelText('Halten – Handelsstatus für Kostenblock'));
   expect(await screen.findByText('Handelsstatus: Halten – Verkauf aus Kostengründen blockiert')).toBeInTheDocument();
   expect(screen.getByText('Halten ist die aktuelle Entscheidung. Ein Verkauf ist wirtschaftlich nicht sinnvoll, weil seine Gebühren den Positionswert beziehungsweise Erlös aufzehren.')).toBeInTheDocument();
+  fireEvent.mouseEnter(screen.getByLabelText('Halten – Handelsstatus für Strategisch'));
+  expect(await screen.findByText('Handelsstatus: Halten – strategische Entscheidung')).toBeInTheDocument();
   view.unmount();
 });
 

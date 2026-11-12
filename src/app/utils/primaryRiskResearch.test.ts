@@ -54,13 +54,13 @@ it('loads and persists Bitcoin network documentation without requiring an ISIN o
       providerOnlyFailure as unknown as typeof fetch, () => now).collect(position);
     expect(partial.discoveryChecked).toBe(true);
     expect(partial.documents.filter(document => document.identity === 'bitcoin-network')).toHaveLength(4);
-    expect(partial.gaps).toEqual(['Anbieterbezogene Crypto-Primärquelle konnte nicht aktuell geladen werden: https://assets.traderepublic.com/assets/files/EN_ExecutionPolicy.pdf']);
+    expect(partial.gaps).toEqual(['Optionale anbieterbezogene Crypto-Primärquelle konnte nicht aktuell geladen werden: https://assets.traderepublic.com/assets/files/EN_ExecutionPolicy.pdf']);
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });
 
 it('does not assign Bitcoin project sources from a name, conflicting symbol, or security ISIN', () => {
   const bitcoin = { isin: 'BTC', symbol: 'BTC', type: 'Crypto' as const };
-  expect(knownResearchSources(bitcoin)).toHaveLength(5);
+  expect(knownResearchSources(bitcoin)).toHaveLength(7);
   expect(knownResearchSources({ ...bitcoin, isin: '', symbol: 'ETH' })).toEqual([]);
   expect(knownResearchSources({ ...bitcoin, symbol: 'BCH' })).toEqual([]);
   expect(knownResearchSources({ ...bitcoin, isin: 'DE000A27Z304' })).toEqual([]);

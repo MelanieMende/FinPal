@@ -17,3 +17,17 @@
   width: 2.5rem;
   padding: 0;
 }
+#ImportRoute .unsupported-records-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  cursor: pointer;
+}
+#ImportRoute .unsupported-records-scroll { max-width: 100%; overflow-x: auto; }
+#ImportRoute .unsupported-records-table { width: 100%; min-width: 58rem; }
+#ImportRoute .unsupported-records-table td { vertical-align: middle; }
+#ImportRoute .unsupported-records-table .bp5-tag { white-space: normal; }
+@media (max-width: 640px) {
+  #ImportRoute .unsupported-records-summary { align-items: flex-start; flex-direction: column; }
+}

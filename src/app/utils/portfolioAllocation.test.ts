@@ -177,6 +177,16 @@ it('rejects stale funding-only after the local recalculation found no economic t
   expect(allocationMismatch(plan, [{ ...decision, action: 'Halten', executionBlocker: null }])).toBeNull();
 });
 
+it('rejects an independent blocker when a strategic Bitcoin hold explicitly says the sale is not blocked', () => {
+  const plan = buildPortfolioAllocation(req([pos(31, 'Crypto', 360)], 100));
+  const hold = { ...rec(31, 'Halten', null), executionBlocker: 'independent' as const,
+    rationale: 'Es gibt keine belegte aktuelle Unverkäuflichkeit. Bei langem Horizont bleibt das Aufwärtspotenzial erhalten.',
+    tradeCheck: { costs: 'Die Gebühren verhindern den Verkauf nicht.', taxes: 'Kein erfundenes Steuerhindernis.',
+      conclusion: 'Strategische Abweichung vom unsicheren Zwölfmonatsmodell.' } };
+  expect(allocationMismatch(plan, [hold])).toContain('Setze executionBlocker null');
+  expect(allocationMismatch(plan, [{ ...hold, executionBlocker: null }])).toBeNull();
+});
+
 it('reserves unchanged buy commitments during a single-asset update and blocks unknown existing fees', () => {
   const request = withFacts(req([pos(1, 'ETF', 1000), pos(2, 'Crypto', 1000)], 10000), {
     1: { percent: 70, minPercent: 65, maxPercent: 75 }, 2: { percent: 10, minPercent: 8, maxPercent: 12 },

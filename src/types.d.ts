@@ -27,7 +27,7 @@ declare global {
       submitTradeRepublicOrder?(id:string,confirmed:boolean):Promise<import('./app/utils/tradeRepublicTrading').TradeReceipt>,
       getTradeRepublicOrders?(accountNumber:string):Promise<{orders:unknown;receipts:import('./app/utils/tradeRepublicTrading').TradeReceipt[]}>,
       getTradeRepublicStatus?():Promise<{runnerAvailable:boolean; hasSavedCredentials:boolean; lastSyncAt?:string}>,
-      syncTradeRepublic?(args:{phone?:string; pin?:string; remember?:boolean}):Promise<{records:import('./app/utils/tradeRepublicSync').TradeRepublicRecord[]; cashRecords:import('./app/utils/tradeRepublicSync').TradeRepublicCashRecord[]; skipped:number; quotes:import('./app/utils/tradeRepublicSync').TradeRepublicQuote[]; quotesFetchedAt?:string; quoteError?:string; lastSyncAt?:string}>,
+      syncTradeRepublic?(args:{phone?:string; pin?:string; remember?:boolean}):Promise<{records:import('./app/utils/tradeRepublicSync').TradeRepublicRecord[]; cashRecords:import('./app/utils/tradeRepublicSync').TradeRepublicCashRecord[]; unsupportedRecords:import('./app/utils/tradeRepublicSync').TradeRepublicUnsupportedRecord[]; skipped:number; quotes:import('./app/utils/tradeRepublicSync').TradeRepublicQuote[]; quotesFetchedAt?:string; quoteError?:string; lastSyncAt?:string}>,
       getTradeRepublicQuotes?():Promise<import('./app/utils/tradeRepublicSync').TradeRepublicQuoteCache>,
       getEuroExchangeRates?():Promise<import('./app/utils/quoteMetadata').EuroExchangeRates>,
       forgetTradeRepublicCredentials?():Promise<boolean>,

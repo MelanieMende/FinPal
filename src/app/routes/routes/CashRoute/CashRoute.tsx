@@ -8,7 +8,7 @@ import { Card, H3, Icon } from '@blueprintjs/core';
 
 export default function CashRoute() {
   const cash = useAppSelector(state => state.cash);
-  const { totalFee, totalAmount, totalDeposits, totalWithdrawals, totalInterest, totalTransactionFlow, totalDividends, totalLiquidity } = useAppSelector(selectCashTotals);
+  const { totalFee, totalAmount, totalDeposits, totalWithdrawals, totalInterest, totalTransactionFlow, totalDividends, totalIpoReservations, totalLiquidity } = useAppSelector(selectCashTotals);
 
   const euroFormatter = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
 
@@ -59,10 +59,18 @@ export default function CashRoute() {
               <Icon icon="layout-grid" className="text-emerald-400" size={14} />
             </div>
             <div>
-              <div className="text-[10px] uppercase font-bold text-emerald-400/70 tracking-widest">Total Liquidity</div>
+              <div className="text-[10px] uppercase font-bold text-emerald-400/70 tracking-widest">Verfügbares Cash</div>
               <div className="text-lg font-bold text-white tracking-tight">{euroFormatter.format(totalLiquidity || 0)}</div>
             </div>
           </div>
+
+          {totalIpoReservations > 0 && <div className="p-3 bg-amber-500/10 rounded-xl border border-amber-500/20 flex items-center gap-3">
+            <div className="p-2 bg-amber-500/20 rounded-lg"><Icon icon="time" className="text-amber-400" size={14} /></div>
+            <div>
+              <div className="text-[10px] uppercase font-bold text-amber-400/70 tracking-widest">Für IPOs reserviert</div>
+              <div className="text-lg font-bold text-white tracking-tight">{euroFormatter.format(totalIpoReservations)}</div>
+            </div>
+          </div>}
         </div>
       </div>
 
@@ -92,10 +100,13 @@ export default function CashRoute() {
                 <TableCell className="p-3 text-right text-white font-black text-base">{euroFormatter.format(totalAmount || 0)}</TableCell>
                 <TableCell className="p-3 text-right text-gray-400">{euroFormatter.format(totalFee || 0)}</TableCell>
                 <TableCell className="p-3 text-left pl-3">
-                  <span className="text-blue-400 text-[10px] bg-blue-400/10 px-2 py-0.5 rounded-full mr-2">In/Out: {euroFormatter.format(totalDeposits - totalWithdrawals || 0)}</span>
-                  <span className="text-amber-400 text-[10px] bg-amber-400/10 px-2 py-0.5 rounded-full mr-2">Interest: {euroFormatter.format(totalInterest || 0)}</span>
-                  <span className="text-emerald-400 text-[10px] bg-emerald-400/10 px-2 py-0.5 rounded-full mr-2">Asset Flow: {euroFormatter.format(totalTransactionFlow || 0)}</span>
-                  <span className="text-purple-400 text-[10px] bg-purple-400/10 px-2 py-0.5 rounded-full">Dividends: {euroFormatter.format(totalDividends || 0)}</span>
+                  <div className="flex flex-wrap gap-1">
+                    <span className="text-blue-400 text-[10px] bg-blue-400/10 px-2 py-0.5 rounded-full text-nowrap">In/Out: {euroFormatter.format(totalDeposits - totalWithdrawals || 0)}</span>
+                    <span className="text-amber-400 text-[10px] bg-amber-400/10 px-2 py-0.5 rounded-full text-nowrap">Interest: {euroFormatter.format(totalInterest || 0)}</span>
+                    <span className="text-emerald-400 text-[10px] bg-emerald-400/10 px-2 py-0.5 rounded-full text-nowrap">Asset Flow: {euroFormatter.format(totalTransactionFlow || 0)}</span>
+                    <span className="text-purple-400 text-[10px] bg-purple-400/10 px-2 py-0.5 rounded-full text-nowrap">Dividends: {euroFormatter.format(totalDividends || 0)}</span>
+                    {totalIpoReservations > 0 && <span className="text-amber-300 text-[10px] bg-amber-400/10 px-2 py-0.5 rounded-full text-nowrap">IPO reserviert: -{euroFormatter.format(totalIpoReservations)}</span>}
+                  </div>
                 </TableCell>
                 <TableCell className="p-3">—</TableCell>
               </tr>

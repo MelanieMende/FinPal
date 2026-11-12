@@ -43,6 +43,7 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 	const payDividendDateFormatted = isNaN(payDividendDate.getTime()) ? '' : payDividendDate.toLocaleDateString("de-DE", options)
 
 	const dividendYieldFormatted = assetsSelector.get_dividend_yield_formatted(props.asset)
+	const isPendingIpo = props.asset.type === 'IPO'
 
 	const bgColor_PriceComparison = price_comparison == "<" ? "bg-teal-600" : (price_comparison == "=" ? "bg-slate-500" : "bg-custom-red")
 	
@@ -70,7 +71,7 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 		>
 			{/* Watch Icon */}
 			<TableCell className="p-3 text-center">
-				<Button 
+				<Button
 					data-testid={"toggleIsWatched_" + props.asset.ID} 
 					minimal 
 					small
@@ -94,7 +95,7 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
       <TableCell className="p-3">
 				<Button 
 					data-testid={"openOverlayButton_" + props.asset.ID} 
-					text={<span className="font-bold text-white group-hover:text-blue-400 transition-colors">{props.asset.name || 'Unnamed Asset'}</span>} 
+					text={<span><span className="font-bold text-white group-hover:text-blue-400 transition-colors">{props.asset.name || 'Unnamed Asset'}</span>{isPendingIpo && <span className="block mt-1 text-[10px] font-bold uppercase tracking-wide text-amber-300">IPO · Zuteilung offen{props.asset.reserved_since ? ` seit ${formatDate(props.asset.reserved_since)}` : ''}</span>}</span>}
 					minimal 
 					fill 
 					alignText={Alignment.LEFT} 
@@ -111,20 +112,20 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 
       {/* Shares */}
 			<TableCell className="p-3 text-right">
-				<div data-testid={"current-shares-" + props.asset.ID} className={`font-semibold ${assetsSelector.get_current_shares_textColor(props.asset) === 'inherit' ? 'text-white' : assetsSelector.get_current_shares_textColor(props.asset)}`}>{shareFormatter.format(props.asset.current_shares || 0)}</div>
+				<div data-testid={"current-shares-" + props.asset.ID} className={`font-semibold ${assetsSelector.get_current_shares_textColor(props.asset) === 'inherit' ? 'text-white' : assetsSelector.get_current_shares_textColor(props.asset)}`}>{isPendingIpo ? 'Zuteilung offen' : shareFormatter.format(props.asset.current_shares || 0)}</div>
 			</TableCell>
 
 			{/* Avg Price Paid */}
 			<TableCell className="p-3 text-right">
 				<div className="text-sm font-medium text-white">
-					{euroFormatter.format(props.asset.avg_price_paid || 0)}
+					{isPendingIpo ? '–' : euroFormatter.format(props.asset.avg_price_paid || 0)}
 				</div>
 			</TableCell>
 
 			{/* Current Price */}
 			<TableCell className="p-3 text-right">
 				<div data-testid={"current-price-" + props.asset.ID} className={`text-sm font-medium uppercase ${currentPriceColor}`}>
-					{props.asset.quote?.valuationCurrency === 'unknown' ? 'Nicht bewertet' : euroFormatter.format(props.asset.price || 0)}
+					{isPendingIpo ? 'Noch kein Kurs' : props.asset.quote?.valuationCurrency === 'unknown' ? 'Nicht bewertet' : euroFormatter.format(props.asset.price || 0)}
 				</div>
 				{props.asset.quote?.error && <div className="text-xs text-amber-300">{props.asset.quote.error}</div>}
 			</TableCell>
@@ -132,11 +133,13 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 			{/* Current Invest */}
 			<TableCell className="p-3 text-right">
 				<div data-testid={"current-invest-" + props.asset.ID} className={`font-semibold ${assetsSelector.get_current_invest_textColor(props.asset) === 'inherit' ? 'text-blue-300' : assetsSelector.get_current_invest_textColor(props.asset)}`}>{euroFormatter.format(current_invest)}</div>
+				{isPendingIpo && <div className="text-[10px] uppercase text-amber-300">Cash reserviert</div>}
 			</TableCell>
 
 			{/* Value */}
 			<TableCell className="p-3 text-right">
-				<div data-testid={"current-value-" + props.asset.ID} className={`font-bold ${assetsSelector.get_current_value_textColor(props.asset) === 'inherit' ? 'text-white' : assetsSelector.get_current_value_textColor(props.asset)}`}>{props.asset.quote?.valuationCurrency === 'unknown' ? 'Nicht bewertet' : euroFormatter.format(assetsSelector.get_current_value(props.asset) || 0)}</div>
+				<div data-testid={"current-value-" + props.asset.ID} className={`font-bold ${assetsSelector.get_current_value_textColor(props.asset) === 'inherit' ? 'text-white' : assetsSelector.get_current_value_textColor(props.asset)}`}>{isPendingIpo ? euroFormatter.format(assetsSelector.get_current_value(props.asset) || 0) : props.asset.quote?.valuationCurrency === 'unknown' ? 'Nicht bewertet' : euroFormatter.format(assetsSelector.get_current_value(props.asset) || 0)}</div>
+				{isPendingIpo && <div className="text-[10px] uppercase text-amber-300">Reservierter Anspruch</div>}
 				{(props.asset.current_shares || 0) !== 0 && props.asset.quote?.valuationCurrency !== 'unknown' && (
 					<div data-testid={"profit-loss-" + props.asset.ID} className={`mt-1 inline-flex rounded border px-2 py-0.5 text-s font-bold ${current_profit_loss >= 0 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-red-500/15 text-red-400 border-red-500/30'}`}>
 						{current_profit_loss >= 0 ? '+' : ''}{euroFormatter.format(current_profit_loss || 0)} / {current_profit_loss_percentage >= 0 ? '+' : ''}{(current_profit_loss_percentage || 0).toFixed(2)}%

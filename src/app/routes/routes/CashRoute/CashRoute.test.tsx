@@ -44,6 +44,17 @@ describe('CashRoute component', () => {
     }
     expectTotal('Total Deposits', '100,00 €')
     expectTotal('Total Interest', '10,00 €')
-    expectTotal('Total Liquidity', '53,00 €')
+    expectTotal('Verfügbares Cash', '53,00 €')
+  })
+
+  it('shows IPO reservations separately and subtracts them from available cash', async () => {
+    render(<CashRoute />, { preloadedState: {
+      cash: [{ ID: 1, date: '2026-11-01', type: 'Deposit', amount: 1000 }],
+      assets: [{ ID: 7, type: 'IPO', name: 'Anthropic', symbol: 'ANTH', isin: 'US03703U1079', reserved_amount: 201 } as Asset],
+      transactions: [], dividends: [],
+    } })
+    await act(async () => {})
+    expect(within(screen.getByText('Verfügbares Cash').parentElement!).getByText('799,00 €')).toBeInTheDocument()
+    expect(within(screen.getByText('Für IPOs reserviert').parentElement!).getByText('201,00 €')).toBeInTheDocument()
   })
 })

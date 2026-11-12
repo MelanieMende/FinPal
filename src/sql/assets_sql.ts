@@ -8,6 +8,8 @@ CREATE TABLE IF NOT EXISTS assets (
   "exDividendDate" TEXT,
   "is_watched" INTEGER DEFAULT 1,
   "type" TEXT DEFAULT 'Stock',
+  "reserved_amount" REAL DEFAULT 0,
+  "reserved_since" TEXT,
   CONSTRAINT assets_pk PRIMARY KEY("ID" AUTOINCREMENT)
 );
 

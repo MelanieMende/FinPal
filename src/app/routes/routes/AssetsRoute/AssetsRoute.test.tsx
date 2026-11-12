@@ -68,6 +68,22 @@ describe('AssetsRoute component', () => {
 		expect(screen.getByTestId('asset-total-wealth')).toHaveTextContent(/-25,00/);
 	});
 
+	it('keeps an IPO reservation in wealth while removing it from available cash', async () => {
+		const ipo = { ID: 12, type: 'IPO', name: 'Anthropic', symbol: 'ANTH', isin: 'US03703U1079',
+			current_shares: 0, reserved_amount: 201, reserved_since: '2026-11-11' } as Asset;
+		await act(async () => {
+			render(<AssetsRoute />, { preloadedState: {
+				assets: [ipo], transactions: [], dividends: [],
+				cash: [{ ID: 1, date: '2026-11-01', type: 'Deposit', amount: 1000 }],
+			} });
+		});
+		expect(screen.getByTestId('asset-total-wealth')).toHaveTextContent(/1\.000,00/);
+		expect(screen.getByTestId('asset-cash-value')).toHaveTextContent(/799,00/);
+		expect(screen.getByTestId('asset-type-value-IPO')).toHaveTextContent(/201,00/);
+		expect(screen.getByText(/IPO · Zuteilung offen/)).toBeInTheDocument();
+		expect(screen.getByTestId('current-shares-12')).toHaveTextContent('Zuteilung offen');
+	});
+
 	it('shows a saved market price time and updates it when a new quote arrives', async () => {
 		localStorage.setItem(MARKET_PRICE_UPDATED_AT_KEY, '2026-10-01T10:30:00.000Z');
 		await act(async () => {
@@ -92,6 +108,7 @@ describe('AssetsRoute component', () => {
 			{ ID: 9, type: 'Stock', current_shares: 0, price: 1000 },
 			{ ID: 10, type: 'ETF', current_shares: 10 },
 			{ ID: 32, type: 'Fund', current_shares: 0.1, price: 109 },
+			{ ID: 33, type: 'IPO', current_shares: 0, reserved_amount: 201 },
 		].map(asset => ({ ...asset, name: `Asset ${asset.ID}`, symbol: `A${asset.ID}`, isin: `ISIN${asset.ID}` })) as Asset[];
 		await act(async () => {
 			render(<AssetsRoute />, { preloadedState: { assets } });
@@ -102,6 +119,7 @@ describe('AssetsRoute component', () => {
 			['Fund', 'Funds', 10.9, 'briefcase'],
 			['Crypto', 'Crypto', 100, null], ['Commodity', 'Commodities', 30, 'cube'],
 			['RealEstate', 'Real Estate', 1000, 'home'], ['CashEquivalent', 'Cash Equivalents', 5, 'dollar'],
+			['IPO', 'IPO-Zeichnungen', 201, 'time'],
 		];
 		for (const [type, label, value, icon] of expected) {
 			const cardElement = screen.getByTestId(`asset-type-value-${type}`);

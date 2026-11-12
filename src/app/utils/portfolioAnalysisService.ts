@@ -757,8 +757,13 @@ export class PortfolioAnalysisService {
       // does not read their contents. Only sourced semantic research can satisfy the
       // model's company/product-risk gate.
       const missingSecurities = this.deterministicResearchProvider ? [] : securities.filter((_security, index) => !cachedByAsset[index]);
-      const batches = Array.from({ length: Math.ceil(missingSecurities.length / RESEARCH_BATCH_SIZE) }, (_, index) =>
+      const heldResearchBatches = Array.from({ length: Math.ceil(missingSecurities.length / RESEARCH_BATCH_SIZE) }, (_, index) =>
         missingSecurities.slice(index * RESEARCH_BATCH_SIZE, (index + 1) * RESEARCH_BATCH_SIZE));
+      // Deterministic discovery is intentionally limited to held assets. A portfolio analysis still
+      // needs one sourced web-research pass for genuinely new ideas; an empty securities batch keeps
+      // private holdings out of search terms while heldSecurities is used only for deduplication.
+      const batches = this.deterministicResearchProvider && request.targetAssetId === undefined
+        ? [securities.slice(0, 0), ...heldResearchBatches] : heldResearchBatches;
       if (batches.length) {
         researchTotal = batches.length + cachedResearch.length;
         researchCompleted = cachedResearch.length;

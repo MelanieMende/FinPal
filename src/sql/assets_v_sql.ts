@@ -16,6 +16,8 @@ CREATE VIEW IF NOT EXISTS assets_v AS
 	    assets.isin as isin,
 	    assets.kgv,
 			assets.is_watched,
+	    assets.reserved_amount,
+	    assets.reserved_since,
 	    assets.exDividendDate,
 	    AVG(transactions.price_per_share) AS avg_price_paid,
 	    SUM(CASE WHEN transactions.type = 'Buy' THEN transactions.amount * transactions.price_per_share ELSE 0 END) AS invested,

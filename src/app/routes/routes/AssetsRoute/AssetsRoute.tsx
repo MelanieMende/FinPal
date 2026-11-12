@@ -21,6 +21,7 @@ const assetTypes: { type: Asset['type']; label: string; icon?: IconName; symbol?
 	{ type: 'Commodity', label: 'Commodities', icon: 'cube' },
 	{ type: 'RealEstate', label: 'Real Estate', icon: 'home' },
 	{ type: 'CashEquivalent', label: 'Cash Equivalents', icon: 'dollar' },
+	{ type: 'IPO', label: 'IPO-Zeichnungen', icon: 'time' },
 ];
 const euroFormatter = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
 export const ASSET_TYPE_FILTER_KEY = 'finpal.assets.selectedType.v1';
@@ -132,7 +133,7 @@ export default function AnalysisRoute() {
 							<Icon icon="bank-account" className="text-indigo-500" size={16} />
 						</div>
 						<div>
-							<div className="text-[10px] uppercase font-bold tracking-wider text-gray-400">Cash</div>
+						<div className="text-[10px] uppercase font-bold tracking-wider text-gray-400">Verfügbares Cash</div>
 							<div className={`text-lg font-bold ${totalLiquidity === 0 ? 'text-slate-500' : 'text-white'}`}>{euroFormatter.format(totalLiquidity)}</div>
 						</div>
 					</Card>

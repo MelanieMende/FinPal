@@ -27,7 +27,9 @@ export const validateAndSave = createAsyncThunk(
           symbol='${state.assetCreation.symbolInput.replace('\'', '\'\'')}',
           isin=${isinSql},
           kgv=${kgvSql},
-          type='${state.assetCreation.typeInput}'
+          type='${state.assetCreation.typeInput}',
+          reserved_amount=${state.assetCreation.typeInput === 'IPO' ? 'reserved_amount' : '0'},
+          reserved_since=${state.assetCreation.typeInput === 'IPO' ? 'reserved_since' : 'NULL'}
         WHERE ID = ${state.assetCreation.ID}
       `;
     } else {
@@ -73,13 +75,13 @@ export function isValid(assetCreation:AssetCreation) {
 
 export const prefillFromISIN = createAsyncThunk(
   'assetCreation/prefillFromISIN',
-  async (props: { isin: string, fallbackName: string }, thunkAPI) => {
+  async (props: { isin: string, fallbackName: string, type?: Asset['type'] }, thunkAPI) => {
     // Reset form first
     thunkAPI.dispatch(setISINInput(props.isin))
     thunkAPI.dispatch(setNameInput(props.fallbackName))
     thunkAPI.dispatch(setSymbolInput(''))
     thunkAPI.dispatch(setKGVInput(''))
-    thunkAPI.dispatch(setTypeInput('Stock'))
+    thunkAPI.dispatch(setTypeInput(props.type ?? 'Stock'))
 
     // Prepare ID
     let sql  = 'SELECT MAX(ID) as ID FROM assets'

@@ -18,6 +18,7 @@ describe('parsePytrJsonLines', () => {
     const result = parsePytrJsonLines(input);
 
     expect(result.skipped).toBe(0);
+    expect(result.unsupportedRecords).toEqual([]);
     expect(result.cashRecords).toEqual([]);
     expect(result.records).toEqual([
       expect.objectContaining({ type: 'Buy', totalAmount: 101, shares: 2, pricePerShare: 50, fee: 1 }),
@@ -32,7 +33,15 @@ describe('parsePytrJsonLines', () => {
       JSON.stringify({ Date: '2026-08-20', Type: 'Buy', Value: -10, Shares: 1 }),
     ].join('\n');
 
-    expect(parsePytrJsonLines(input)).toEqual({ records: [], cashRecords: [{ date: '2026-08-20', type: 'Deposit', amount: 100 }], skipped: 2 });
+    expect(parsePytrJsonLines(input)).toEqual({
+      records: [],
+      cashRecords: [{ date: '2026-08-20', type: 'Deposit', amount: 100 }],
+      unsupportedRecords: [
+        { reason: 'Quelldaten konnten nicht gelesen werden.', sourcePreview: '{broken' },
+        { date: '2026-08-20', type: 'Buy', amount: -10, reason: 'ISIN fehlt oder ist ungültig.' },
+      ],
+      skipped: 2,
+    });
   });
 
   it('recognizes credits, interest and tax refunds without an ISIN', () => {
@@ -50,8 +59,35 @@ describe('parsePytrJsonLines', () => {
         { date: '2026-10-01', type: 'Interest', amount: 0.03 },
         { date: '2025-10-30', type: 'Tax Refund', amount: 13.68 },
       ],
+      unsupportedRecords: [
+        { date: '2026-03-09', type: 'Taxes', reason: 'Buchungstyp wird noch nicht unterstützt.' },
+      ],
       skipped: 1,
     });
+  });
+
+  it('retains review details and a concrete reason for unsupported bookings', () => {
+    const result = parsePytrJsonLines(JSON.stringify({
+      Date: '2026-11-01', Type: 'Card Cashback', Value: 12.34, Note: 'Saveback', ISIN: 'DE0000000001',
+    }));
+
+    expect(result.unsupportedRecords).toEqual([{
+      date: '2026-11-01', type: 'Card Cashback', description: 'Saveback', isin: 'DE0000000001', amount: 12.34,
+      reason: 'Buchungstyp wird noch nicht unterstützt.',
+    }]);
+    expect(result.skipped).toBe(1);
+  });
+
+  it('recognizes a paid IPO subscription without allocated shares', () => {
+    const result = parsePytrJsonLines(JSON.stringify({
+      Date: '2026-11-11', Type: 'Buy', Value: -201, Note: 'Anthropic', ISIN: 'US03703U1079', Shares: 0,
+    }));
+
+    expect(result.records).toEqual([expect.objectContaining({
+      type: 'IPO', assetName: 'Anthropic', shares: 0, pricePerShare: 0, totalAmount: 201,
+    })]);
+    expect(result.unsupportedRecords).toEqual([]);
+    expect(result.skipped).toBe(0);
   });
 
   it('reconstructs the gross Tesla sell price from net value, fees and taxes', () => {

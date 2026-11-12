@@ -10,6 +10,7 @@ export const riskChecksByType = {
   Commodity: ['identity', 'structure', 'custody', 'valuation', 'liquidity', 'currency', 'regulatory'],
   RealEstate: ['identity', 'valuation', 'financing', 'liquidity', 'concentration', 'regulatory'],
   CashEquivalent: ['identity', 'credit', 'terms', 'liquidity', 'currency', 'regulatory'],
+  IPO: ['identity', 'terms', 'liquidity', 'regulatory'],
 } as const satisfies Record<AnalysisPosition['type'], readonly string[]>;
 
 const insuranceChecks = ['loss-making', 'underwriting', 'solvency', 'financing', 'going-concern', 'regulatory'] as const;

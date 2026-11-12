@@ -62,9 +62,9 @@ export const updateCurrentInvest = createAsyncThunk(
 			const filtered = state.transactions.filter((trans:Transaction) => trans.asset_ID == asset.ID)
 			const sorted = filtered.slice().sort((a:Transaction, b:Transaction) => sortBy(a, b, 'date', 'desc'))
 
-			let current_invest = 0
+			let current_invest = asset.type === 'IPO' ? -Math.max(0, asset.reserved_amount || 0) : 0
 			
-			if(sorted[0])
+			if(asset.type !== 'IPO' && sorted[0])
 				current_invest = sorted[0].invest_cumulated
 				
 			thunkAPI.dispatch(setCurrentInvest({asset, current_invest}))

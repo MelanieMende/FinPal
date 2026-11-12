@@ -118,6 +118,9 @@ it('allows a recommendation with reviewed structural BTC risks but still blocks 
       { flag: 'regulatory' as const, finding: 'unknown' as const, reason: 'Die konkrete deutsche Produktzulässigkeit bleibt offen.', documentIndex: null, quote: '' },
     ] };
   expect(riskForModel(reviewed)).toMatchObject({ decisionReadiness: 'reviewed-uncertainty', materialRisks: [] });
+  const optionalProviderUnavailable = { ...reviewed, gaps: [...reviewed.gaps,
+    'Optionale anbieterbezogene Crypto-Primärquelle konnte nicht aktuell geladen werden: https://assets.traderepublic.com/assets/files/EN_ExecutionPolicy.pdf'] };
+  expect(riskForModel(optionalProviderUnavailable)).toMatchObject({ decisionReadiness: 'reviewed-uncertainty', materialRisks: [] });
   const reworded = { ...reviewed, checks: reviewed.checks.map(check => check.flag === 'protocol'
     ? { ...check, reason: 'Die undatierten Protokollgrundlagen belegen strukturelle Konsens- und Forkrisiken.' }
     : check.flag === 'custody' ? { ...check, reason: 'Brokerverwahrung bei Trade Republic ist im reviewContext nutzerbestätigt. Damit ist das strukturelle Dienstleister- und Gegenparteirisiko relevant.' }

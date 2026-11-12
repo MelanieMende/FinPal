@@ -7,6 +7,7 @@ export function isImportedRecord(
     dividends: Dividend[],
 ) {
     if (!assetID) return false;
+    if (record.type === 'IPO') return false;
 
     if (record.type === 'Dividend') {
         return dividends.some(dividend =>

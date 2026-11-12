@@ -1,5 +1,5 @@
 export function normalizePendingRecord<T extends {
-    type: 'Buy' | 'Sell' | 'Dividend';
+    type: 'Buy' | 'Sell' | 'Dividend' | 'IPO';
     shares: number;
     pricePerShare: number;
     totalAmount: number;

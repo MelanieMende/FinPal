@@ -1,6 +1,6 @@
 export interface ParsedTransaction {
   date: string;
-  type: 'Buy' | 'Sell' | 'Dividend';
+  type: 'Buy' | 'Sell' | 'Dividend' | 'IPO';
   assetName: string;
   isin: string;
   shares: number;

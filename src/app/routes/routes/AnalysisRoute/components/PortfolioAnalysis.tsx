@@ -9,7 +9,7 @@ import { assessQuoteFreshness, isMarketClosedInfo } from '../../../../utils/quot
 import { isDescriptiveRiskInfo } from '../../../../utils/analysisMessages';
 import { isEltif, assessNavFreshness, type NavEvidence } from '../../../../utils/eltifValuation';
 import type { AnalysisPosition, AssetRecommendation, AssetResearchStatus } from '../../../../utils/portfolioAnalysis';
-import { selectTotalLiquidity } from '../../../../store/cash/cash.selectors';
+import { selectCashTotals } from '../../../../store/cash/cash.selectors';
 import { selectRecommendationExecutions } from '../../../../utils/recommendationExecution';
 import { checkPortfolioFunding } from '../../../../utils/portfolioFunding';
 import TradeDecisionReview from './TradeDecisionReview';
@@ -80,7 +80,14 @@ const isCostBlockedHold = (recommendation: AssetRecommendation) => {
   if (recommendation.action !== 'Halten' || recommendation.executionBlocker !== 'independent') return false;
   const explanation = [recommendation.rationale, recommendation.tradeCheck?.costs, recommendation.tradeCheck?.conclusion,
     ...(recommendation.warnings ?? [])].filter(Boolean).join(' ');
-  return /Gebühr.{0,80}(?:Wert übersteigt|höher als (?:der )?Wert)|Nettoerlös.{0,20}(?:−|-) ?\d|kostenpflichtigen Kleinverkauf vermeiden|Verkauf.{0,60}(?:unwirtschaftlich|aus Kostengründen)|Kosten.{0,60}(?:Verkauf|Trade).{0,40}(?:blockiert|vermeiden|nicht sinnvoll)/i.test(explanation);
+  return /Gebühr.{0,80}(?:Wert übersteigt|höher als (?:der )?Wert|Restwert aufzehrt)|(?:Netto|Vollverkaufs?)erlös.{0,30}(?:−|-) ?\d|kostenpflichtigen Kleinverkauf vermeiden|Verkauf(?:s)?kosten.{0,80}(?:Restwert|Wert).{0,40}(?:übersteig|aufzehr)|Verkauf.{0,60}(?:unwirtschaftlich|aus Kostengründen)|Kosten.{0,60}(?:Verkauf|Trade).{0,40}(?:blockiert|vermeiden|nicht sinnvoll)/i.test(explanation);
+};
+const isStrategicUnblockedHold = (recommendation: AssetRecommendation) => {
+  if (recommendation.action !== 'Halten' || recommendation.executionBlocker !== 'independent') return false;
+  const explanation = [recommendation.rationale, recommendation.tradeCheck?.costs, recommendation.tradeCheck?.taxes,
+    recommendation.tradeCheck?.conclusion, ...(recommendation.warnings ?? [])].filter(Boolean).join(' ');
+  return /keine belegte aktuelle Unverkäuflichkeit|(?:Gebühr|Kosten).{0,80}(?:verhindern|blockieren).{0,30}(?:Verkauf|Trade).{0,20}nicht/i.test(explanation)
+    && /strategisch|lang(?:em|er) Horizont|Aufwärtspotenzial|Timingvorteil|unsicher(?:en|es) (?:Zwölfmonats)?modell/i.test(explanation);
 };
 const compareRecommendations = (a: Pick<AssetRecommendation, 'action' | 'executionBlocker'>, b: Pick<AssetRecommendation, 'action' | 'executionBlocker'>) =>
   Number(isBlockedRecommendation(b)) - Number(isBlockedRecommendation(a)) || actionOrder[a.action] - actionOrder[b.action];
@@ -104,6 +111,8 @@ function tradeStatus(recommendation: AssetRecommendation) {
     ? { title: `Nicht blockiert – ${recommendation.action} empfohlen`, detail: 'Der Trade ist freigegeben. Betrag, Kosten und Orderart vor der Ausführung noch einmal prüfen.', color: 'border-emerald-400/30 bg-emerald-500/10 text-emerald-200', icon: 'tick-circle' as const }
     : isCostBlockedHold(recommendation)
       ? { title: 'Halten – Verkauf aus Kostengründen blockiert', detail: 'Halten ist die aktuelle Entscheidung. Ein Verkauf ist wirtschaftlich nicht sinnvoll, weil seine Gebühren den Positionswert beziehungsweise Erlös aufzehren.', color: 'border-indigo-400/30 bg-indigo-500/10 text-indigo-200', icon: 'pause' as const }
+    : isStrategicUnblockedHold(recommendation)
+      ? { title: 'Halten – strategische Entscheidung', detail: 'Die Analyse entscheidet sich gegen den Modelltrade, nennt aber keinen konkreten Ausführungsblocker. Risiken und offene Punkte bleiben zu beachten.', color: 'border-indigo-400/30 bg-indigo-500/10 text-indigo-200', icon: 'pause' as const }
     : recommendation.executionBlocker === 'independent'
       ? { title: 'Blockiert – eigener Prüfgrund', detail: 'Dieser Trade bleibt unabhängig von der Finanzierung gesperrt. Der konkrete Grund steht in der Empfehlung.', color: 'border-red-400/30 bg-red-500/10 text-red-200', icon: 'ban-circle' as const }
       : recommendation.executionBlocker === 'funding-only'
@@ -117,7 +126,7 @@ function tradeStatus(recommendation: AssetRecommendation) {
 
 export function AssetRecommendationStatus({ recommendation, assetName }: { recommendation: AssetRecommendation; assetName: string }) {
   const status = tradeStatus(recommendation);
-  const blocked = isBlockedRecommendation(recommendation) && !isCostBlockedHold(recommendation);
+  const blocked = isBlockedRecommendation(recommendation) && !isCostBlockedHold(recommendation) && !isStrategicUnblockedHold(recommendation);
   const label = blocked ? 'Blockiert' : recommendation.action;
   return <Tooltip hoverOpenDelay={0} content={<span className="block max-w-xs text-xs"><strong>Handelsstatus: {status.title}</strong><br />{status.detail}</span>}>
     <span tabIndex={0} aria-label={`${label} – Handelsstatus für ${assetName}`} className={`cursor-help text-xs font-bold outline-none focus:underline ${blocked ? 'text-red-400' : recommendation.action === 'Kaufen' ? 'text-emerald-400' : recommendation.action === 'Verkaufen' ? 'text-red-400' : 'text-indigo-300'}`}>
@@ -278,7 +287,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
   const open = standalone || analysisState.open;
   const setOpen = (value: boolean) => dispatch(setAnalysisOpen(value));
   const [savedProfile, setProfile] = useState<ProfileForm>(readProfile);
-  const totalLiquidity = useAppSelector(selectTotalLiquidity);
+  const { totalLiquidity, totalIpoReservations } = useAppSelector(selectCashTotals);
   const profile = { ...savedProfile, buyBudget: String(totalLiquidity) };
   const investmentProfile = (): InvestmentProfile => ({ goal: profile.goal, risk: profile.risk,
     horizonYears: Number(profile.horizonYears), buyBudget: totalLiquidity,
@@ -540,7 +549,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
           <label className="text-xs text-gray-300">Anlagedauer (Jahre)<input type="number" min="0.1" max="100" step="0.1" className={`${inputClass} mt-1`} value={profile.horizonYears} disabled={busy} onChange={e => updateProfile('horizonYears', e.target.value)} /></label>
           <div className="text-xs text-gray-300">
             <label>Zusätzliches Kaufbudget (EUR)<input type="text" inputMode="decimal" className={`${inputClass} mt-1`} value={totalLiquidity.toFixed(2).replace('.', ',')} readOnly aria-describedby="buy-budget-source" /></label>
-            <p id="buy-budget-source" className="mt-1 mb-0 text-gray-400">Entspricht automatisch deiner Total Liquidity.</p>
+            <p id="buy-budget-source" className="mt-1 mb-0 text-gray-400">Entspricht automatisch deinem verfügbaren Cash{totalIpoReservations > 0 ? ` nach Abzug von ${euros(totalIpoReservations)} für offene IPO-Zeichnungen` : ''}.</p>
             {profile.decisionDetails && <p className={`mt-1 mb-0 ${protectedCash > totalLiquidity ? 'text-amber-200' : 'text-sky-200'}`}>Geschützte Liquidität: {Number.isFinite(protectedCash) ? euros(protectedCash) : 'Angaben prüfen'} · Für Käufe und Gebühren aus vorhandenem Cash verfügbar: {Number.isFinite(protectedCash) ? euros(Math.max(0, totalLiquidity - protectedCash)) : 'Ungeklärt'}.{protectedCash > totalLiquidity ? ' Der Schutzbetrag übersteigt die aktuelle Liquidität.' : ''}</p>}
           </div>
         </div>

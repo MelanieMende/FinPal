@@ -421,7 +421,7 @@ export class PrimaryRiskResearch {
       } catch {
         if (signal?.aborted) throw signal.reason;
         if (stored?.identity === identity) documents.push(stored);
-        if (tradeRepublicPolicy) gaps.push(`Anbieterbezogene Crypto-Primärquelle konnte nicht aktuell geladen werden: ${source.url}`);
+        if (tradeRepublicPolicy) gaps.push(`Optionale anbieterbezogene Crypto-Primärquelle konnte nicht aktuell geladen werden: ${source.url}`);
         else {
           networkSourceFailures++;
           gaps.push(`Bitcoin-Projektdokumentation konnte nicht aktuell geladen werden: ${source.url}`);

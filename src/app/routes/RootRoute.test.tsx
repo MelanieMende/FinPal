@@ -38,6 +38,16 @@ describe('RootRoute component', () => {
     }
   });
 
+  it('adds IPO reservation columns only when they are missing', async () => {
+    const sendToDB = jest.fn((sql: string) => sql === 'PRAGMA table_info(assets)'
+      ? [{ name: 'ID' }, { name: 'type' }] : sql.startsWith('SELECT MAX(ID)') ? [{ ID: 1 }] : []);
+    window.API = { ...API, sendToDB, getConfig: jest.fn(() => ({ selectedTab: 'assetsTab', theme: 'bp5-dark', database: 'test.sqlite3' })) };
+    await act(async () => { render(<RootRoute />); });
+    await waitFor(() => expect(sendToDB).toHaveBeenCalledWith('ALTER TABLE assets ADD COLUMN reserved_amount REAL DEFAULT 0'));
+    expect(sendToDB).toHaveBeenCalledWith('ALTER TABLE assets ADD COLUMN reserved_since TEXT');
+    expect(sendToDB).not.toHaveBeenCalledWith("ALTER TABLE assets ADD COLUMN type TEXT DEFAULT 'Stock'");
+  });
+
 	it('renders', async() => {
     const {getAllById} = render(<RootRoute />) 
 		await waitFor(() => {

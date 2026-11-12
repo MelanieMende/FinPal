@@ -147,9 +147,18 @@ export default function RootRoute() {
 
 	async function setupAssetsView() {
 		await window.API.sendToDB(bondDetailsSql);
-		// Soft Migration: Add type column if it doesn't exist
-		// Note: window.API.sendToDB might return a string error instead of throwing
-		await window.API.sendToDB("ALTER TABLE assets ADD COLUMN type TEXT DEFAULT 'Stock'");
+		const columns = await window.API.sendToDB('PRAGMA table_info(assets)');
+		if (Array.isArray(columns)) {
+			if (!columns.some((column: { name: string }) => column.name === 'type')) {
+				await window.API.sendToDB("ALTER TABLE assets ADD COLUMN type TEXT DEFAULT 'Stock'");
+			}
+			if (!columns.some((column: { name: string }) => column.name === 'reserved_amount')) {
+				await window.API.sendToDB('ALTER TABLE assets ADD COLUMN reserved_amount REAL DEFAULT 0');
+			}
+			if (!columns.some((column: { name: string }) => column.name === 'reserved_since')) {
+				await window.API.sendToDB('ALTER TABLE assets ADD COLUMN reserved_since TEXT');
+			}
+		}
 
 		// Recreate view to include the new column
 		// We drop it first to ensure the new schema is applied

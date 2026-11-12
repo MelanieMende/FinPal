@@ -182,6 +182,37 @@ it('reads parenthesized losses as negative figures in filing evidence', () => {
   expect(validateRiskAssessment(arbor, filing, { ...response, metrics: [{ ...response.metrics[0], value: 420586 }] }).metrics).toEqual([]);
 });
 
+it('recovers SpaceX financial and regulatory evidence from the exact cached SEC quarter', () => {
+  const spacex = { ...position, id: 34, name: 'SpaceX', isin: 'US84615Q1031', symbol: 'SPCX' };
+  const filing: RiskDocumentSet = { documents: [{ ...document, period: '2026-09-30', source: { title: 'SEC 10-Q 2026-09-30',
+    url: 'https://www.sec.gov/Archives/edgar/data/1181412/000162828026066880/spcx-20260930.htm' }, excerpt: [
+    'Net income (loss) $ 4,404 Â  $ ( 1,054 ) Â  $ ( 413 ) Â  $ ( 2,590 )',
+    'Cash and cash equivalents 51,294 Â  24,747 Â  Marketable securities 38,561',
+    'Debt and finance leases, current (related party amounts disclosed) 2,698 Â  928',
+    'Legal Proceedings In the normal course of its business, the Company is involved in various arbitrations, class actions, commercial litigation, investigations and other legal, regulatory or governmental actions, including significant matters that could have a material impact on our results of operations.',
+  ].join('\n') }], discoveryChecked: true, gaps: [] };
+  const reviewed = validateRiskAssessment(spacex, filing, { checks: [], metrics: [] });
+  expect(reviewed.checks).toEqual(expect.arrayContaining([
+    expect.objectContaining({ flag: 'loss-making', finding: 'risk', documentIndex: 0 }),
+    expect.objectContaining({ flag: 'financing', finding: 'no-risk', documentIndex: 0 }),
+    expect.objectContaining({ flag: 'regulatory', finding: 'risk', documentIndex: 0 }),
+    expect.objectContaining({ flag: 'low-margin', finding: 'unknown', reason: expect.stringContaining('SEC-10-Q geprüft') }),
+    expect.objectContaining({ flag: 'going-concern', finding: 'unknown', reason: expect.stringContaining('SEC-10-Q geprüft') }),
+  ]));
+  expect(reviewed.metrics).toEqual(expect.arrayContaining([
+    expect.objectContaining({ name: 'net-income', value: -413, unit: 'Mio. USD' }),
+    expect.objectContaining({ name: 'cash', value: 51294, unit: 'Mio. USD' }),
+    expect.objectContaining({ name: 'debt-maturities', value: 2698, unit: 'Mio. USD' }),
+  ]));
+  expect(reviewed.gaps).toEqual(expect.arrayContaining([
+    expect.stringMatching(/^low-margin:/), expect.stringMatching(/^going-concern:/), expect.stringMatching(/^operating-margin:/),
+  ]));
+  expect(reviewed.gaps).not.toEqual(expect.arrayContaining([
+    expect.stringMatching(/^loss-making:|^financing:|^regulatory:|^net-income:|^cash:|^debt-maturities:/),
+  ]));
+  expect(riskForModel(reviewed).materialRisks).toEqual(expect.arrayContaining(['loss-making', 'regulatory']));
+});
+
 it('persists a completed assessment and invalidates it when the primary document changes', () => {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-risk-'));
   try {

@@ -15,7 +15,7 @@ const UV_WINDOWS_X64_SHA256 = 'be8d78c992312212e5cc05e9f9de3fa996db73b7c86a186df
 export interface TradeRepublicCredentials { phone: string; pin: string; }
 export interface TradeRepublicRecord {
   date: string;
-  type: 'Buy' | 'Sell' | 'Dividend';
+  type: 'Buy' | 'Sell' | 'Dividend' | 'IPO';
   assetName: string;
   isin: string;
   shares: number;
@@ -29,6 +29,23 @@ export interface TradeRepublicCashRecord {
   date: string;
   type: 'Deposit' | 'Interest' | 'Tax Refund';
   amount: number;
+}
+
+export interface TradeRepublicUnsupportedRecord {
+  date?: string;
+  type?: string;
+  description?: string;
+  isin?: string;
+  amount?: number;
+  reason: string;
+  sourcePreview?: string;
+}
+
+export interface TradeRepublicParseResult {
+  records: TradeRepublicRecord[];
+  cashRecords: TradeRepublicCashRecord[];
+  unsupportedRecords: TradeRepublicUnsupportedRecord[];
+  skipped: number;
 }
 
 export interface TradeRepublicQuote {
@@ -79,29 +96,42 @@ export function normalizeLegacyTradeRepublicQuote(quote: TradeRepublicQuote): Tr
     : { ...quote, price, averageBuyIn };
 }
 
-export function parsePytrJsonLines(contents: string): { records: TradeRepublicRecord[]; cashRecords: TradeRepublicCashRecord[]; skipped: number } {
+export function parsePytrJsonLines(contents: string): TradeRepublicParseResult {
   const records: TradeRepublicRecord[] = [];
   const cashRecords: TradeRepublicCashRecord[] = [];
-  let skipped = 0;
+  const unsupportedRecords: TradeRepublicUnsupportedRecord[] = [];
   for (const line of contents.split(/\r?\n/).filter(Boolean)) {
     let row: PytrRow;
-    try { row = JSON.parse(line) as PytrRow; } catch { skipped += 1; continue; }
+    try { row = JSON.parse(line) as PytrRow; } catch {
+      unsupportedRecords.push({ reason: 'Quelldaten konnten nicht gelesen werden.', sourcePreview: line.slice(0, 240) });
+      continue;
+    }
     const rawType = stringValue(row.Type ?? row.type).toLowerCase();
+    const displayedType = stringValue(row.Type ?? row.type);
     const date = stringValue(row.Date ?? row.date).slice(0, 10);
     const signedValue = numberValue(row.Value ?? row.value);
+    const description = stringValue(row.Note ?? row.note);
+    const isin = stringValue(row.ISIN ?? row.isin).toUpperCase();
+    const unsupported = (reason: string) => unsupportedRecords.push({
+      ...(date ? { date } : {}),
+      ...(displayedType ? { type: displayedType } : {}),
+      ...(description ? { description } : {}),
+      ...(isin ? { isin } : {}),
+      ...(signedValue !== 0 ? { amount: signedValue } : {}),
+      reason,
+    });
     const cashType: TradeRepublicCashRecord['type'] | null = rawType === 'deposit' ? 'Deposit'
       : rawType === 'interest' ? 'Interest'
       : rawType === 'tax refund' ? 'Tax Refund' : null;
     if (cashType) {
       if (/^\d{4}-\d{2}-\d{2}$/.test(date) && signedValue > 0) {
         cashRecords.push({ date, type: cashType, amount: signedValue });
-      } else skipped += 1;
+      } else unsupported(!/^\d{4}-\d{2}-\d{2}$/.test(date) ? 'Datum fehlt oder ist ungültig.' : 'Cash-Betrag fehlt oder ist nicht positiv.');
       continue;
     }
     let type: TradeRepublicRecord['type'] | null = rawType.includes('buy') ? 'Buy'
       : rawType.includes('sell') ? 'Sell'
       : (rawType.includes('dividend') || rawType.includes('distribution')) ? 'Dividend' : null;
-    const isin = stringValue(row.ISIN ?? row.isin).toUpperCase();
     const shares = Math.abs(numberValue(row.Shares ?? row.shares));
     const fee = Math.abs(numberValue(row.Fees ?? row.fees));
     const tax = Math.abs(numberValue(row.Taxes ?? row.taxes));
@@ -109,21 +139,28 @@ export function parsePytrJsonLines(contents: string): { records: TradeRepublicRe
 	if ((type === 'Buy' || type === 'Sell') && signedValue !== 0) {
 		type = signedValue < 0 ? 'Buy' : 'Sell';
 	}
+    if (type === 'Buy' && totalAmount > 0 && shares === 0) type = 'IPO';
     if (!type || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(isin)
-      || !totalAmount || (type !== 'Dividend' && !shares)) {
-      skipped += 1; continue;
+      || !totalAmount || (!['Dividend', 'IPO'].includes(type) && !shares)) {
+      const reason = !type ? 'Buchungstyp wird noch nicht unterstützt.'
+        : !/^\d{4}-\d{2}-\d{2}$/.test(date) ? 'Datum fehlt oder ist ungültig.'
+        : !/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(isin) ? 'ISIN fehlt oder ist ungültig.'
+        : !totalAmount ? 'Betrag fehlt oder ist 0.'
+        : 'Stückzahl fehlt oder ist 0.';
+      unsupported(reason);
+      continue;
     }
-    const pricePerShare = type === 'Dividend'
+    const pricePerShare = type === 'Dividend' || type === 'IPO'
       ? 0
       : type === 'Sell'
         ? Math.max(0, (totalAmount + fee + tax) / shares)
         : Math.max(0, (totalAmount - fee - tax) / shares);
     records.push({
-      date, type, assetName: stringValue(row.Note ?? row.note) || isin, isin, shares, fee, tax, totalAmount,
+      date, type, assetName: description || isin, isin, shares, fee, tax, totalAmount,
       pricePerShare,
     });
   }
-  return { records, cashRecords, skipped };
+  return { records, cashRecords, unsupportedRecords, skipped: unsupportedRecords.length };
 }
 
 export function parsePytrPortfolioCsv(contents: string): TradeRepublicQuote[] {
@@ -211,7 +248,7 @@ export class TradeRepublicSync {
       return { quotes: [] };
     }
   }
-  async sync(credentials: TradeRepublicCredentials | null, remember: boolean): Promise<{ records: TradeRepublicRecord[]; cashRecords: TradeRepublicCashRecord[]; skipped: number; quotes: TradeRepublicQuote[]; quotesFetchedAt?: string; quoteError?: string; lastSyncAt: string }> {
+  async sync(credentials: TradeRepublicCredentials | null, remember: boolean): Promise<TradeRepublicParseResult & { quotes: TradeRepublicQuote[]; quotesFetchedAt?: string; quoteError?: string; lastSyncAt: string }> {
     const login = credentials?.phone && credentials?.pin ? credentials : this.readCredentials();
     if (!login) throw new Error('Bitte Telefonnummer und PIN eingeben.');
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-tr-'));

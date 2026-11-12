@@ -58,6 +58,7 @@ describe('ImportRoute asset mapping', () => {
             syncTradeRepublic: jest.fn().mockResolvedValue({
                 records: [pendingRecord],
                 cashRecords: [],
+                unsupportedRecords: [],
                 skipped: 0,
                 quotes: [{
                     name: 'Unbekanntes Asset', isin: pendingRecord.isin, quantity: 1,
@@ -109,7 +110,7 @@ describe('ImportRoute asset mapping', () => {
                 records: [], cashRecords: [
                     { date: '2025-04-23', type: 'Deposit', amount: 100 },
                     { date: '2025-10-30', type: 'Tax Refund', amount: 13.68 },
-                ], skipped: 0, quotes: [], lastSyncAt: '2026-10-01T10:30:00.000Z',
+                ], unsupportedRecords: [], skipped: 0, quotes: [], lastSyncAt: '2026-10-01T10:30:00.000Z',
             }),
         };
         render(<ImportRoute />);
@@ -119,5 +120,72 @@ describe('ImportRoute asset mapping', () => {
         await waitFor(() => expect(screen.getByText(/1 Cash-Umsätze automatisch importiert, 1 bereits vorhanden/)).toBeInTheDocument());
         expect(sendToDB).toHaveBeenCalledWith(expect.stringContaining("'Trade Republic: Steuererstattung'"));
         expect(sendToDB).not.toHaveBeenCalledWith(expect.stringContaining("'2025-04-23', 'Deposit', 100.00"));
+    });
+
+    it('shows unsupported bookings for review and keeps them across reopening the tab', async () => {
+        const unsupportedRecord = {
+            date: '2026-11-01', type: 'Card Cashback', description: 'Saveback', amount: 12.34,
+            reason: 'Buchungstyp wird noch nicht unterstützt.',
+        };
+        window.API = {
+            sendToDB: jest.fn(),
+            getTradeRepublicStatus: jest.fn().mockResolvedValue({ runnerAvailable: true, hasSavedCredentials: true }),
+            syncTradeRepublic: jest.fn().mockResolvedValue({
+                records: [], cashRecords: [], unsupportedRecords: [unsupportedRecord], skipped: 1, quotes: [],
+                lastSyncAt: '2026-11-12T10:30:00.000Z',
+            }),
+        };
+        const view = render(<ImportRoute />);
+
+        fireEvent.click(screen.getByRole('button', { name: /Jetzt synchronisieren/i }));
+        await waitFor(() => expect(screen.getByText(/nicht unterstützte Buchung prüfen/)).toBeInTheDocument());
+        fireEvent.click(screen.getByText(/nicht unterstützte Buchung prüfen/));
+        expect(screen.getByText('Card Cashback')).toBeInTheDocument();
+        expect(screen.getByText('Saveback')).toBeInTheDocument();
+        expect(screen.getByText('Buchungstyp wird noch nicht unterstützt.')).toBeInTheDocument();
+
+        view.unmount();
+        render(<ImportRoute />);
+        expect(screen.getByText(/nicht unterstützte Buchung prüfen/)).toBeInTheDocument();
+    });
+
+    it('records an IPO subscription as reserved cash without inventing shares', async () => {
+        const sendToDB = jest.fn().mockResolvedValue([]);
+        window.API = { sendToDB, getTradeRepublicStatus: jest.fn().mockResolvedValue({ runnerAvailable: true, hasSavedCredentials: true }) };
+        render(<ImportRoute />, { preloadedState: {
+            assets: [{ ID: 7, type: 'IPO', name: 'Anthropic', symbol: 'ANTH', isin: 'US03703U1079' } as Asset],
+            import: { pendingRecords: [{
+                date: '2026-11-11', type: 'IPO', assetName: 'Anthropic', isin: 'US03703U1079', shares: 0,
+                pricePerShare: 0, fee: 0, tax: 0, totalAmount: 201,
+            }], isLoading: false, error: null },
+            transactions: [], dividends: [],
+        } });
+
+        await waitFor(() => expect(screen.getAllByRole('button', { name: 'Importieren' }).length).toBeGreaterThan(0));
+        const importButtons = screen.getAllByRole('button', { name: 'Importieren' });
+        fireEvent.click(importButtons[importButtons.length - 1]);
+
+        await waitFor(() => expect(sendToDB).toHaveBeenCalledWith(expect.stringContaining("UPDATE assets SET type = 'IPO', reserved_amount = 201")));
+        expect(sendToDB).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO transactions'));
+    });
+
+    it('turns an IPO reservation into a stock when allocated shares arrive', async () => {
+        const sendToDB = jest.fn().mockResolvedValue([]);
+        window.API = { sendToDB, getTradeRepublicStatus: jest.fn().mockResolvedValue({ runnerAvailable: true, hasSavedCredentials: true }) };
+        render(<ImportRoute />, { preloadedState: {
+            assets: [{ ID: 7, type: 'IPO', name: 'Anthropic', symbol: 'ANTH', isin: 'US03703U1079', reserved_amount: 201 } as Asset],
+            import: { pendingRecords: [{
+                date: '2026-12-01', type: 'Buy', assetName: 'Anthropic', isin: 'US03703U1079', shares: 3,
+                pricePerShare: 67, fee: 0, tax: 0, totalAmount: 201,
+            }], isLoading: false, error: null },
+            transactions: [], dividends: [],
+        } });
+
+        await waitFor(() => expect(screen.getAllByRole('button', { name: 'Importieren' }).length).toBeGreaterThan(0));
+        const importButtons = screen.getAllByRole('button', { name: 'Importieren' });
+        fireEvent.click(importButtons[importButtons.length - 1]);
+
+        await waitFor(() => expect(sendToDB).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO transactions')));
+        expect(sendToDB).toHaveBeenCalledWith(expect.stringContaining("UPDATE assets SET type = 'Stock', reserved_amount = 0"));
     });
 });

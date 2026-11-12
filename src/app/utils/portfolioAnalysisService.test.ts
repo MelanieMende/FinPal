@@ -88,10 +88,12 @@ it('builds and persists a local quantitative analysis without an OpenAI request'
   expect(service.getLastResult()?.report.mode).toBe('local');
 });
 
-it('reuses deterministic discovery without spending AI quota on web research', async () => {
+it('reuses deterministic held-asset discovery and runs one cached sourced search for new ideas', async () => {
   const onlineProvider = jest.fn().mockResolvedValue({ assetId: 1, query: 'Asset', fetchedAt: Date.now(), searchStatus: 'completed', newsCount: 1,
     text: 'Deterministische Suche für Asset 1', sources: [{ title: 'Aktuelle Meldung', url: 'https://example.com/report' }] });
-  const mockedFetch = jest.fn().mockImplementation(async () => structuredResponse(report));
+  const noIdeas = { ...report, newAssetRecommendations: [] as typeof report.newAssetRecommendations };
+  const mockedFetch = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify(research)))
+    .mockImplementation(async () => structuredResponse(noIdeas));
   const service = new PortfolioAnalysisService(dir, mockedFetch, undefined,
     jest.fn().mockResolvedValue(robustReturnForecastFixture('1', { targetPrice: 60 })), undefined, onlineProvider);
   service.saveKey('sk-testOnlyNotARealKey');
@@ -100,12 +102,14 @@ it('reuses deterministic discovery without spending AI quota on web research', a
   expect(onlineProvider).toHaveBeenCalledTimes(1);
   expect(mockedFetch).toHaveBeenCalled();
   const bodies = mockedFetch.mock.calls.map(([, options]) => JSON.parse(options.body));
-  expect(bodies.every(body => !body.tools)).toBe(true);
-  expect(JSON.parse(bodies[0].input[0].content).research).toContain('Deterministische Suche');
+  expect(bodies.filter(body => body.tools)).toHaveLength(1);
+  expect(JSON.parse(bodies[0].input[0].content)).toMatchObject({ securities: [], heldSecurities: [expect.objectContaining({ id: 1 })] });
+  expect(bodies[0].instructions).toContain('Recherchiere zusätzlich bis zu fünf konkrete');
+  expect(JSON.parse(bodies[1].input[0].content).research).toContain('Deterministische Suche');
   expect(service.getResearchStatus(request.positions)[0].fetchedAt).not.toBeNull();
   await service.analyze(request);
   expect(onlineProvider).toHaveBeenCalledTimes(1);
-  expect(mockedFetch.mock.calls.map(([, options]) => JSON.parse(options.body)).every(body => !body.tools)).toBe(true);
+  expect(mockedFetch.mock.calls.map(([, options]) => JSON.parse(options.body)).filter(body => body.tools)).toHaveLength(1);
 });
 
 it('reuses a persisted primary-document risk review without another AI risk request', async () => {
@@ -122,6 +126,7 @@ it('reuses a persisted primary-document risk review without another AI risk requ
     if (url.includes('/Archives/')) return new Response('<html>Net income and cash and cash equivalents were reported.</html>',
       { headers: { 'content-type': 'text/html' } });
     const body = JSON.parse(String(options?.body));
+    if (body.tools) return new Response(JSON.stringify(research));
     return structuredResponse(body.text?.format?.name === 'primary_risk_assessment' ? riskAnswer : report);
   });
   const first = new PortfolioAnalysisService(dir, mockedFetch as unknown as typeof fetch, undefined, undefined, undefined, onlineProvider);

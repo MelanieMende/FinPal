@@ -167,6 +167,50 @@ function qualifyNovoFinancing(position: AnalysisPosition, check: RiskCheck, docu
   return { ...check, finding: 'no-risk', documentIndex: annualIndex, quote,
     reason: `Stand ${current!.period}: ${cash} Mio. DKK Zahlungsmittel und ${borrowings.value} Mio. DKK kurzfristige Kreditverbindlichkeiten. Im Jahresbericht 2025 beurteilt Novo Nordisk seine Finanzmittel für mindestens zwölf Monate als ausreichend. Dies belegt keinen akuten Finanzierungsengpass, garantiert aber keine künftige Refinanzierung.` };
 }
+const isSpaceX = (position: Pick<AnalysisPosition, 'isin' | 'type'>) => position.type === 'Stock'
+  && position.isin.trim().toUpperCase() === 'US84615Q1031';
+const spaceXQuarter = (document: RiskDocument) => document.period === '2026-09-30'
+  && /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/1181412\/\d{18}\/spcx-20260930\.htm$/i.test(document.source.url);
+function qualifySpaceXRisks(position: AnalysisPosition, check: RiskCheck, documents: RiskDocument[]): RiskCheck {
+  if (!isSpaceX(position) || check.finding !== 'unknown') return check;
+  const documentIndex = documents.findIndex(spaceXQuarter);
+  const document = documents[documentIndex];
+  if (!document) return check;
+  if (check.flag === 'loss-making') {
+    const quote = /Net income \(loss\)[\s\u00a0\u00c2]+\$[\s\u00a0\u00c2]*4,404[\s\u00a0\u00c2]+\$[\s\u00a0\u00c2]*\([\s\u00a0\u00c2]*1,054[\s\u00a0\u00c2]*\)[\s\u00a0\u00c2]+\$[\s\u00a0\u00c2]*\([\s\u00a0\u00c2]*413[\s\u00a0\u00c2]*\)[\s\u00a0\u00c2]+\$[\s\u00a0\u00c2]*\([\s\u00a0\u00c2]*2,590[\s\u00a0\u00c2]*\)/i.exec(document.excerpt)?.[0] ?? '';
+    if (validQuote(quote, document)) return { ...check, finding: 'risk', documentIndex, quote,
+      reason: 'Im SEC-10-Q zum 30.09.2026 weist SpaceX für die ersten neun Monate 2026 einen Nettoverlust von 413 Mio. USD aus; dem steht ein Quartalsgewinn von 4.404 Mio. USD gegenüber. Der Periodenverlust ist belegt, aber keine Aussage über einen sicheren künftigen Verlust.' };
+  }
+  if (check.flag === 'financing') {
+    const quote = /Cash and cash equivalents[\s\u00a0\u00c2]+51,294[\s\u00a0\u00c2]+24,747[\s\u00a0\u00c2]+Marketable securities[\s\u00a0\u00c2]+38,561/i.exec(document.excerpt)?.[0] ?? '';
+    if (validQuote(quote, document)) return { ...check, finding: 'no-risk', documentIndex, quote,
+      reason: 'Zum 30.09.2026 weist der SEC-10-Q 51.294 Mio. USD Zahlungsmittel und 38.561 Mio. USD marktgängige Wertpapiere aus. Das belegt keinen akuten Finanzierungsmangel am Stichtag; hohe Investitionen, neue Schulden und künftige Refinanzierung bleiben gesonderte Risiken.' };
+  }
+  if (check.flag === 'regulatory') {
+    const quote = /Legal Proceedings\s+In the normal course of its business[\s\S]{0,260}?could have a material impact on our results of operations/i.exec(document.excerpt)?.[0] ?? '';
+    if (validQuote(quote, document)) return { ...check, finding: 'risk', documentIndex, quote,
+      reason: 'Der SEC-10-Q nennt Schiedsverfahren, Sammelklagen, Handelsstreitigkeiten sowie regulatorische und behördliche Verfahren, darunter bedeutende Sachverhalte mit potenziell wesentlicher Ergebniswirkung. Das belegt eine konkrete rechtlich-regulatorische Risikoexposition, nicht den sicheren Eintritt eines wesentlichen Schadens.' };
+  }
+  if (check.flag === 'low-margin') return { ...check,
+    reason: 'Verfügbaren SEC-10-Q geprüft: Eine belastbare periodisierte operative Marge ist im extrahierten Beleg noch nicht enthalten.' };
+  if (check.flag === 'going-concern') return { ...check,
+    reason: 'Verfügbaren SEC-10-Q geprüft: Eine ausdrückliche unternehmensbezogene Beurteilung wesentlicher Fortführungsunsicherheiten ist im extrahierten Beleg nicht enthalten.' };
+  return check;
+}
+function spaceXMetrics(position: AnalysisPosition, documents: RiskDocument[]): RiskMetric[] {
+  if (!isSpaceX(position)) return [];
+  const documentIndex = documents.findIndex(spaceXQuarter);
+  const document = documents[documentIndex];
+  if (!document) return [];
+  const result: RiskMetric[] = [];
+  const income = /Net income \(loss\)[\s\u00a0\u00c2]+\$[\s\u00a0\u00c2]*4,404[\s\u00a0\u00c2]+\$[\s\u00a0\u00c2]*\([\s\u00a0\u00c2]*1,054[\s\u00a0\u00c2]*\)[\s\u00a0\u00c2]+\$[\s\u00a0\u00c2]*\([\s\u00a0\u00c2]*413[\s\u00a0\u00c2]*\)[\s\u00a0\u00c2]+\$[\s\u00a0\u00c2]*\([\s\u00a0\u00c2]*2,590[\s\u00a0\u00c2]*\)/i.exec(document.excerpt)?.[0] ?? '';
+  if (validQuote(income, document)) result.push({ name: 'net-income', value: -413, unit: 'Mio. USD', period: 'Neun Monate bis 2026-09-30', documentIndex, quote: income });
+  const cash = /Cash and cash equivalents[\s\u00a0\u00c2]+51,294[\s\u00a0\u00c2]+24,747/i.exec(document.excerpt)?.[0] ?? '';
+  if (validQuote(cash, document)) result.push({ name: 'cash', value: 51294, unit: 'Mio. USD', period: '2026-09-30', documentIndex, quote: cash });
+  const debt = /Debt and finance leases, current[\s\S]{0,150}?2,698[\s\u00a0\u00c2]+928/i.exec(document.excerpt)?.[0] ?? '';
+  if (validQuote(debt, document)) result.push({ name: 'debt-maturities', value: 2698, unit: 'Mio. USD', period: 'Kurzfristig zum 2026-09-30', documentIndex, quote: debt });
+  return result;
+}
 function qualifyQdveProductRisks(position: AnalysisPosition, check: RiskCheck, documents: RiskDocument[]): RiskCheck {
   if (position.type !== 'ETF' || position.isin.trim().toUpperCase() !== 'IE00B3WJKG14') return check;
   const kidIndex = documents.findIndex(document => document.period
@@ -343,6 +387,7 @@ function qualifyCheck(position: AnalysisPosition, check: RiskCheck, documents: R
   qualified = qualifyMcdRegulatoryRisk(position, qualified, documents);
   qualified = qualifyMcdContinuity(position, qualified, documents);
   qualified = qualifyNovoFinancing(position, qualified, documents);
+  qualified = qualifySpaceXRisks(position, qualified, documents);
   qualified = qualifyQdveProductRisks(position, qualified, documents);
   qualified = qualifyVgwdProductRisks(position, qualified, documents);
   qualified = qualifyApolloEltifProductRisks(position, qualified, documents);
@@ -457,6 +502,7 @@ export function riskFingerprint(position: AnalysisPosition, set: RiskDocumentSet
   return createHash('sha256').update(JSON.stringify({ policy: RISK_POLICY, isin: position.isin.trim().toUpperCase(),
     type: position.type, ...(position.isin.trim().toUpperCase() === 'US5801351017' ? { mcdReviewVersion: 2 } : {}),
     ...(position.isin.trim().toUpperCase() === 'DE0008430026' ? { munichReviewVersion: 3 } : {}),
+    ...(position.isin.trim().toUpperCase() === 'US84615Q1031' ? { spaceXReviewVersion: 1 } : {}),
     ...(position.type === 'Crypto' && set.reviewContext ? { cryptoReviewContext: {
       custody: set.reviewContext.custody && { kind: set.reviewContext.custody.kind,
         provider: set.reviewContext.custody.provider, source: set.reviewContext.custody.source },
@@ -464,6 +510,7 @@ export function riskFingerprint(position: AnalysisPosition, set: RiskDocumentSet
       taxResidencies: set.reviewContext.taxResidencies?.map(({ country, validFrom }) => ({ country, validFrom }))
         .sort((a, b) => `${a.country}:${a.validFrom}`.localeCompare(`${b.country}:${b.validFrom}`)),
     } } : {}),
+    ...(isBitcoinResearchPosition(position) ? { bitcoinReviewVersion: 2 } : {}),
     ...(position.type === 'Bond' && position.isin.trim().toUpperCase() === 'US912810SQ22'
       ? { treasuryContextVersion: 1, nominalCurrency: position.bondHolding?.source === 'user-confirmed' ? position.bondHolding.currency : null } : {}),
     documents: set.documents.map(doc => [doc.source.url, doc.hash,
@@ -505,6 +552,9 @@ export function validateRiskAssessment(position: AnalysisPosition, set: RiskDocu
     return [{ name: item.name.trim().slice(0, 100), value: item.value, unit: item.unit.trim().slice(0, 120),
       period: item.period.trim().slice(0, 80), documentIndex: item.documentIndex, quote: item.quote.trim() }];
   }).slice(0, 20) : [];
+  for (const metric of spaceXMetrics(position, set.documents)) {
+    if (!metrics.some(item => item.name === metric.name)) metrics.push(metric);
+  }
   if (!metrics.some(metric => metric.name === 'cash')) {
     const balanceSheetCash = munichReCashFromBalanceSheet(position, set.documents);
     if (balanceSheetCash) metrics.push(balanceSheetCash);
@@ -607,7 +657,8 @@ export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessme
       || (['protocol', 'custody', 'liquidity'].includes(check.flag) && reviewedBitcoinStructuralRisk(check))
       || (check.flag === 'concentration' && check.finding === 'unknown')
       || (check.flag === 'regulatory' && (check.finding === 'unknown' || check.finding === 'no-risk')))
-    && record.gaps.length > 0 && record.gaps.every(gap => /^(?:concentration|regulatory):/.test(gap))
+    && record.gaps.length > 0 && record.gaps.every(gap => /^(?:concentration|regulatory):/.test(gap)
+      || /^Optionale anbieterbezogene Crypto-Primärquelle konnte nicht aktuell geladen werden: https:\/\/assets\.traderepublic\.com\/assets\/files\/EN_ExecutionPolicy\.pdf$/.test(gap))
     && ['https://bitcoin.org/en/how-it-works', 'https://developer.bitcoin.org/devguide/block_chain.html',
       'https://bitcoin.org/en/secure-your-wallet', 'https://bitcoin.org/en/you-need-to-know']
       .every(url => record.sources.some(source => source.url === url));

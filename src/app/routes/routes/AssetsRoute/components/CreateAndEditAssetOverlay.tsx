@@ -67,7 +67,8 @@ export default function AssetOverlay() {
 									{ label: 'Krypto', value: 'Crypto' },
 									{ label: 'Rohstoff', value: 'Commodity' },
 									{ label: 'Immobilie', value: 'RealEstate' },
-									{ label: 'Geldmarkt', value: 'CashEquivalent' }
+									{ label: 'Geldmarkt', value: 'CashEquivalent' },
+									{ label: 'IPO', value: 'IPO' }
 								]}
 								fill
 								className="glass-segmented-control"

@@ -25,12 +25,14 @@ describe('CashRoute component', () => {
     expect(totals).toHaveTextContent('7')   // sum fee
   })
 
-  it('offers interest as a separate type and adds it to liquidity without counting it as a deposit', async () => {
+  it('keeps credits and tax refunds separate from deposits while including them in liquidity', async () => {
     const { store } = render(<CashRoute />, { preloadedState: {
       cash: [
         { ID: 1, date: '2026-10-01', type: 'Deposit', amount: 100, fee: 5 },
         { ID: 2, date: '2026-10-01', type: 'Withdrawal', amount: 50, fee: 2 },
         { ID: 3, date: '2026-10-01', type: 'Interest', amount: 10 },
+        { ID: 4, date: '2026-10-01', type: 'Credit', amount: 20, comment: 'Trade Republic: Gutschrift' },
+        { ID: 5, date: '2026-10-01', type: 'Tax Refund', amount: 15, comment: 'Trade Republic: Steuererstattung' },
       ],
       transactions: [], dividends: [],
     } })
@@ -39,12 +41,14 @@ describe('CashRoute component', () => {
     fireEvent.change(typeSelect, { target: { value: 'Interest' } })
     expect(store.getState().cashTransactionCreation.typeInput).toBe('Interest')
     expect(screen.getByTestId('cash-item-3')).toHaveTextContent('Interest')
+    expect(screen.getByTestId('cash-item-4')).toHaveTextContent('Credit')
+    expect(screen.getByTestId('cash-item-5')).toHaveTextContent('Tax Refund')
     const expectTotal = (label: string, amount: string) => {
       expect(within(screen.getByText(label).parentElement!).getByText(amount)).toBeInTheDocument()
     }
     expectTotal('Total Deposits', '100,00 €')
     expectTotal('Total Interest', '10,00 €')
-    expectTotal('Verfügbares Cash', '53,00 €')
+    expectTotal('Verfügbares Cash', '88,00 €')
   })
 
   it('shows IPO reservations separately and subtracts them from available cash', async () => {

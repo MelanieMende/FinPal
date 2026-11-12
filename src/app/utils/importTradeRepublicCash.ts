@@ -20,8 +20,9 @@ export async function importTradeRepublicCash(
   if (!Array.isArray(result)) throw new Error(`Cash-Umsätze konnten nicht geladen werden: ${String(result)}`);
   const existingCounts = new Map<string, number>();
   for (const row of result as ExistingCash[]) {
-    if (row.type !== 'Deposit' && row.type !== 'Interest') continue;
-    const key = cashKey(row.date.slice(0, 10), Number(row.amount), row.type);
+    if (row.type !== 'Deposit' && row.type !== 'Interest' && row.type !== 'Credit' && row.type !== 'Tax Refund') continue;
+    const type = row.type === 'Deposit' ? 'Credit' : row.type;
+    const key = cashKey(row.date.slice(0, 10), Number(row.amount), type);
     existingCounts.set(key, (existingCounts.get(key) ?? 0) + 1);
   }
 
@@ -31,7 +32,7 @@ export async function importTradeRepublicCash(
   for (const record of records) {
     const cents = Math.round(record.amount * 100);
     if (!/^\d{4}-\d{2}-\d{2}$/.test(record.date) || cents <= 0) continue;
-    const type = record.type === 'Interest' ? 'Interest' : 'Deposit';
+    const type = record.type === 'Deposit' ? 'Credit' : record.type;
     const key = cashKey(record.date, record.amount, type);
     const occurrence = (seenCounts.get(key) ?? 0) + 1;
     seenCounts.set(key, occurrence);

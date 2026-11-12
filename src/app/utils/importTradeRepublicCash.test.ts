@@ -6,7 +6,7 @@ describe('importTradeRepublicCash', () => {
     const cash = [{ date: '2023-01-30', type: 'Deposit', amount: 200 }];
     const sendToDB = jest.fn(async (sql: string) => {
       if (sql.startsWith('SELECT')) return cash.slice();
-      const match = sql.match(/VALUES \('([^']+)', '(Deposit|Interest)', ([\d.]+), 0, '([^']+)'\)/);
+      const match = sql.match(/VALUES \('([^']+)', '(Credit|Interest|Tax Refund)', ([\d.]+), 0, '([^']+)'\)/);
       if (!match) throw new Error(`Unexpected SQL: ${sql}`);
       cash.push({ date: match[1], type: match[2], amount: Number(match[3]) });
       return [];
@@ -20,6 +20,8 @@ describe('importTradeRepublicCash', () => {
 
     expect(await importTradeRepublicCash(records, sendToDB)).toEqual({ imported: 3, existing: 1 });
     expect(cash).toContainEqual({ date: '2026-10-01', type: 'Interest', amount: 0.03 });
+    expect(cash).toContainEqual({ date: '2026-08-17', type: 'Credit', amount: 0.87 });
+    expect(cash).toContainEqual({ date: '2025-10-30', type: 'Tax Refund', amount: 13.68 });
     expect(sendToDB).toHaveBeenCalledWith(expect.stringContaining("'Trade Republic: Steuererstattung'"));
     expect(await importTradeRepublicCash(records, sendToDB)).toEqual({ imported: 0, existing: 4 });
   });

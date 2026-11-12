@@ -8,7 +8,7 @@ import { Card, H3, Icon } from '@blueprintjs/core';
 
 export default function CashRoute() {
   const cash = useAppSelector(state => state.cash);
-  const { totalFee, totalAmount, totalDeposits, totalWithdrawals, totalInterest, totalTransactionFlow, totalDividends, totalIpoReservations, totalLiquidity } = useAppSelector(selectCashTotals);
+  const { totalFee, totalAmount, totalDeposits, totalWithdrawals, totalInterest, totalCredits, totalTaxRefunds, totalTransactionFlow, totalDividends, totalIpoReservations, totalLiquidity } = useAppSelector(selectCashTotals);
 
   const euroFormatter = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
 
@@ -101,7 +101,9 @@ export default function CashRoute() {
                 <TableCell className="p-3 text-right text-gray-400">{euroFormatter.format(totalFee || 0)}</TableCell>
                 <TableCell className="p-3 text-left pl-3">
                   <div className="flex flex-wrap gap-1">
-                    <span className="text-blue-400 text-[10px] bg-blue-400/10 px-2 py-0.5 rounded-full text-nowrap">In/Out: {euroFormatter.format(totalDeposits - totalWithdrawals || 0)}</span>
+                    <span className="text-blue-400 text-[10px] bg-blue-400/10 px-2 py-0.5 rounded-full text-nowrap">In/Out: {euroFormatter.format(totalDeposits + totalCredits + totalTaxRefunds - totalWithdrawals || 0)}</span>
+                    <span className="text-emerald-400 text-[10px] bg-emerald-400/10 px-2 py-0.5 rounded-full text-nowrap">Credits: {euroFormatter.format(totalCredits || 0)}</span>
+                    <span className="text-purple-400 text-[10px] bg-purple-400/10 px-2 py-0.5 rounded-full text-nowrap">Tax refunds: {euroFormatter.format(totalTaxRefunds || 0)}</span>
                     <span className="text-amber-400 text-[10px] bg-amber-400/10 px-2 py-0.5 rounded-full text-nowrap">Interest: {euroFormatter.format(totalInterest || 0)}</span>
                     <span className="text-emerald-400 text-[10px] bg-emerald-400/10 px-2 py-0.5 rounded-full text-nowrap">Asset Flow: {euroFormatter.format(totalTransactionFlow || 0)}</span>
                     <span className="text-purple-400 text-[10px] bg-purple-400/10 px-2 py-0.5 rounded-full text-nowrap">Dividends: {euroFormatter.format(totalDividends || 0)}</span>

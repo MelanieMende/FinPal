@@ -11,8 +11,17 @@ interface Props {
 export default function CashListItem({ i, cash }: Props) {
   const dispatch = useAppDispatch();
   const euroFormatter = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
-  const isIncome = cash.type !== 'Withdrawal';
+  const isWithdrawal = cash.type === 'Withdrawal';
   const isInterest = cash.type === 'Interest';
+  const typeClasses = isInterest
+    ? 'bg-amber-500/10 text-amber-400 border-amber-500/20'
+    : cash.type === 'Tax Refund'
+      ? 'bg-purple-500/10 text-purple-400 border-purple-500/20'
+      : isWithdrawal
+        ? 'bg-red-500/10 text-red-400 border-red-500/20'
+        : cash.type === 'Credit'
+          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
+          : 'bg-blue-500/10 text-blue-400 border-blue-500/20';
 
   function deleteEntry() {
     if (window.confirm("Are you sure you want to delete this cash entry?")) {
@@ -29,8 +38,8 @@ export default function CashListItem({ i, cash }: Props) {
       <TableCell className="p-3 text-gray-500 font-mono text-xs">{i}</TableCell>
       <TableCell className="p-3 text-sm text-gray-300">{cash.date}</TableCell>
       <TableCell className="p-3">
-        <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase inline-flex items-center gap-1 border ${isInterest ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : isIncome ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 'bg-red-500/10 text-red-400 border-red-500/20'}`}>
-          <Icon icon={isInterest ? "percentage" : isIncome ? "plus" : "minus"} size={8} />
+        <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase inline-flex items-center gap-1 border ${typeClasses}`}>
+          <Icon icon={isInterest ? "percentage" : isWithdrawal ? "minus" : "plus"} size={8} />
           {cash.type}
         </div>
       </TableCell>

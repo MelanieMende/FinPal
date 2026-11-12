@@ -12,8 +12,20 @@ export default function CashCreation() {
   const feeInput = useAppSelector(state => state.cashTransactionCreation.feeInput);
   const commentInput = useAppSelector(state => state.cashTransactionCreation.commentInput);
 
-  const isIncome = typeInput !== 'Withdrawal';
+  const isWithdrawal = typeInput === 'Withdrawal';
   const isInterest = typeInput === 'Interest';
+  const isTaxRefund = typeInput === 'Tax Refund';
+  const isCredit = typeInput === 'Credit';
+  const typeClasses = isInterest
+    ? 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+    : isTaxRefund
+      ? 'bg-purple-500/20 text-purple-400 border-purple-500/30'
+      : isWithdrawal
+        ? 'bg-red-500/20 text-red-400 border-red-500/30'
+        : isCredit
+          ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+          : 'bg-blue-500/20 text-blue-400 border-blue-500/30';
+  const typeIconClass = isInterest ? 'text-amber-400' : isTaxRefund ? 'text-purple-400' : isWithdrawal ? 'text-red-400' : isCredit ? 'text-emerald-400' : 'text-blue-400';
 
   return (
     <tr data-testid="cash-creation-row" className="bg-blue-500/5 border-b border-blue-500/10">
@@ -39,16 +51,18 @@ export default function CashCreation() {
             value={typeInput} 
             onChange={e => dispatch(cashTransactionCreationReducer.setTypeInput(e.target.value))} 
             onBlur={() => dispatch(cashTransactionCreationReducer.handleTypeInputGotTouched())} 
-            className={`text-[10px] font-bold uppercase rounded-full px-3 py-1 border cursor-pointer appearance-none outline-none transition-all w-full ${isInterest ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' : isIncome ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : 'bg-red-500/20 text-red-400 border-red-500/30'}`}
+            className={`text-[10px] font-bold uppercase rounded-full px-3 py-1 border cursor-pointer appearance-none outline-none transition-all w-full ${typeClasses}`}
           >
             <option value="Deposit">Deposit</option>
+            <option value="Credit">Credit</option>
             <option value="Withdrawal">Withdrawal</option>
             <option value="Interest">Interest</option>
+            <option value="Tax Refund">Tax Refund</option>
           </select>
           <Icon 
-            icon={isInterest ? "percentage" : isIncome ? "plus" : "minus"} 
+            icon={isInterest ? "percentage" : isWithdrawal ? "minus" : "plus"}
             size={8} 
-            className={`absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none ${isInterest ? 'text-amber-400' : isIncome ? 'text-emerald-400' : 'text-red-400'}`} 
+            className={`absolute right-2 top-1/2 -translate-y-1/2 pointer-events-none ${typeIconClass}`}
           />
         </div>
       </TableCell>

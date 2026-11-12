@@ -298,6 +298,9 @@ table.bp5-dark {
 	border: 1px solid var(--border-subtle) !important;
 	border-radius: 10px !important;
 	padding: 4px !important;
+	display: grid !important;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 4px;
 }
 
 .glass-segmented-control .bp5-button {
@@ -305,6 +308,10 @@ table.bp5-dark {
 	border: none !important;
 	color: #94a3b8 !important;
 	border-radius: 6px !important;
+	min-width: 0;
+	white-space: normal;
+	overflow-wrap: anywhere;
+	line-height: 1.2;
 }
 
 .glass-segmented-control .bp5-button.bp5-active {

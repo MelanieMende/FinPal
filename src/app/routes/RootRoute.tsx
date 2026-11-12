@@ -90,6 +90,24 @@ export default function RootRoute() {
 
 	async function setupAssets() {
 		await sendToDB(assets_sql)
+		const columns = await sendToDB('PRAGMA table_info(assets)')
+		if (!Array.isArray(columns)) throw new Error(`Asset-Schema konnte nicht geladen werden: ${String(columns)}`)
+		const propertyColumns: [string, string][] = [
+			['property_location', 'TEXT'],
+			['property_market_value', 'REAL'],
+			['property_ownership_share', 'REAL DEFAULT 100'],
+			['property_mortgage_balance', 'REAL DEFAULT 0'],
+			['property_purchase_date', 'TEXT'],
+			['property_purchase_price', 'REAL'],
+			['property_monthly_rent', 'REAL DEFAULT 0'],
+			['property_monthly_costs', 'REAL DEFAULT 0'],
+		]
+		for (const [name, type] of propertyColumns) {
+			if (!columns.some((column: { name: string }) => column.name === name)) {
+				const result = await window.API.sendToDB(`ALTER TABLE assets ADD COLUMN ${name} ${type}`)
+				if (typeof result === 'string' && result.includes('SQLITE_ERROR')) throw new Error(result)
+			}
+		}
 		let sql  = 'SELECT MAX(ID) as ID FROM assets'
 		var result = await sendToDB(sql)
 		var newID = 0

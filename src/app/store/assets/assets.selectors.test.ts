@@ -55,6 +55,16 @@ describe('Assets selectors', () => {
 			expect(assetsSelector.get_current_value(asset)).toEqual(0)
 		})
 
+		it('calculates household property equity from current value, ownership and mortgage balance', () => {
+			const property = {
+				type: 'RealEstate',
+				property_market_value: 500000,
+				property_ownership_share: 50,
+				property_mortgage_balance: 150000,
+			} as Asset
+			expect(assetsSelector.get_current_value(property)).toEqual(100000)
+		})
+
 	})
 
 	describe('get_current_value_textColor(asset:Asset)', () => {

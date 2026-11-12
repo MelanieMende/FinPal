@@ -3,7 +3,9 @@ import { render } from '../../../../../testing/test-utils'
 import CreateAndEditAssetOverlay from './CreateAndEditAssetOverlay';
 import { Provider } from 'react-redux';
 import { setupStore } from '../../../../store';
-import AppState from '../../../../store/appState/appState';
+import AppState from '../../../../store/appState/appState.d';
+import * as appStateReducer from '../../../../store/appState/appState.reducer';
+import * as assetCreationReducer from '../../../../store/assetCreation/assetCreation.reducer';
 
 describe('CreateAndEditAssetOverlay component', () => {
 
@@ -20,11 +22,35 @@ describe('CreateAndEditAssetOverlay component', () => {
 		})
 	});
 
+	it('shows property-specific inputs without security identifiers for real estate', () => {
+    const store = setupStore({
+      ...preloadedState,
+      assetCreation: {
+        ...assetCreationReducer.initialState,
+        typeInput: 'RealEstate',
+      },
+    });
+    store.dispatch(appStateReducer.setShowAssetOverlay(true));
+    const {getAllById, queryAllById} = render(
+      <Provider store={store}>
+        <CreateAndEditAssetOverlay />
+      </Provider>
+    );
+
+    expect(getAllById('propertyMarketValueInput')).toHaveLength(1);
+    expect(getAllById('propertyMortgageBalanceInput')).toHaveLength(1);
+    expect(getAllById('propertyMonthlyRentInput')).toHaveLength(1);
+    expect(queryAllById('symbolInput')).toHaveLength(0);
+    expect(queryAllById('isinInput')).toHaveLength(0);
+    expect(screen.getByText('Vermögenswert speichern')).toBeInTheDocument();
+    expect(screen.getByText('Geschätzter aktueller Immobilienwert')).toBeInTheDocument();
+  });
+
   it('handles onCLose event', async() => {
     
     const store = setupStore(preloadedState);
 
-    const {getAllById} = await act(async() => {
+    await act(async() => {
       return render(
         <Provider store={store}>
           <CreateAndEditAssetOverlay />
@@ -36,7 +62,7 @@ describe('CreateAndEditAssetOverlay component', () => {
       expect(store.getState().appState.showAssetOverlay).toEqual(true)
 		})
     
-    fireEvent.click(screen.getByLabelText('Close'));
+    fireEvent.click(screen.getByLabelText('Schließen'));
 
     await waitFor(() => {
       expect(store.getState().appState.showAssetOverlay).toEqual(false)

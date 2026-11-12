@@ -83,7 +83,7 @@ export const loadPricesAndDividends = createAsyncThunk(
 			thunkAPI.dispatch(setQuote({ asset, quote }))
 		}
 
-		let assetsToRefresh = state.assets.filter(a => a.type !== 'IPO' && (props?.assetIDs?.length ? props.assetIDs.includes(a.ID) : a.is_watched))
+		let assetsToRefresh = state.assets.filter(a => a.type !== 'IPO' && a.type !== 'RealEstate' && (props?.assetIDs?.length ? props.assetIDs.includes(a.ID) : a.is_watched))
 		if (props?.assetIDs && props.assetIDs.length > 0) {
 			assetsToRefresh = assetsToRefresh.filter(a => props.assetIDs.includes(a.ID))
 		}

@@ -92,3 +92,19 @@ it('matches cash management liquidity and includes IPO reservations in total ass
   const netWorthCard = screen.getByText('Total Net Worth').closest('.glass-card')!;
   expect(within(netWorthCard as HTMLElement).getByText('268,24 €')).toBeInTheDocument();
 });
+
+it('includes private property equity in total assets and net worth', async () => {
+  render(<DashboardRoute />, { preloadedState: {
+    assets: [{
+      ID: 8, type: 'RealEstate', name: 'Family home', property_market_value: 500000,
+      property_ownership_share: 50, property_mortgage_balance: 150000,
+    } as Asset],
+    transactions: [], dividends: [], cash: [],
+  } });
+  await act(() => Promise.resolve());
+
+  for (const label of ['Total Assets', 'Total Net Worth']) {
+    const card = screen.getByText(label).closest('.glass-card')!;
+    expect(within(card as HTMLElement).getByText('100.000,00 €')).toBeInTheDocument();
+  }
+});

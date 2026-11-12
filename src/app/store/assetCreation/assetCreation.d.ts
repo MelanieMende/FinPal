@@ -5,4 +5,12 @@ interface AssetCreation {
   symbolInput: string,
   isinInput: string,
   kgvInput: string,
+  propertyLocationInput: string,
+  propertyMarketValueInput: string,
+  propertyOwnershipShareInput: string,
+  propertyMortgageBalanceInput: string,
+  propertyPurchaseDateInput: string,
+  propertyPurchasePriceInput: string,
+  propertyMonthlyRentInput: string,
+  propertyMonthlyCostsInput: string,
 }

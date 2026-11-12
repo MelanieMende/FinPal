@@ -2,11 +2,13 @@ export const get_current_shares_textColor = (asset:Asset) => (asset.current_shar
 export const get_current_invest_textColor = (asset:Asset) => (asset.current_invest == 0 ? "text-slate-500" : "inherit")
 export const get_current_value = (asset:Asset) => asset.type === 'IPO'
 	? Math.max(0, asset.reserved_amount || 0)
-	: (asset.current_shares * (asset.price || 0))
+	: asset.type === 'RealEstate'
+		? (asset.property_market_value || 0) * (asset.property_ownership_share ?? 100) / 100 - (asset.property_mortgage_balance || 0)
+		: (asset.current_shares * (asset.price || 0))
 export const get_current_value_textColor = (asset:Asset) => (get_current_value(asset) == 0 ? "text-slate-500" : "inherit")
-export const get_current_profit_loss = (asset:Asset) => (asset.current_shares * (asset.price || 0)) + (asset.current_invest || 0)
+export const get_current_profit_loss = (asset:Asset) => asset.type === 'RealEstate' ? 0 : (asset.current_shares * (asset.price || 0)) + (asset.current_invest || 0)
 export const get_current_profit_loss_percentage = (asset:Asset) => ((asset.current_invest || 0) != 0 ? -1 * get_current_profit_loss(asset)/(asset.current_invest || 1) * 100 : 0)
-export const get_realized_gain_loss = (asset:Asset) => asset.type === 'IPO'
+export const get_realized_gain_loss = (asset:Asset) => asset.type === 'IPO' || asset.type === 'RealEstate'
 	? 0
 	: (asset.current_sum_in_out || 0) - (asset.current_invest || 0) + (asset.dividends_earned || 0)
 export const get_current_profit_loss_bgColor = (asset:Asset) => (get_current_profit_loss(asset) > 0 ? "bg-teal-600" : (get_current_profit_loss(asset) == 0 ? "transparent" : "bg-custom-red"))
@@ -55,8 +57,10 @@ export function selectAssetsWithUpcomingDividends(state: Asset[]) {
 export function selectAssetsSortedByProfitLoss(state: Asset[], direction:'asc'|'desc') {
   const ipoAssets = state.filter((asset:Asset) => asset.type === 'IPO')
   const otherAssets = state.filter((asset:Asset) => asset.type !== 'IPO')
-  const active = otherAssets.filter((asset:Asset) => asset.current_shares != 0 && asset.current_shares != null)
-	const inactive = otherAssets.filter((asset:Asset) => asset.current_shares == 0 || asset.current_shares == null)
+  const active = otherAssets.filter((asset:Asset) => asset.type === 'RealEstate'
+		? get_current_value(asset) !== 0
+		: asset.current_shares != 0 && asset.current_shares != null)
+	const inactive = otherAssets.filter((asset:Asset) => !active.includes(asset))
 	const sorted = active.slice().sort((a:Asset, b:Asset) => sortBy(a, b, 'current_profit_loss_percentage', direction))
 	const all = ipoAssets.concat(sorted, inactive)
   return all

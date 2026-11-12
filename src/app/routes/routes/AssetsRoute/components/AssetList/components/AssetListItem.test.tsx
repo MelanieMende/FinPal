@@ -66,6 +66,23 @@ describe('AssetsListItem component', () => {
 		expect(screen.getByTestId('gain-loss-1')).toHaveTextContent(/\+22,00\s*€/);
 	});
 
+	it('shows household equity and property details without security performance data', () => {
+		const property = {
+			ID: 9, type: 'RealEstate', name: 'Family home', property_location: 'Berlin',
+			property_market_value: 500000, property_ownership_share: 50, property_mortgage_balance: 150000,
+			property_purchase_price: 400000, property_purchase_date: '2020-05-01',
+			property_monthly_rent: 1200, property_monthly_costs: 350,
+		} as Asset;
+		render(<table><tbody><AssetListItem i={1} asset={property} /></tbody></table>);
+
+		expect(screen.getByTestId('current-shares-9')).toHaveTextContent('50 %');
+		expect(screen.getByTestId('current-price-9')).toHaveTextContent('500.000,00 €');
+		expect(screen.getByTestId('current-invest-9')).toHaveTextContent('150.000,00 €');
+		expect(screen.getByTestId('current-value-9')).toHaveTextContent('100.000,00 €');
+		expect(screen.getByTestId('gain-loss-9')).toHaveTextContent('–');
+		expect(screen.queryByTestId('profit-loss-9')).not.toBeInTheDocument();
+	});
+
 	it('renders zero realized gain/loss in gray', () => {
 		const asset = {ID: 1, type: 'Stock', name: 'test1', symbol: 'TST', isin: 'test_isin_1', current_shares: 2, price: 100, current_sum_in_out: -80, current_invest: -80, dividends_earned: 0, avg_price_paid: 40} as Asset;
 		render(<table><tbody><AssetListItem i={1} asset={asset} /></tbody></table>);

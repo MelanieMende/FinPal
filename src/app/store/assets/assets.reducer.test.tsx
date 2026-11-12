@@ -184,6 +184,24 @@ describe('AssetCreation reducer', () => {
 		expect(dispatch).toHaveBeenCalledWith(assetsReducer.setAveragePricePaid({ asset, averageBuyIn: 68482.88 }));
 	});
 
+	it('does not request market quotes or dividends for private real estate', async () => {
+		const dispatch = jest.fn();
+		const asset = { ID: 32, type: 'RealEstate', name: 'Family home', symbol: 'PRIVATE_PROPERTY_32', is_watched: true } as Asset;
+		const sendToYahooFinanceAPI = jest.fn();
+		const sendToDivvyDiaryAPI = jest.fn();
+		window.API = {
+			sendToDB: jest.fn(),
+			sendToYahooFinanceAPI,
+			sendToDivvyDiaryAPI,
+			getTradeRepublicQuotes: jest.fn().mockResolvedValue({ quotes: [] }),
+		};
+
+		await assetsReducer.loadPricesAndDividends(undefined)(dispatch, () => ({ assets: [asset] }), undefined);
+
+		expect(sendToYahooFinanceAPI).not.toHaveBeenCalled();
+		expect(sendToDivvyDiaryAPI).not.toHaveBeenCalled();
+	});
+
 	it('refreshes the market price between syncs while preserving the Trade Republic average buy-in', async () => {
 		localStorage.removeItem(MARKET_PRICE_UPDATED_AT_KEY);
 		const dispatch = jest.fn();

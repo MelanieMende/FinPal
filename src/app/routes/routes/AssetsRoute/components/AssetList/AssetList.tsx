@@ -20,13 +20,11 @@ export default function AnalysisRoute(props: { assets?: Asset[] }) {
 	let sum_gain_loss = 0
 
 	assets.forEach(asset => {
-		const current_price = asset.price || 0
-		const current_shares = asset.current_shares || 0
-		const current_invest = asset.current_invest || 0
+		const current_invest = asset.type === 'RealEstate' ? 0 : asset.current_invest || 0
 		const dividends_earned = asset.dividends_earned || 0
-		const current_value = current_shares * current_price
+		const current_value = assetsSelector.get_current_value(asset)
 
-		const current_profit_loss = current_value + current_invest
+		const current_profit_loss = assetsSelector.get_current_profit_loss(asset)
 		sum_profit_lost += current_profit_loss
 		sum_dividends += dividends_earned
 		sum_current_invest += current_invest

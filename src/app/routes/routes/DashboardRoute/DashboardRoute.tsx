@@ -3,6 +3,7 @@ import { useAppSelector } from '../../../hooks';
 import AssetAllocationChart from '../../../components/Charts/AssetAllocationChart';
 import { Card, H3, H5, Icon } from '@blueprintjs/core';
 import { selectCashTotals } from '../../../store/cash/cash.selectors';
+import * as assetsSelector from '../../../store/assets/assets.selectors';
 import './DashboardRoute.css';
 
 export default function DashboardRoute() {
@@ -12,7 +13,7 @@ export default function DashboardRoute() {
 
 	// Asset Valuation Helper: Fallback to invested capital if no live price exists
 	const getAssetValue = (asset: any) => {
-		if (asset.type === 'IPO') return Math.max(0, asset.reserved_amount || 0);
+		if (asset.type === 'IPO' || asset.type === 'RealEstate') return assetsSelector.get_current_value(asset);
 		if (asset.quote?.valuationCurrency === 'unknown') return 0;
 		const shares = asset.current_shares || 0;
 		if (shares <= 0) return 0;
@@ -36,7 +37,7 @@ export default function DashboardRoute() {
 	// Chart Data: Allocation by Asset
 	const allocationData = [
 		...assets
-			.filter(a => (a.current_shares || 0) > 0)
+			.filter(a => a.type === 'RealEstate' || (a.current_shares || 0) > 0)
 			.map(a => ({
 				name: a.name || 'Unknown',
 				value: getAssetValue(a)
@@ -58,7 +59,8 @@ export default function DashboardRoute() {
 
 	const allocationByTypeData = Object.keys(typeLabels).map(type => {
 		const totalValue = assets
-			.filter(a => (a.type === type || (!a.type && type === 'Stock')) && (a.current_shares || 0) > 0)
+			.filter(a => (a.type === type || (!a.type && type === 'Stock'))
+				&& (a.type === 'RealEstate' || (a.current_shares || 0) > 0))
 			.reduce((acc, a) => acc + getAssetValue(a), 0);
 		
 		return {
@@ -117,7 +119,7 @@ export default function DashboardRoute() {
 						{new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(totalAssetsValue || 0)}
 					</div>
 					<div className="mt-4 text-sm text-indigo-300 font-medium">
-						{assets.filter(a => (a.current_shares || 0) > 0).length} active positions
+						{assets.filter(a => a.type === 'RealEstate' || (a.current_shares || 0) > 0).length} active positions
 					</div>
 				</Card>
 
@@ -174,26 +176,26 @@ export default function DashboardRoute() {
 					</div>
 					<div className="overflow-auto scrollbar-hide">
 						{assets
-							.filter(a => (a.current_shares || 0) > 0)
-							.sort((a, b) => ((b.current_shares || 0) * (b.price || 0)) - ((a.current_shares || 0) * (a.price || 0)))
+							.filter(a => a.type === 'RealEstate' || (a.current_shares || 0) > 0)
+							.sort((a, b) => getAssetValue(b) - getAssetValue(a))
 							.slice(0, 5)
 							.map((asset, index) => (
 								<div key={asset.ID} className="flex justify-between items-center py-3 border-b border-white/5 last:border-0 grow">
 									<div className="flex items-center">
 										<div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-[10px] font-bold mr-3">
-											{(asset.symbol || '??').substring(0, 2)}
+											{asset.type === 'RealEstate' ? 'RE' : (asset.symbol || '??').substring(0, 2)}
 										</div>
 										<div>
 											<div className="font-semibold text-sm">{asset.name || 'Unknown'}</div>
-											<div className="text-xs text-gray-500 uppercase">{asset.symbol}</div>
+											<div className="text-xs text-gray-500 uppercase">{asset.type === 'RealEstate' ? asset.property_location || 'Immobilie' : asset.symbol}</div>
 										</div>
 									</div>
 									<div className="text-right">
 										<div className="font-bold text-sm">
-											{asset.quote?.valuationCurrency === 'unknown' ? 'Nicht bewertet' : new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(((asset.current_shares || 0) * (asset.price || 0)) || 0)}
+											{asset.quote?.valuationCurrency === 'unknown' ? 'Nicht bewertet' : new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(getAssetValue(asset) || 0)}
 										</div>
 										<div className="text-xs text-green-400">
-											{asset.quote?.valuationCurrency === 'unknown' ? 'Anteil unbekannt' : `${(netWorth !== 0 ? (((asset.current_shares || 0) * (asset.price || 0)) / netWorth) * 100 : 0).toFixed(1)}%`}
+											{asset.quote?.valuationCurrency === 'unknown' ? 'Anteil unbekannt' : `${(netWorth !== 0 ? (getAssetValue(asset) / netWorth) * 100 : 0).toFixed(1)}%`}
 										</div>
 									</div>
 								</div>

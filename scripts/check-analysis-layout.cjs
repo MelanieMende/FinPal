@@ -1,11 +1,12 @@
 // Real Chromium layout check: node scripts/check-analysis-layout.cjs
-// Renders the actual analysis components with production CSS, without user data or API calls.
+// Renders actual analysis and asset-form components with production CSS and isolated data.
 const fs = require('node:fs');
 const path = require('node:path');
 
 async function checkInChromium(html, output) {
   const { app, BrowserWindow } = require('electron');
   const settingsFixture = html.includes('-settings.');
+  const assetOverlayFixture = html.includes('-asset-overlay.');
   const profile = path.join(output, 'profile', `${process.pid}-${path.basename(html, '.html')}`);
   fs.mkdirSync(profile, { recursive: true });
   app.setPath('userData', profile);
@@ -38,13 +39,17 @@ async function checkInChromium(html, output) {
           });
           await document.fonts.ready;
           await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-          const root = document.querySelector('[data-testid="portfolio-analysis"]') || document.querySelector('[data-testid="ai-connection-settings"]');
+          const root = document.querySelector('[data-testid="portfolio-analysis"]') || document.querySelector('[data-testid="ai-connection-settings"]') || document.querySelector('[data-testid="asset-overlay-layout"]');
           const fields = [...root.querySelectorAll('input,select,textarea,button')];
           const errors = [];
           if (main.getBoundingClientRect().right > innerWidth + 1) errors.push('Container exceeds viewport');
           if (root.getBoundingClientRect().right > main.getBoundingClientRect().right + 1) errors.push('Form exceeds parent');
-          if (main.scrollWidth > main.clientWidth + 1) errors.push('Form exceeds its container');
-          if (document.documentElement.scrollWidth > document.documentElement.clientWidth + 1) errors.push('Page exceeds its container');
+          if (main.scrollWidth > main.clientWidth + 1) errors.push('Form exceeds its container: ' + main.scrollWidth + '/' + main.clientWidth);
+          if (document.documentElement.scrollWidth > document.documentElement.clientWidth + 1) {
+            const overflowing = [...document.querySelectorAll('body *')].filter(el => el.getBoundingClientRect().right > innerWidth + 1)
+              .slice(0, 6).map(el => el.tagName.toLowerCase() + '.' + el.className + ':' + Math.round(el.getBoundingClientRect().right));
+            errors.push('Page exceeds its container: ' + document.documentElement.scrollWidth + '/' + document.documentElement.clientWidth + ' ' + overflowing.join('; '));
+          }
           const allocation = root.querySelector('[aria-label="Berechnete Zielgewichtung"]');
           if (allocation && allocation.scrollWidth > allocation.clientWidth + 1) errors.push('Allocation exceeds its container');
           const forecasts = root.querySelector('[aria-label="Prognosebasierte Optimierung"]');
@@ -91,12 +96,32 @@ async function checkInChromium(html, output) {
             if (Number.parseFloat(selectStyle.paddingRight) < 36) errors.push('Select arrow has insufficient right padding');
             if (selectStyle.appearance !== 'none') errors.push('Select still uses the native arrow');
           }
-          const rects = fields.map(el => ({ el, rect: el.getBoundingClientRect() }));
+          const visibleRect = el => {
+            const rect = el.getBoundingClientRect();
+            const visible = { left: Math.max(0, rect.left), right: Math.min(innerWidth, rect.right),
+              top: Math.max(0, rect.top), bottom: Math.min(innerHeight, rect.bottom) };
+            for (let ancestor = el.parentElement; ancestor; ancestor = ancestor.parentElement) {
+              const style = getComputedStyle(ancestor);
+              const bounds = ancestor.getBoundingClientRect();
+              if (/(auto|scroll|hidden|clip)/.test(style.overflowX)) {
+                visible.left = Math.max(visible.left, bounds.left);
+                visible.right = Math.min(visible.right, bounds.right);
+              }
+              if (/(auto|scroll|hidden|clip)/.test(style.overflowY)) {
+                visible.top = Math.max(visible.top, bounds.top);
+                visible.bottom = Math.min(visible.bottom, bounds.bottom);
+              }
+            }
+            return visible;
+          };
+          const rects = fields.map(el => ({ el, rect: visibleRect(el) }));
           for (const { el, rect } of rects) {
             const parent = el.closest('label') || el.parentElement;
             const bounds = parent.getBoundingClientRect();
             if (rect.left < bounds.left - 1 || rect.right > bounds.right + 1)
-              errors.push('Field exceeds parent: ' + (el.getAttribute('aria-label') || parent.textContent.trim().slice(0, 70)));
+              errors.push('Field exceeds parent: ' + (el.getAttribute('aria-label') || parent.textContent.trim().slice(0, 70)) +
+                ' field=' + Math.round(rect.left) + ',' + Math.round(rect.right) +
+                ' parent=' + Math.round(bounds.left) + ',' + Math.round(bounds.right));
           }
           for (let i = 0; i < rects.length; i++) for (let j = i + 1; j < rects.length; j++) {
             const a = rects[i].rect, b = rects[j].rect;
@@ -107,7 +132,7 @@ async function checkInChromium(html, output) {
         })()`);
         console.log(JSON.stringify({ width, zoom, ...result }));
         if (result.errors.length) throw new Error('Responsive analysis layout failed');
-        if (width === 900 && !settingsFixture) {
+        if (width === 900 && !settingsFixture && !assetOverlayFixture) {
           const suffix = zoom === 1 ? '' : '-125';
           const screenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'analysis-900' + suffix + '.png'), screenshot.toPNG());
@@ -148,6 +173,11 @@ async function checkInChromium(html, output) {
           const screenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'ai-settings-900' + suffix + '.png'), screenshot.toPNG());
         }
+        if (width === 900 && assetOverlayFixture) {
+          const suffix = zoom === 1 ? '' : '-125';
+          const screenshot = await window.webContents.capturePage();
+          fs.writeFileSync(path.join(output, 'real-estate-fields-900' + suffix + '.png'), screenshot.toPNG());
+        }
       }
     }
     app.exit(0);
@@ -171,6 +201,9 @@ async function buildAndCheck() {
     import PortfolioAnalysis from './src/app/routes/routes/AnalysisRoute/components/PortfolioAnalysis';
     import { AIConnectionSettings } from './src/app/routes/routes/AnalysisRoute/components/PortfolioAnalysis';
     import { AssetResearchIndicator } from './src/app/routes/routes/AnalysisRoute/components/PortfolioAnalysis';
+    import CreateAndEditAssetOverlay from './src/app/routes/routes/AssetsRoute/components/CreateAndEditAssetOverlay';
+    import * as appStateReducer from './src/app/store/appState/appState.reducer';
+    import * as assetCreationReducer from './src/app/store/assetCreation/assetCreation.reducer';
     import { readInvestorFacts, saveInvestorFacts } from './src/app/utils/investorFacts';
     import { buildRobustForecastAllocation as buildForecastAllocation } from './src/app/utils/robustForecastModel';
     import { robustReturnForecastFixture as returnForecastFixture } from './src/testing/fixtures/robustForecast';
@@ -229,6 +262,23 @@ async function buildAndCheck() {
         cancelSignIn={() => {}} hasKey={true} apiKey="sk-layout-validation-placeholder" setApiKey={() => {}}
         saveApiKey={() => {}} forgetApiKey={() => {}} openUsage={() => {}} /></section>);
     }
+    export function renderAssetOverlay() {
+      const store = setupStore();
+      store.dispatch(appStateReducer.setShowAssetOverlay(true));
+      store.dispatch(assetCreationReducer.setTypeInput('RealEstate'));
+      store.dispatch(assetCreationReducer.setNameInput('Long family property name '.repeat(3)));
+      store.dispatch(assetCreationReducer.setPropertyLocationInput('Long property location value '.repeat(3)));
+      store.dispatch(assetCreationReducer.setPropertyMarketValueInput('450000'));
+      store.dispatch(assetCreationReducer.setPropertyOwnershipShareInput('50'));
+      store.dispatch(assetCreationReducer.setPropertyMortgageBalanceInput('125000'));
+      store.dispatch(assetCreationReducer.setPropertyPurchaseDateInput('2020-05-01'));
+      store.dispatch(assetCreationReducer.setPropertyPurchasePriceInput('400000'));
+      store.dispatch(assetCreationReducer.setPropertyMonthlyRentInput('1200'));
+      store.dispatch(assetCreationReducer.setPropertyMonthlyCostsInput('350'));
+      return renderToStaticMarkup(<Provider store={store}><section data-testid="asset-overlay-layout">
+        <CreateAndEditAssetOverlay />
+      </section></Provider>);
+    }
   `, resolveDir: root, loader: 'jsx' }, outfile: bundle, bundle: true, packages: 'external', platform: 'node', format: 'cjs' });
   global.window = { API: {} };
   const storage = new Map();
@@ -250,6 +300,12 @@ async function buildAndCheck() {
     process.stdout.write(settingsRun.stdout || '');
     if (settingsRun.status !== 0) throw new Error(settingsRun.stderr || `Settings layout process failed: ${settingsRun.status}`);
   }
+  const assetOverlayHtml = path.join(output, 'real-estate-asset-overlay.html');
+  fs.writeFileSync(assetOverlayHtml, `<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body class="bp5-dark"><main style="padding:16px">${fixture.renderAssetOverlay()}</main></body></html>`);
+  const assetOverlayEnv = { ...process.env }; delete assetOverlayEnv.ELECTRON_RUN_AS_NODE;
+  const assetOverlayRun = spawnSync(require('electron'), [__filename, '--render', assetOverlayHtml, output], { encoding: 'utf8', windowsHide: true, env: assetOverlayEnv });
+  process.stdout.write(assetOverlayRun.stdout || '');
+  if (assetOverlayRun.status !== 0) throw new Error(assetOverlayRun.stderr || `Property form layout failed: ${assetOverlayRun.status}`);
   if (process.argv.includes('--verify-guard')) {
     const html = path.join(output, 'unprotected.html');
     fs.writeFileSync(html, fs.readFileSync(path.join(output, 'api.html'), 'utf8').replace('glass-card analysis-form mb-6', 'glass-card mb-6'));

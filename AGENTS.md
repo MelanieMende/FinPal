@@ -10,3 +10,4 @@ Es soll sich wie ein erfahrener Finanz- und Steuerberater verhalten, der dabei h
 - Bei Änderungen an den Analyseformularen `npm run check:layout` ausführen. Die Prüfung verwendet echte Komponenten und Produktions-CSS mit isolierten Testdaten und prüft Feldgrenzen und Überlappungen.
 - Screenshots in `.vite/layout-check/analysis-900.png` und `.vite/layout-check/asset-fields-900.png` visuell prüfen. Bei neuen Formularbereichen die Layoutprüfung passend erweitern.
 - Achte darauf, dass eine einheitliche Farbpalette verwendet wird. Bei positiven Hervorherbungen bspw. für Text var(--color-emerald-300);
+- Verwende für Text standardmäßig Deutsch, außer bei englischen Begriffen, die im Deutschen geläufig sind.

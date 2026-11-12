@@ -8,6 +8,27 @@ describe('AssetCreation reducer', () => {
 		expect(reducer(undefined, { type: 'unknown' })).toEqual(assetCreationReducer.initialState)
 	})
 
+	it('validates property equity inputs and rejects malformed optional amounts', () => {
+		const property = {
+			...assetCreationReducer.initialState,
+			typeInput: 'RealEstate' as const,
+			nameInput: 'Family home',
+			propertyMarketValueInput: '450.000,00',
+			propertyOwnershipShareInput: '50,5',
+			propertyMortgageBalanceInput: '100.000,00',
+		}
+
+		expect(assetCreationReducer.isValid(property)).toBe(true)
+		expect(assetCreationReducer.isValid({
+			...property,
+			propertyOwnershipShareInput: '101',
+		})).toBe(false)
+		expect(assetCreationReducer.isValid({
+			...property,
+			propertyMonthlyRentInput: 'unknown',
+		})).toBe(false)
+	})
+
 	it('should handle setID', () => {
 		expect(reducer(assetCreationReducer.initialState, assetCreationReducer.setID('test_value'))).toEqual(
 			Object.assign({}, assetCreationReducer.initialState, {
@@ -65,6 +86,31 @@ describe('AssetCreation reducer', () => {
         })
 			)
     })
+
+		it('persists real estate fields with a private identifier', async () => {
+			const originalAPI = window.API
+			const sendToDB = jest.fn((query: string) => Promise.resolve(
+				query === 'SELECT * FROM assets_v' ? [] : query.startsWith('SELECT MAX') ? [{ ID: 2 }] : []
+			))
+			window.API = { ...window.API, sendToDB }
+			const store = setupStore()
+			store.dispatch(assetCreationReducer.setID(2))
+			store.dispatch(assetCreationReducer.setTypeInput('RealEstate'))
+			store.dispatch(assetCreationReducer.setNameInput("Family's home"))
+			store.dispatch(assetCreationReducer.setPropertyMarketValueInput('450.000,00'))
+			store.dispatch(assetCreationReducer.setPropertyOwnershipShareInput('50'))
+			store.dispatch(assetCreationReducer.setPropertyMortgageBalanceInput('100.000,00'))
+
+			await expect(store.dispatch(assetCreationReducer.validateAndSave()).unwrap()).resolves.toBe(true)
+
+			const insert = sendToDB.mock.calls.find(([query]) => query.includes('INSERT INTO assets'))?.[0]
+			expect(insert).toContain("'Family''s home'")
+			expect(insert).toContain("'PRIVATE_PROPERTY_2'")
+			expect(insert).toContain("'RealEstate'")
+			expect(insert).toContain('450000, 50, 100000')
+			expect(insert).toContain('property_monthly_rent, property_monthly_costs')
+			window.API = originalAPI
+		})
 
 		it('should handle reset', async() => {
 			const store = setupStore();

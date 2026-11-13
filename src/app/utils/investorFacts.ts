@@ -1,3 +1,5 @@
+import { isBitcoinResearchPosition } from './portfolioResearch';
+
 export const INVESTOR_FACTS_KEY = 'finpal.analysis.investorFacts.v1';
 export type HistoryCoverage = 'unknown' | 'complete' | 'incomplete';
 export interface DepotHistoryConfirmation {
@@ -24,6 +26,10 @@ export interface CustodyFact {
   confirmedAt: string | null;
   orderFeeEUR: number | null;
 }
+export interface BitcoinProductDocumentsReview {
+  status: 'not-available-at-trade-republic';
+  confirmedAt: string;
+}
 export interface AssetInvestorFacts {
   custody: CustodyFact;
   historyCoverage: HistoryCoverage;
@@ -34,6 +40,7 @@ export interface AssetInvestorFacts {
   taxContextOverride?: boolean;
   targetWeight: { percent: number; minPercent: number; maxPercent: number } | null;
   confirmedAt: string | null;
+  bitcoinProductDocumentsReview?: BitcoinProductDocumentsReview;
 }
 export interface InvestorFacts {
   version: 1;
@@ -73,6 +80,16 @@ const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFi
 export const validFactDate = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v)
   && Number.isFinite(Date.parse(v)) && new Date(v).toISOString().slice(0, 10) === v;
 const validTime = (v: unknown): v is string => typeof v === 'string' && Number.isFinite(Date.parse(v));
+export function bitcoinProductDocumentsReviewExpiresAt(review?: BitcoinProductDocumentsReview): Date | null {
+  if (!review || !validTime(review.confirmedAt)) return null;
+  const expiresAt = new Date(review.confirmedAt);
+  expiresAt.setUTCMonth(expiresAt.getUTCMonth() + 3);
+  return expiresAt;
+}
+export function currentBitcoinProductDocumentsReview(review?: BitcoinProductDocumentsReview, now = new Date()): boolean {
+  const expiresAt = bitcoinProductDocumentsReviewExpiresAt(review);
+  return review?.status === 'not-available-at-trade-republic' && !!expiresAt && now < expiresAt;
+}
 const validDepotTaxContexts = (v: InvestorFacts['depotTaxContexts']) => v === undefined || (!!v && typeof v === 'object' && !Array.isArray(v)
   && Object.entries(v).length <= 100 && Object.entries(v).every(([key, fact]) => fact && typeof fact.provider === 'string'
     && !!fact.provider.trim() && fact.provider.length <= 200 && key === depotHistoryKey(fact.provider)
@@ -109,6 +126,8 @@ export function validAssetInvestorFacts(v: AssetInvestorFacts): boolean {
     && ['unknown', 'private-direct-crypto', 'security', 'business'].includes(v.taxContext)
     && (v.taxContextOverride === undefined || typeof v.taxContextOverride === 'boolean')
     && (v.confirmedAt === null || validTime(v.confirmedAt))
+    && (v.bitcoinProductDocumentsReview === undefined || (v.bitcoinProductDocumentsReview.status === 'not-available-at-trade-republic'
+      && validTime(v.bitcoinProductDocumentsReview.confirmedAt)))
     && ((v.historyCoverage === 'unknown' && v.specialActivities === 'unknown' && v.taxContext === 'unknown' && v.targetWeight === null) || validTime(v.confirmedAt))
     && (v.targetWeight === null || (!!v.targetWeight
       && [v.targetWeight.percent, v.targetWeight.minPercent, v.targetWeight.maxPercent].every(n => finite(n) && n >= 0 && n <= 100)
@@ -248,6 +267,10 @@ export function missingAssetAnalysisFacts(asset: Asset, facts: AssetInvestorFact
   const directCrypto = tax.context === 'private-direct-crypto' || tax.product?.kind === 'direct-crypto'
     || asset.type === 'Crypto' && tax.product?.kind !== 'security' && tax.context !== 'security';
   if (directCrypto && facts.specialActivities === 'unknown') missing.push('Sonderaktivitäten (Staking / Lending)');
+  if (isBitcoinResearchPosition({ type: asset.type, isin: asset.isin ?? '', symbol: asset.symbol })
+    && facts.custody.kind === 'broker' && depotHistoryKey(facts.custody.provider) === 'trade republic'
+    && !currentBitcoinProductDocumentsReview(facts.bitcoinProductDocumentsReview))
+    missing.push(facts.bitcoinProductDocumentsReview ? 'Fehlen der BTC-Produktunterlagen erneut bestätigen' : 'Fehlen der BTC-Produktunterlagen bestätigen');
   return missing;
 }
 

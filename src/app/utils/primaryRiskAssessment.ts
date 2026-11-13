@@ -5,17 +5,27 @@ import type { AnalysisPosition, AnalysisSource } from './portfolioAnalysis';
 import type { FundamentalRiskAssessment } from './robustForecastModel';
 import type { RiskDocument, RiskDocumentSet } from './primaryRiskResearch';
 import { ASSET_RISK_POLICY_VERSION, isInsuranceStock, riskChecksForPosition, riskMetricsForPosition, riskCheckLabels, riskEvidenceTerms, type RiskCheckName } from './assetRiskPolicy';
-import { bitcoinMiningPoolSource, isBitcoinResearchPosition } from './portfolioResearch';
-import type { InvestorContext } from './investorFacts';
+import { bitcoinMiCarSource, bitcoinMiningPoolSource, germanPrivateCryptoTaxSources, isBitcoinResearchPosition } from './portfolioResearch';
+import { currentBitcoinProductDocumentsReview, type InvestorContext } from './investorFacts';
 
 export function addRiskReviewContext(position: AnalysisPosition, set: RiskDocumentSet, context?: InvestorContext): void {
   delete set.reviewContext;
   if (position.type !== 'Crypto' || !context) return;
   const facts = context.assets.find(asset => asset.assetId === position.id);
-  const product = facts?.resolvedTaxContext?.product;
+  const instrumentId = position.isin.trim().toUpperCase();
+  const brokerProduct = facts?.resolvedTaxContext?.product;
+  const matchingBrokerProduct = brokerProduct?.instrumentId === instrumentId ? brokerProduct : undefined;
+  const investorConfirmedDirectCrypto = !brokerProduct && facts?.resolvedTaxContext?.source === 'asset'
+    && facts.resolvedTaxContext.context === 'private-direct-crypto' && facts.custody.kind === 'broker'
+    && facts.custody.provider.trim().toLocaleLowerCase('de-DE') === 'trade republic'
+    && facts.custody.source === 'user-confirmed' && !!instrumentId;
+  const product = matchingBrokerProduct ?? (investorConfirmedDirectCrypto
+    ? { kind: 'direct-crypto' as const, source: 'trade-republic' as const, instrumentId, instrumentType: 'crypto' }
+    : undefined);
   set.reviewContext = {
     ...(facts ? { custody: { ...facts.custody } } : {}),
-    ...(product?.instrumentId === position.isin.trim().toUpperCase() ? { product: { ...product } } : {}),
+    ...(product ? { product: { ...product }, productConfirmation: matchingBrokerProduct ? 'broker-data' : 'investor-confirmed' } : {}),
+    ...(facts?.bitcoinProductDocumentsReview ? { bitcoinProductDocumentsReview: { ...facts.bitcoinProductDocumentsReview } } : {}),
     taxResidencies: context.taxResidencies.map(residency => ({ ...residency })),
   };
 }
@@ -342,6 +352,57 @@ function qualifyBitcoinCheck(position: AnalysisPosition, check: RiskCheck, set: 
         : { ...check, reason: `${summary} ${check.reason.trim()}`.slice(0, 700) };
     }
   }
+  if (check.flag === 'regulatory' && check.finding !== 'risk') {
+    const policy = set.documents.find(document => document.identity === 'trade-republic-casp'
+        && document.source.url === 'https://assets.traderepublic.com/assets/files/EN_ExecutionPolicy.pdf');
+    const providerQuote = /Trade Republic Bank GmbH[\s\S]{0,220}?credit institution licensed in Germany and a crypto-asset services provider under Regulation \(EU\) 2023\/1114[\s\S]{0,80}?MiCAR/i.exec(policy?.excerpt ?? '')?.[0] ?? '';
+    const micarVerified = set.documents.some(document => document.identity === 'eu-micar'
+        && document.source.url === bitcoinMiCarSource.url
+        && /(?:Verordnung|Regulation) \(EU\) 2023\/1114/i.test(document.excerpt)
+        && /(?:Artikel|Article)\s+60\b/i.test(document.excerpt)
+        && /(?:Kreditinstitut|credit institution)/i.test(document.excerpt));
+    const taxSourcesVerified = set.documents.some(document => document.identity === 'german-bmf-crypto-tax'
+        && document.source.url === germanPrivateCryptoTaxSources[0].url
+        && /Kryptowerte/i.test(document.excerpt) && /ertragsteuerrechtlich(?:e|en) Behandlung/i.test(document.excerpt))
+        && set.documents.some(document => document.identity === 'german-estg-23'
+          && document.source.url === germanPrivateCryptoTaxSources[1].url
+          && /§\s*23/i.test(document.excerpt) && /private Veräußerungsgeschäfte/i.test(document.excerpt));
+    const custody = set.reviewContext?.custody;
+    const directTradeRepublic = set.reviewContext?.product?.kind === 'direct-crypto'
+        && set.reviewContext.product.source === 'trade-republic'
+        && set.reviewContext.product.instrumentId === position.isin.trim().toUpperCase();
+    const confirmedTradeRepublicCustody = custody?.kind === 'broker'
+        && custody.provider === 'Trade Republic' && custody.source === 'user-confirmed';
+    const germanTaxResidence = set.reviewContext?.taxResidencies?.some(residency =>
+      residency.country === 'DE' && !!residency.validFrom) ?? false;
+    const missingContext = [
+        ...(!directTradeRepublic ? ['Produktzuordnung BTC als direktes Trade-Republic-Kryptoprodukt'] : []),
+        ...(!confirmedTradeRepublicCustody ? ['nutzerbestätigte Verwahrart und Anbieter für Bitcoin'] : []),
+        ...(!germanTaxResidence ? ['deutscher Steuerwohnsitz mit Gültigkeitsbeginn'] : []),
+    ];
+    const exactProductTerms = set.documents.some(document => document.identity === 'trade-republic-bitcoin-product'
+        && /Bitcoin|\bBTC\b/i.test(document.excerpt)
+        && /custody|Verwahrung|crypto-asset|Kryptowerte/i.test(document.excerpt));
+    const reviewedMissingProductDocuments = currentBitcoinProductDocumentsReview(set.reviewContext?.bitcoinProductDocumentsReview);
+    const evidence = [
+        missingContext.length ? `Im gespeicherten Anlegerkontext fehlen: ${missingContext.join('; ')}.` : '',
+        exactProductTerms ? '' : directTradeRepublic && confirmedTradeRepublicCustody && germanTaxResidence && reviewedMissingProductDocuments
+          ? `Geprüfte Restunsicherheit: Der Nutzer hat am ${set.reviewContext!.bitcoinProductDocumentsReview!.confirmedAt.slice(0, 10)} bestätigt, dass bei Trade Republic aktuell keine exakt BTC zugeordneten Produkt- oder Vertragsunterlagen verfügbar sind. Die Bestätigung gilt drei Monate.`
+          : directTradeRepublic && confirmedTradeRepublicCustody && germanTaxResidence
+            ? 'Bestätigung erforderlich: Das Fehlen exakt BTC zugeordneter Produkt- oder Vertragsunterlagen bei Trade Republic wurde nicht innerhalb der letzten drei Monate bestätigt.'
+          : 'Die passenden BTC-Produktunterlagen bitte aus dem Trade-Republic-Kundenbereich ergänzen.',
+        policy && validQuote(providerQuote, policy)
+          ? 'Die Ausführungsrichtlinie belegt den Anbieterstatus, nicht die Zulässigkeit oder Billigung dieses Bitcoin-Produkts.'
+          : 'Ein aktueller Beleg zum Anbieterstatus fehlt.',
+        micarVerified
+          ? 'Der MiCAR-Text belegt den EU-Diensterahmen, nicht die konkrete Kundenvereinbarung.'
+          : 'Der aktuelle EU-MiCAR-Primärtext konnte nicht verifiziert werden.',
+        taxSourcesVerified
+          ? 'BMF und § 23 EStG betreffen die Steuerbehandlung, nicht die Produktzulässigkeit.'
+          : 'Mindestens eine aktuelle deutsche Steuer-Primärquelle fehlt.',
+    ].filter(Boolean).join(' ');
+    return { ...check, finding: 'unknown', reason: `Prüfung erforderlich: ${evidence}`.slice(0, 700), documentIndex: null, quote: '' };
+  }
   if (check.finding !== 'unknown') return check;
   if (check.flag === 'identity') {
     const documentIndex = set.documents.findIndex(document => document.identity === 'bitcoin-network'
@@ -377,17 +438,6 @@ function qualifyBitcoinCheck(position: AnalysisPosition, check: RiskCheck, set: 
     const quote = /The price of a bitcoin can unpredictably increase or decrease[\s\S]{0,220}?sometimes illiquid markets/i.exec(document?.excerpt ?? '')?.[0] ?? '';
     if (validQuote(quote, document)) return { ...check, finding: 'risk', documentIndex, quote,
       reason: 'Bitcoin.org nennt zeitweise illiquide Märkte als strukturelles Marktliquiditätsrisiko. Daraus folgt weder ein aktuell belegter Liquiditätsengpass noch eine konkrete Aussage zu heutigen Spreads oder zur Ausführung bei Trade Republic.' };
-  }
-  if (check.flag === 'regulatory' && set.reviewContext?.product?.kind === 'direct-crypto'
-    && set.reviewContext?.custody?.kind === 'broker' && set.reviewContext.custody.provider === 'Trade Republic'
-    && set.reviewContext.custody.source === 'user-confirmed'
-    && set.reviewContext.taxResidencies?.some(residency => residency.country === 'DE')) {
-    const documentIndex = set.documents.findIndex(document => document.identity === 'trade-republic-casp'
-      && document.source.url === 'https://assets.traderepublic.com/assets/files/EN_ExecutionPolicy.pdf');
-    const document = set.documents[documentIndex];
-    const quote = /Trade Republic Bank GmbH[\s\S]{0,220}?credit institution licensed in Germany and a crypto-asset services provider under Regulation \(EU\) 2023\/1114[\s\S]{0,80}?MiCAR/i.exec(document?.excerpt ?? '')?.[0] ?? '';
-    if (validQuote(quote, document)) return { ...check, finding: 'no-risk', documentIndex, quote,
-      reason: 'Für den bestätigten deutschen Trade-Republic-Direktkrypto-Kontext dokumentiert die aktuelle Ausführungsrichtlinie eine deutsche Bankzulassung und die Tätigkeit als Kryptowerte-Dienstleister nach MiCAR. Damit ist kein aktueller Zulassungsmangel des Dienstleisters belegt; dies ist weder eine behördliche Billigung von Bitcoin noch ein Schutz vor künftigen Rechtsänderungen.' };
   }
   return check;
 }
@@ -514,14 +564,20 @@ export function riskFingerprint(position: AnalysisPosition, set: RiskDocumentSet
     type: position.type, ...(position.isin.trim().toUpperCase() === 'US5801351017' ? { mcdReviewVersion: 2 } : {}),
     ...(position.isin.trim().toUpperCase() === 'DE0008430026' ? { munichReviewVersion: 3 } : {}),
     ...(position.isin.trim().toUpperCase() === 'US84615Q1031' ? { spaceXReviewVersion: 1 } : {}),
+    ...(position.type === 'Crypto' ? { cryptoReviewVersion: 1 } : {}),
     ...(position.type === 'Crypto' && set.reviewContext ? { cryptoReviewContext: {
       custody: set.reviewContext.custody && { kind: set.reviewContext.custody.kind,
         provider: set.reviewContext.custody.provider, source: set.reviewContext.custody.source },
       product: set.reviewContext.product,
+      productConfirmation: set.reviewContext.productConfirmation,
+      bitcoinProductDocumentsReview: set.reviewContext.bitcoinProductDocumentsReview && {
+        ...set.reviewContext.bitcoinProductDocumentsReview,
+        current: currentBitcoinProductDocumentsReview(set.reviewContext.bitcoinProductDocumentsReview),
+      },
       taxResidencies: set.reviewContext.taxResidencies?.map(({ country, validFrom }) => ({ country, validFrom }))
         .sort((a, b) => `${a.country}:${a.validFrom}`.localeCompare(`${b.country}:${b.validFrom}`)),
     } } : {}),
-    ...(isBitcoinResearchPosition(position) ? { bitcoinReviewVersion: 3 } : {}),
+    ...(isBitcoinResearchPosition(position) ? { bitcoinReviewVersion: 6 } : {}),
     ...(position.type === 'Bond' && position.isin.trim().toUpperCase() === 'US912810SQ22'
       ? { treasuryContextVersion: 1, nominalCurrency: position.bondHolding?.source === 'user-confirmed' ? position.bondHolding.currency : null } : {}),
     documents: set.documents.map(doc => [doc.source.url, doc.hash,
@@ -582,7 +638,8 @@ export function validateRiskAssessment(position: AnalysisPosition, set: RiskDocu
   for (const name of riskMetricsForPosition(position)) {
     if (!metrics.some(metric => metric.name === name)) gaps.push(`${name}: Keine periodisierte Zahl mit überprüfbarer Textstelle.`);
   }
-  if (!set.discoveryChecked) gaps.push('Neueste Primärberichte konnten nicht verlässlich abgeglichen werden.');
+  if (!set.discoveryChecked && !isBitcoinResearchPosition(position))
+    gaps.push('Neueste Primärberichte konnten nicht verlässlich abgeglichen werden.');
   return { key, isin: position.isin.trim().toUpperCase(), fingerprint: riskFingerprint(position, set),
     checkedAt: now, status: gaps.length ? 'unknown' : 'assessed', checks, metrics, gaps: [...new Set(gaps)],
     sources: set.documents.map(doc => doc.source) };
@@ -686,13 +743,18 @@ export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessme
       || (check.flag === 'concentration' && check.finding === 'unknown')
       || (check.flag === 'regulatory' && (check.finding === 'unknown' || check.finding === 'no-risk')))
     && record.gaps.length > 0 && record.gaps.every(gap => /^(?:concentration|regulatory):/.test(gap)
-      || /^Optionale anbieterbezogene Crypto-Primärquelle konnte nicht aktuell geladen werden: https:\/\/assets\.traderepublic\.com\/assets\/files\/EN_ExecutionPolicy\.pdf$/.test(gap))
+      || /^(?:Trade-Republic-Ausführungsrichtlinie|EU-MiCAR-Primärtext|BMF-Primärquelle zur Kryptobesteuerung|§ 23 EStG|Bitcoin-Projektdokumentation) konnte nicht aktuell geladen(?: oder validiert)? werden: https:\/\/\S+$/.test(gap)
+      || /^Aktuelle Bitcoin-Mining-Pool-Daten konnten nicht geladen oder validiert werden: https:\/\/\S+$/.test(gap)
+      || gap === 'Keine lesbare Bitcoin-Projektdokumentation für die Risikoprüfung verfügbar.')
     && record.sources.some(source => source.url === bitcoinMiningPoolSource.url)
     && record.checks.some(check => check.flag === 'concentration' && check.finding === 'unknown'
       && /Mining pool shares.*7 Tage/i.test(check.reason)
       && /Hashing-Kontrolle bleibt offen/i.test(check.reason))
+    && record.checks.some(check => check.flag === 'regulatory' && check.finding === 'unknown'
+      && /Geprüfte Restunsicherheit: Der Nutzer hat am \d{4}-\d{2}-\d{2} bestätigt/.test(check.reason))
     && ['https://bitcoin.org/en/how-it-works', 'https://developer.bitcoin.org/devguide/block_chain.html',
-      'https://bitcoin.org/en/secure-your-wallet', 'https://bitcoin.org/en/you-need-to-know']
+      'https://bitcoin.org/en/secure-your-wallet', 'https://bitcoin.org/en/you-need-to-know',
+      bitcoinMiCarSource.url, ...germanPrivateCryptoTaxSources.map(source => source.url)]
       .every(url => record.sources.some(source => source.url === url));
   const reviewedApolloUncertainty = record.isin === 'LU3170240538' && record.status === 'unknown'
     && materialRisks.length === 0 && record.checks.length === 8

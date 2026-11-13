@@ -14,6 +14,7 @@ import { robustReturnForecastFixture } from '../../testing/fixtures/robustForeca
 import { createCandidateMarketQuoteProvider } from './candidateMarketQuote';
 import { etfReturnForecastFixture } from '../../testing/fixtures/etfHistory';
 import { riskChecksFor } from './assetRiskPolicy';
+import { PrimaryRiskResearch, type RiskDocumentSet } from './primaryRiskResearch';
 
 jest.mock('electron', () => ({ safeStorage: {
   isEncryptionAvailable: jest.fn(() => true),
@@ -192,6 +193,34 @@ it('reuses a persisted primary-document risk review without another AI risk requ
   expect(mockedFetch.mock.calls.filter(([url, options]) => !url.includes('/submissions/') && !url.includes('/Archives/') &&
     JSON.parse(String(options?.body)).text?.format?.name === 'primary_risk_assessment')).toHaveLength(2);
   expect(second.getLastResult()?.report.fundamentalRisks).toEqual(refreshed.fundamentalRisks);
+});
+
+it('uses current confirmed investor context when refreshing asset risks', async () => {
+  const asset = { ID: 31, name: 'Bitcoin', type: 'Crypto', current_shares: 1, price: 50000, currencySymbol: '€',
+    isin: 'BTC', symbol: 'BTC', brokerProduct: { kind: 'direct-crypto', source: 'trade-republic', instrumentId: 'BTC', instrumentType: 'crypto' } } as Asset;
+  const position = buildAnalysisPositions([asset]);
+  const facts = seedInvestorFacts(newInvestorFacts(), [asset]);
+  facts.taxResidencies = [{ country: 'DE', validFrom: '2020-01-01', confirmedAt: new Date().toISOString() }];
+  const currentContext = buildInvestorContext(facts, [asset], []);
+  const oldContext = buildInvestorContext(seedInvestorFacts(newInvestorFacts(), [asset]), [asset], []);
+  const localRequest: PortfolioAnalysisRequest = { ...request, positions: position, investorContext: oldContext };
+  const service = new PortfolioAnalysisService(dir, jest.fn(), undefined,
+    jest.fn().mockResolvedValue(robustReturnForecastFixture('31', { targetPrice: 60000 })));
+  await service.analyzeLocal(localRequest);
+  const providerPolicy = 'Trade Republic Bank GmbH is a credit institution licensed in Germany and a crypto-asset services provider under Regulation (EU) 2023/1114 on Markets in Crypto-Assets (MiCAR).';
+  const documents: RiskDocumentSet = { documents: [{ source: { title: 'Trade Republic Crypto Execution Policy',
+    url: 'https://assets.traderepublic.com/assets/files/EN_ExecutionPolicy.pdf' }, excerpt: providerPolicy,
+    hash: 'trade-republic-policy', fetchedAt: Date.now(), period: null, identity: 'trade-republic-casp', excerptVersion: 2 }],
+    gaps: [], discoveryChecked: false };
+  const collect = jest.spyOn(PrimaryRiskResearch.prototype, 'collect').mockResolvedValue(documents);
+  try {
+    const refreshed = await service.refreshPrimaryRisk({ id: 31, name: 'Bitcoin', type: 'Crypto', isin: 'BTC', symbol: 'BTC' }, currentContext);
+    expect(refreshed.fundamentalRisks?.find(risk => risk.key === '31')?.rationale)
+      .toContain('Regulatorische Risiken: offen');
+    expect(new PortfolioAnalysisService(dir, jest.fn()).getLastResult()?.report.fundamentalRisks?.find(risk => risk.key === '31')
+      ?.rationale).toContain('Regulatorische Risiken: offen');
+    expect(collect).toHaveBeenCalledTimes(1);
+  } finally { collect.mockRestore(); }
 });
 
 it('loads a local ETF history model for a new review candidate and passes the joint calculation back without exposing daily arrays', async () => {

@@ -1,14 +1,13 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { Button, Card, Dialog, H5, Icon, Intent, Spinner, Tooltip } from '@blueprintjs/core';
 import { useAppSelector, useAppDispatch } from '../../../../hooks';
-import { ANALYSIS_TIMEOUT_MS, buildAnalysisPositions, validateAnalysisRequest, type InvestmentProfile, type PortfolioAnalysisProgress } from '../../../../utils/portfolioAnalysis';
+import { ANALYSIS_TIMEOUT_MS, buildAnalysisPositions, validateAnalysisRequest, type AnalysisPosition, type AssetRecommendation, type AssetResearchStatus, type InvestmentProfile, type PortfolioAnalysisProgress } from '../../../../utils/portfolioAnalysis';
 import type { ChatGptModel, ChatGptStatus } from '../../../../utils/chatGptAuth';
 import { analyzePortfolio, analyzePortfolioLocally, refreshPortfolioForecast, refreshPortfolioPrimaryRisk, refreshPortfolioResearch, setAnalysisOpen, clearAnalysisResult } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
 import { formatSyncTime } from '../../../../utils/syncTimestamps';
 import { assessQuoteFreshness, isMarketClosedInfo } from '../../../../utils/quoteFreshness';
 import { isDescriptiveRiskInfo } from '../../../../utils/analysisMessages';
 import { isEltif, assessNavFreshness, type NavEvidence } from '../../../../utils/eltifValuation';
-import type { AnalysisPosition, AssetRecommendation, AssetResearchStatus } from '../../../../utils/portfolioAnalysis';
 import { selectCashTotals } from '../../../../store/cash/cash.selectors';
 import { selectRecommendationExecutions } from '../../../../utils/recommendationExecution';
 import { checkPortfolioFunding } from '../../../../utils/portfolioFunding';
@@ -586,8 +585,8 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
       if (!result) throw new Error('Für die Risikoprüfung ist zuerst eine gespeicherte Analyse erforderlich.');
       const asset = positions.find(position => position.id === assetId);
       if (!asset) throw new Error('Das Asset ist nicht mehr im Portfolio vorhanden.');
-      const refreshed = await dispatch(refreshPortfolioPrimaryRisk({ id: asset.id, name: asset.name, isin: asset.isin,
-        symbol: asset.symbol, type: asset.type })).unwrap();
+      const refreshed = await dispatch(refreshPortfolioPrimaryRisk({ asset: { id: asset.id, name: asset.name, isin: asset.isin,
+        symbol: asset.symbol, type: asset.type }, investorContext })).unwrap();
       if (alive.current) {
         const risk = refreshed.fundamentalRisks?.find(item => item.key === String(assetId));
         setNotice(risk?.status === 'assessed'

@@ -1,7 +1,7 @@
 import { buildInvestorContext, deriveAcquisitionHistory, newInvestorFacts, readInvestorFacts, saveInvestorFacts,
   seedInvestorFacts, validInvestorContext, validAssetInvestorFacts, investorFactsStorageKey, depotHistoryKey } from './investorFacts';
 import { buildTradeEconomics } from './tradeEconomics';
-import { resolveTaxContext, missingAssetAnalysisFacts } from './investorFacts';
+import { bitcoinProductDocumentsReviewExpiresAt, currentBitcoinProductDocumentsReview, resolveTaxContext, missingAssetAnalysisFacts } from './investorFacts';
 import { brokerProduct } from './instrumentClassification';
 import { buildAnalysisPositions, validateAnalysisRequest, type PortfolioAnalysisRequest } from './portfolioAnalysis';
 
@@ -12,6 +12,25 @@ const trades = [
   { ID: 3, asset_ID: 1, date: '2025-03-01', type: 'Sell', amount: 1, price_per_share: 70 },
 ] as Transaction[];
 beforeEach(() => localStorage.clear());
+
+it('expires the user confirmation about missing Trade Republic BTC documents after three calendar months', () => {
+  const review = { status: 'not-available-at-trade-republic', confirmedAt: '2026-11-13T10:00:00Z' } as const;
+  expect(bitcoinProductDocumentsReviewExpiresAt(review)?.toISOString()).toBe('2027-02-13T10:00:00.000Z');
+  expect(currentBitcoinProductDocumentsReview(review, new Date('2027-02-13T09:59:59Z'))).toBe(true);
+  expect(currentBitcoinProductDocumentsReview(review, new Date('2027-02-13T10:00:00Z'))).toBe(false);
+});
+
+it('requests the BTC document confirmation for a symbol-only Bitcoin asset at Trade Republic', () => {
+  const facts = readInvestorFacts('btc-documents', [asset]);
+  const history = deriveAcquisitionHistory(asset, trades, 'complete');
+  expect(missingAssetAnalysisFacts(asset, facts.assets[1], history, facts.depotTaxContexts))
+    .toContain('Fehlen der BTC-Produktunterlagen bestätigen');
+  facts.assets[1].bitcoinProductDocumentsReview = {
+    status: 'not-available-at-trade-republic', confirmedAt: new Date().toISOString(),
+  };
+  expect(missingAssetAnalysisFacts(asset, facts.assets[1], history, facts.depotTaxContexts))
+    .not.toContain('Fehlen der BTC-Produktunterlagen bestätigen');
+});
 
 it('persists depot ownership, derives product-specific tax context, and retains legacy and explicit exceptions', () => {
   const known = { ...asset, isin: 'BTC' };

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1820" viewBox="0 0 1200 1820" role="img" aria-labelledby="title description">
   <title id="title">FinPal Analyseablauf</title>
-  <desc id="description">Flussdiagramm vom Laden der Finanzdaten über Recherche, Risikoprüfung und Portfoliomodell bis zur validierten Empfehlung. Die Bitcoin-Mining-Pool-Verteilung wird als aktuelle 7-Tage-Blockstichprobe geprüft; sie belegt keine tatsächliche Hashing-Kontrolle. Belegte Risiken sind Entscheidungsfaktoren und keine automatischen Blocker.</desc>
+  <desc id="description">Flussdiagramm vom Laden der Finanzdaten über Recherche, Risikoprüfung mit aktuell bestätigten Verwahr-, Produkt- und Steuerangaben und Portfoliomodell bis zur validierten Empfehlung. Der optionale Trade-Republic-Dokumentensync behält nur erkannte Krypto-Vertrags-PDFs dauerhaft; andere Timeline-PDFs werden nach der temporären Prüfung entfernt. Eine ausdrücklich nutzerbestätigte Angabe zu direkt gehaltenen Kryptowerten kann zusammen mit bestätigter Trade-Republic-Verwahrung die angegebene Halteform zuordnen, ersetzt aber keine Produktverifizierung oder passenden Vertragsunterlagen. Bei Bitcoin werden MiCAR-Diensterahmen, Steuerquellen, Anbieterstatus und exakt passende Produktvertragsunterlagen getrennt bewertet. Bestätigt der Nutzer, dass bei Trade Republic keine BTC-Produktunterlagen verfügbar sind, gilt dies höchstens drei Monate als geprüfte Restunsicherheit; danach ist eine erneute Bestätigung erforderlich. Eine Anbieterzulassung oder Steuerregel belegt keine Produktbilligung. Die Bitcoin-Mining-Pool-Verteilung wird als aktuelle 7-Tage-Blockstichprobe geprüft; sie belegt keine tatsächliche Hashing-Kontrolle. Belegte Risiken sind Entscheidungsfaktoren und keine automatischen Blocker.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L0,6 L9,3 z" fill="#64748b"/>
@@ -67,7 +67,8 @@
   <text x="60" y="792" class="section">3 · RISIKOPRÜFUNG</text>
   <rect x="390" y="780" width="420" height="86" rx="14" class="risk"/>
   <text x="600" y="812" text-anchor="middle" class="node-title">Risikobefund laden oder neu prüfen</text>
-  <text x="600" y="837" text-anchor="middle" class="node-text">Unverändert: Cache · neue Dokumente oder Regeln: fachliche Prüfung</text>
+  <text x="600" y="837" text-anchor="middle" class="node-text">Anlegerangaben, Brokerdaten und BTC-Vertrag getrennt prüfen</text>
+  <text x="600" y="859" text-anchor="middle" class="small">Fehlende TR-BTC-Unterlagen: Nutzerbestätigung höchstens 3 Monate gültig</text>
 
   <path d="M600 866 V900" class="edge"/>
   <polygon points="600,888 790,962 600,1036 410,962" class="decision"/>

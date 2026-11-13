@@ -51,21 +51,22 @@ describe('ImportRoute asset mapping', () => {
 
     it('finishes Trade Republic sync without waiting for the background asset refresh', async () => {
         const backgroundRefresh = new Promise(() => undefined);
+        const syncTradeRepublic = jest.fn().mockResolvedValue({
+            records: [pendingRecord],
+            cashRecords: [],
+            unsupportedRecords: [],
+            skipped: 0,
+            quotes: [{
+                name: 'Unbekanntes Asset', isin: pendingRecord.isin, quantity: 1,
+                price: 10, averageBuyIn: 10, netValue: 10,
+            }],
+            lastSyncAt: '2026-10-01T10:30:00.000Z',
+        });
         jest.spyOn(assetsReducer, 'loadPricesAndDividends').mockReturnValue((() => backgroundRefresh) as any);
         window.API = {
             sendToDB: jest.fn(),
             getTradeRepublicStatus: jest.fn().mockResolvedValue({ runnerAvailable: true, hasSavedCredentials: true }),
-            syncTradeRepublic: jest.fn().mockResolvedValue({
-                records: [pendingRecord],
-                cashRecords: [],
-                unsupportedRecords: [],
-                skipped: 0,
-                quotes: [{
-                    name: 'Unbekanntes Asset', isin: pendingRecord.isin, quantity: 1,
-                    price: 10, averageBuyIn: 10, netValue: 10,
-                }],
-                lastSyncAt: '2026-10-01T10:30:00.000Z',
-            }),
+            syncTradeRepublic,
         };
 
         render(<ImportRoute />, {
@@ -78,9 +79,11 @@ describe('ImportRoute asset mapping', () => {
         });
 
         const syncButton = screen.getByRole('button', { name: /Jetzt synchronisieren/i });
+        expect(screen.queryByRole('checkbox', { name: /Vertragsunterlagen beim Sync suchen/ })).not.toBeInTheDocument();
         fireEvent.click(syncButton);
 
         await waitFor(() => expect(syncButton).not.toBeDisabled());
+        expect(syncTradeRepublic.mock.calls[0][0]).not.toHaveProperty('downloadBitcoinContractDocuments');
         expect(screen.getByText(/1 Transaktion\(en\) geladen/)).toBeInTheDocument();
         expect(screen.getByTestId('trade-republic-last-sync')).toHaveTextContent('01.10.26');
     });

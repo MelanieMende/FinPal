@@ -220,7 +220,7 @@ async function buildAndCheck() {
         isin: '', price: 100, current_shares: 1, currencySymbol: 'EUR' }];
       const transactions = [{ ID: 1, asset_ID: 1, date: '2025-01-01', type: 'Buy', amount: 1, price_per_share: 80, depot: 'Trade Republic' }];
       const facts = readInvestorFacts('layout-fixture', assets);
-      facts.assets[1].custody.provider = 'LongCustodyProvider'.repeat(8);
+      facts.assets[1].custody.provider = 'Trade Republic';
       facts.defaultCustody.provider = facts.assets[1].custody.provider;
       saveInvestorFacts('layout-fixture', facts);
       const state = setupStore().getState();

@@ -80,7 +80,9 @@ contextBridge.exposeInMainWorld('API', {
   submitTradeRepublicOrder: (id: string, confirmed: boolean) => ipcRenderer.invoke('trade-republic:trading-submit', id, confirmed),
   getTradeRepublicOrders: (accountNumber: string) => ipcRenderer.invoke('trade-republic:trading-orders', accountNumber),
   getTradeRepublicStatus: () => ipcRenderer.invoke('trade-republic:status'),
-  syncTradeRepublic: (args: { phone?: string; pin?: string; remember?: boolean }) => ipcRenderer.invoke('trade-republic:sync', args),
+  syncTradeRepublic: (args: { phone?: string; pin?: string; remember?: boolean }) =>
+    ipcRenderer.invoke('trade-republic:sync', args),
+  forgetTradeRepublicContractDocuments: () => ipcRenderer.invoke('trade-republic:forget-contract-documents'),
   getTradeRepublicQuotes: () => ipcRenderer.invoke('trade-republic:quotes'),
   getEuroExchangeRates: () => ipcRenderer.invoke('market:eur-exchange-rates'),
   forgetTradeRepublicCredentials: () => ipcRenderer.invoke('trade-republic:forget'),
@@ -97,7 +99,8 @@ contextBridge.exposeInMainWorld('API', {
   analyzePortfolio: (request: import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest, snapshot?: string) => ipcRenderer.invoke('portfolio-ai:analyze', request, snapshot),
   analyzePortfolioLocally: (request: import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest, snapshot?: string) => ipcRenderer.invoke('portfolio-ai:analyze-local', request, snapshot),
   refreshPortfolioForecast: (request: import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest, assetId?: number, snapshot?: string) => ipcRenderer.invoke('portfolio-ai:refresh-forecast', request, assetId, snapshot),
-  refreshPortfolioPrimaryRisk: (asset: import('./app/utils/portfolioAnalysis').ResearchAsset) => ipcRenderer.invoke('portfolio-ai:refresh-risk', asset),
+  refreshPortfolioPrimaryRisk: (asset: import('./app/utils/portfolioAnalysis').ResearchAsset, investorContext: import('./app/utils/investorFacts').InvestorContext) =>
+    ipcRenderer.invoke('portfolio-ai:refresh-risk', asset, investorContext),
   refreshPortfolioResearch: (asset: import('./app/utils/portfolioAnalysis').ResearchAsset) => ipcRenderer.invoke('portfolio-ai:refresh-research', asset),
   onPortfolioAnalysisProgress: (callback: (progress: import('./app/utils/portfolioAnalysis').PortfolioAnalysisProgress) => void) => {
     const listener = (_event: Electron.IpcRendererEvent, progress: import('./app/utils/portfolioAnalysis').PortfolioAnalysisProgress) => callback(progress);

@@ -401,6 +401,23 @@ it('orders asset analysis by workflow and replaces quote, research, risk and for
   expect(within(getCard()).getByRole('region', { name: 'KI-Analyseergebnis für Stock Asset' })).toHaveTextContent('Begründung');
 });
 
+it('does not show a Trade Republic contract document section in Bitcoin analysis', async () => {
+  const bitcoin = { ...assets[1], name: 'Bitcoin', isin: 'BTC', symbol: 'BTC' } as Asset;
+  const priceUpdatedAt: string | null = null;
+  const request = { provider: 'api' as const, positions: buildAnalysisPositions([bitcoin]),
+    profile: { goal: 'growth' as const, risk: 'medium' as const, horizonYears: 10, buyBudget: 0 }, priceUpdatedAt };
+  const snapshot = JSON.stringify({ positions: request.positions, profile: request.profile, priceUpdatedAt });
+  const report = await window.API.analyzePortfolio({} as never);
+  report.mode = 'ai';
+  report.recommendations = report.recommendations.filter(recommendation => recommendation.assetId === bitcoin.ID);
+  const store = setupStore({ assets: [bitcoin] });
+  store.dispatch(analyzePortfolio.fulfilled({ report, snapshot }, 'bitcoin-analysis', { request, snapshot }));
+
+  render(<PortfolioAnalysis standalone priceUpdatedAt={null} />, { store });
+
+  expect(screen.queryByRole('region', { name: 'Trade-Republic-Vertragsunterlagen für Bitcoin' })).not.toBeInTheDocument();
+});
+
 it('displays sourced new assets outside the local asset list and keeps them after a route remount', async () => {
   const response = await window.API.analyzePortfolio({} as never);
   jest.mocked(window.API.analyzePortfolio).mockClear();
@@ -489,7 +506,8 @@ it('keeps the asset card visible while refreshing only its primary risk assessme
   expect(refreshRiskButton).toBeInTheDocument();
   expect(refreshRiskButton.closest('section[aria-label="Unternehmens- und Produktrisiken"]')).not.toBeNull();
   fireEvent.click(refreshRiskButton);
-  expect(window.API.refreshPortfolioPrimaryRisk).toHaveBeenCalledWith(expect.objectContaining({ id: 1, type: 'Stock' }));
+  expect(window.API.refreshPortfolioPrimaryRisk).toHaveBeenCalledWith(expect.objectContaining({ id: 1, type: 'Stock' }),
+    expect.objectContaining({ assets: expect.any(Array), taxResidencies: expect.any(Array) }));
   expect(screen.getAllByText('Stock Asset')).toHaveLength(2);
   expect(screen.getByTestId('asset-risk-loading-1')).toHaveTextContent('Aktuelle Primärberichte werden geladen');
   expect(screen.queryByTestId('asset-reload-status-2')).not.toBeInTheDocument();

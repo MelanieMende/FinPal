@@ -34,7 +34,8 @@ export default function ImportRoute() {
     const [isDragging, setIsDragging] = useState(false);
     const [showSuccessAlert, setShowSuccessAlert] = useState(false);
     const [showErrorAlert, setShowErrorAlert] = useState(false);
-    const [trStatus, setTrStatus] = useState<{ runnerAvailable: boolean; hasSavedCredentials: boolean; lastSyncAt?: string } | null>(null);
+    const [trStatus, setTrStatus] = useState<{ runnerAvailable: boolean; hasSavedCredentials: boolean; lastSyncAt?: string;
+        storedBitcoinContractDocuments?: number; contractDocumentsError?: string } | null>(null);
     const [trPhone, setTrPhone] = useState('');
     const [trPin, setTrPin] = useState('');
     const [rememberTr, setRememberTr] = useState(true);
@@ -200,7 +201,10 @@ export default function ImportRoute() {
             if (cashImport.imported > 0) await dispatch(cashReducer.loadCash());
             recordImportActivity();
             setTrPin('');
-            setTrStatus({ runnerAvailable: true, hasSavedCredentials: rememberTr || !!trStatus?.hasSavedCredentials, lastSyncAt: result.lastSyncAt });
+            setTrStatus({ runnerAvailable: true, hasSavedCredentials: rememberTr || !!trStatus?.hasSavedCredentials,
+                lastSyncAt: result.lastSyncAt,
+                storedBitcoinContractDocuments: trStatus?.storedBitcoinContractDocuments,
+                contractDocumentsError: trStatus?.contractDocumentsError });
 			const quoteMessage = result.quoteError
 				? ` ${result.quoteError}${result.quotes.length ? ' Der letzte gespeicherte Trade-Republic-Kurs bleibt aktiv.' : ' Yahoo Finance bleibt als Kursquelle aktiv.'}`
 				: ` ${result.quotes.length} Trade-Republic-Kurs(e) aktualisiert.`;
@@ -216,6 +220,17 @@ export default function ImportRoute() {
         await window.API.forgetTradeRepublicCredentials?.();
         setTrStatus(current => ({ runnerAvailable: current?.runnerAvailable ?? true, hasSavedCredentials: false, lastSyncAt: current?.lastSyncAt }));
         setTrMessage('Gespeicherte Zugangsdaten wurden gelöscht.');
+    };
+
+    const forgetTradeRepublicContractDocuments = async () => {
+        try {
+            if (!window.API.forgetTradeRepublicContractDocuments) throw new Error('Das Löschen der Vertragsunterlagen ist nicht verfügbar.');
+            await window.API.forgetTradeRepublicContractDocuments();
+            setTrStatus(current => current ? { ...current, storedBitcoinContractDocuments: 0, contractDocumentsError: undefined } : current);
+            setTrMessage('Die lokal gespeicherten Bitcoin-/Krypto-Vertragsunterlagen wurden gelöscht. Bei der nächsten Risikoprüfung werden sie nicht mehr berücksichtigt.');
+        } catch (error) {
+            setTrMessage(error instanceof Error ? error.message : 'Die Vertragsunterlagen konnten nicht gelöscht werden.');
+        }
     };
 
     const importRecord = async (record: typeof pendingRecords[number], assetID: number) => {
@@ -363,7 +378,13 @@ export default function ImportRoute() {
                     <div className="import-sync-description flex-1">
                         <H3 className="m-0 mb-1 text-lg">Trade Republic automatisch synchronisieren</H3>
                         <p className="text-xs text-gray-400" data-testid="trade-republic-last-sync">Letzter erfolgreicher Sync: {formatSyncTime(trStatus?.lastSyncAt) ?? 'noch nicht'}</p>
-                        <p className="text-gray-400 mb-4">FinPal lädt die strukturierten Umsatzdaten direkt über den lokalen pytr-Client. Gutschriften, Zinsen und Steuererstattungen werden automatisch im Cash Management ergänzt. PDFs sind nicht erforderlich.</p>
+                        <p className="text-gray-400 mb-4">FinPal lädt die strukturierten Umsatzdaten über den lokalen pytr-Client. Gutschriften, Zinsen und Steuererstattungen werden automatisch im Cash Management ergänzt.</p>
+                        {!!trStatus?.storedBitcoinContractDocuments || !!trStatus?.contractDocumentsError ? <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded border border-white/10 p-2 text-xs text-gray-300" data-testid="stored-tr-contract-documents">
+                            <span>{trStatus.contractDocumentsError || `${trStatus.storedBitcoinContractDocuments ?? 0} passende Vertrags-PDF(s) lokal gespeichert`}</span>
+                            <Button small minimal intent={Intent.DANGER} disabled={syncingTr} onClick={forgetTradeRepublicContractDocuments}>
+                                Lokale PDFs löschen
+                            </Button>
+                        </div> : null}
                         {trStatus?.runnerAvailable === false && <Callout intent={Intent.WARNING}>Diese Funktion wird derzeit nur unter Windows x64 unterstützt.</Callout>}
                         {trStatus?.runnerAvailable && <p className="text-xs text-gray-500">Die benötigte Laufzeitkomponente wird beim ersten Start automatisch und geprüft eingerichtet.</p>}
                         {trMessage && <Callout className="mt-3" intent={trMessage.includes('fehl') || trMessage.includes('Bitte Telefonnummer') ? Intent.DANGER : Intent.PRIMARY}>{trMessage}</Callout>}

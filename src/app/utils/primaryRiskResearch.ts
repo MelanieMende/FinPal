@@ -2,7 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { AnalysisPosition, AnalysisSource } from './portfolioAnalysis';
-import { bitcoinMiningPoolSource, bitcoinPrimarySources, isBitcoinResearchPosition, knownResearchSources } from './portfolioResearch';
+import { bitcoinMiCarSource, bitcoinMiningPoolSource, bitcoinPrimarySources, germanPrivateCryptoTaxSources,
+  isBitcoinResearchPosition, knownResearchSources } from './portfolioResearch';
+import { TradeRepublicContractDocumentStore } from './tradeRepublicContractDocuments';
 
 export interface RiskDocument {
   source: AnalysisSource;
@@ -20,6 +22,8 @@ export interface RiskDocumentSet {
   reviewContext?: {
     custody?: import('./investorFacts').CustodyFact;
     product?: NonNullable<import('./investorFacts').ResolvedTaxContext['product']>;
+    productConfirmation?: 'broker-data' | 'investor-confirmed';
+    bitcoinProductDocumentsReview?: import('./investorFacts').BitcoinProductDocumentsReview;
     taxResidencies?: import('./investorFacts').InvestorContext['taxResidencies'];
   };
 }
@@ -27,6 +31,11 @@ export interface RiskDocumentSet {
 const DAY = 24 * 60 * 60 * 1000;
 const MAX_BYTES = 16_000_000;
 const MAX_DOCUMENTS = 4;
+function loadPdfParser(): typeof import('pdf-parse') {
+  // Keep the PDF.js dependency unloaded for sources that are not PDFs.
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  return require('pdf-parse');
+}
 interface BitcoinMiningPoolStats {
   blockCount: number;
   pools: { name: string; blockCount: number }[];
@@ -195,6 +204,10 @@ const bitcoinKeywords = [
   /active development|Government taxes and regulations|regulatory mandates/ig,
   /credit institution licensed in Germany and a crypto-asset services provider under Regulation \(EU\) 2023\/1114[\s\S]{0,120}?MiCAR/ig,
   /custody and administration of crypto-assets|execution of orders in Crypto-Assets/ig,
+  /Article 60[\s\S]{0,500}?(?:credit institution|crypto-asset services)/ig,
+  /Artikel 60[\s\S]{0,500}?(?:Kreditinstitut|Kryptowerte-Dienstleistungen)/ig,
+  /Ertragsteuerrechtlich(?:e|en) Behandlung[\s\S]{0,180}?Kryptowerte/ig,
+  /§\s*23[\s\S]{0,180}?private Veräußerungsgeschäfte/ig,
 ];
 const treasuryBondKeywords = [
   /912810SQ2/ig,
@@ -364,7 +377,8 @@ export class PrimaryRiskResearch {
   private readonly submissions = new Map<string, { fetchedAt: number; filings: ReturnType<typeof secUrls> }>();
   private readonly cikCache = new Map<string, { fetchedAt: number; cik: string | null }>();
   private tickerDirectory?: Promise<Array<{ cik_str: number; ticker: string; title: string }>>;
-  constructor(private readonly file: string, private readonly requestFetch: typeof fetch = fetch, private readonly now = Date.now) {
+  constructor(private readonly file: string, private readonly requestFetch: typeof fetch = fetch, private readonly now = Date.now,
+    private readonly tradeRepublicContractDocuments?: TradeRepublicContractDocumentStore) {
     try {
       if (fs.statSync(file).size > 20_000_000) return;
       const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -431,13 +445,19 @@ export class PrimaryRiskResearch {
   private async collectBitcoin(signal?: AbortSignal, forceRefresh = false): Promise<RiskDocumentSet> {
     const documents: RiskDocument[] = [];
     const gaps: string[] = [];
-    let networkSourceFailures = 0;
-    for (const source of bitcoinPrimarySources) {
+    let sourceFailures = 0;
+    for (const source of [...bitcoinPrimarySources, ...germanPrivateCryptoTaxSources]) {
       const stored = this.cache.get(source.url);
       const tradeRepublicPolicy = source.url === 'https://assets.traderepublic.com/assets/files/EN_ExecutionPolicy.pdf';
+      const micarRegulation = source.url === bitcoinMiCarSource.url;
+      const bmfTaxLetter = source.url === germanPrivateCryptoTaxSources[0].url;
+      const estgTaxLaw = source.url === germanPrivateCryptoTaxSources[1].url;
       const miningPoolSource = source.url === bitcoinMiningPoolSource.url;
-      const identity = tradeRepublicPolicy ? 'trade-republic-casp' : miningPoolSource ? 'bitcoin-mining-pools' : 'bitcoin-network';
-      const excerptVersion = miningPoolSource ? 1 : 2;
+      const networkSource = !tradeRepublicPolicy && !micarRegulation && !bmfTaxLetter && !estgTaxLaw && !miningPoolSource;
+      const identity = tradeRepublicPolicy ? 'trade-republic-casp' : micarRegulation ? 'eu-micar'
+        : bmfTaxLetter ? 'german-bmf-crypto-tax' : estgTaxLaw ? 'german-estg-23'
+          : miningPoolSource ? 'bitcoin-mining-pools' : 'bitcoin-network';
+      const excerptVersion = miningPoolSource ? 1 : 3;
       if (!forceRefresh && stored?.identity === identity && stored.excerptVersion === excerptVersion
         && this.now() - stored.fetchedAt < DAY && stored.fetchedAt <= this.now()) {
         documents.push(stored);
@@ -454,11 +474,27 @@ export class PrimaryRiskResearch {
         const data = Buffer.from(await response.arrayBuffer());
         if (data.length > 2_000_000) throw new Error('Bitcoin documentation too large');
         const fetchedAt = this.now();
-        const excerpt = miningPoolSource ? bitcoinMiningPoolExcerpt(data, fetchedAt) : riskExcerpt(data.toString('utf8'), 'Crypto');
-        if (tradeRepublicPolicy
-          ? !/Trade Republic Bank GmbH/i.test(excerpt) || !/licensed in Germany/i.test(excerpt) || !/MiCAR/i.test(excerpt)
-          : !miningPoolSource && (!/Bitcoin/i.test(excerpt) || !/block.?chain|wallet|consensus|private key|bitcoin price/i.test(excerpt)))
-          throw new Error(tradeRepublicPolicy ? 'Trade Republic MiCAR context missing' : 'Bitcoin network context missing');
+        let plain = data.toString('utf8');
+        if (!miningPoolSource && ((response.headers.get('content-type') ?? '').toLowerCase().includes('pdf')
+          || source.url.toLowerCase().endsWith('.pdf'))) {
+          const { PDFParse } = loadPdfParser();
+          const parser = new PDFParse({ data });
+          try { plain = (await parser.getText()).text; } finally { await parser.destroy(); }
+        }
+        const excerpt = miningPoolSource ? bitcoinMiningPoolExcerpt(data, fetchedAt) : riskExcerpt(plain, 'Crypto');
+        const evidence = `${plain}\n${excerpt}`;
+        const valid = tradeRepublicPolicy
+          ? /Trade Republic Bank GmbH/i.test(excerpt) && /licensed in Germany/i.test(excerpt) && /MiCAR/i.test(excerpt)
+          : micarRegulation
+            ? /(?:Verordnung|Regulation) \(EU\) 2023\/1114/i.test(evidence)
+              && /(?:Artikel|Article)\s+60\b/i.test(evidence) && /(?:Kreditinstitut|credit institution)/i.test(evidence)
+            : bmfTaxLetter
+              ? /Kryptowerte/i.test(evidence) && /ertragsteuerrechtlich(?:e|en) Behandlung/i.test(evidence)
+              : estgTaxLaw
+                ? /§\s*23/i.test(evidence) && /private Veräußerungsgeschäfte/i.test(evidence)
+                : miningPoolSource || (/Bitcoin/i.test(excerpt)
+                  && /block.?chain|wallet|consensus|private key|bitcoin price/i.test(excerpt));
+        if (!excerpt || !valid) throw new Error('Bitcoin source identity or required evidence missing');
         const document: RiskDocument = { source, excerpt, hash: createHash('sha256').update(data).digest('hex'),
           fetchedAt, period: null, identity, excerptVersion };
         this.cache.set(source.url, document);
@@ -466,22 +502,42 @@ export class PrimaryRiskResearch {
         try { this.save(); } catch { /* This run can still use the downloaded document. */ }
       } catch {
         if (signal?.aborted) throw signal.reason;
-        if (!miningPoolSource && stored?.identity === identity) documents.push(stored);
-        if (tradeRepublicPolicy) gaps.push(`Optionale anbieterbezogene Crypto-Primärquelle konnte nicht aktuell geladen werden: ${source.url}`);
+        if (networkSource && stored?.identity === identity) documents.push(stored);
+        sourceFailures++;
+        if (tradeRepublicPolicy) gaps.push(`Trade-Republic-Ausführungsrichtlinie konnte nicht aktuell geladen oder validiert werden: ${source.url}`);
+        else if (micarRegulation) gaps.push(`EU-MiCAR-Primärtext konnte nicht aktuell geladen oder validiert werden: ${source.url}`);
+        else if (bmfTaxLetter) gaps.push(`BMF-Primärquelle zur Kryptobesteuerung konnte nicht aktuell geladen oder validiert werden: ${source.url}`);
+        else if (estgTaxLaw) gaps.push(`§ 23 EStG konnte nicht aktuell geladen oder validiert werden: ${source.url}`);
         else if (miningPoolSource) {
-          networkSourceFailures++;
           gaps.push(`Aktuelle Bitcoin-Mining-Pool-Daten konnten nicht geladen oder validiert werden: ${source.url}`);
         }
         else {
-          networkSourceFailures++;
           gaps.push(`Bitcoin-Projektdokumentation konnte nicht aktuell geladen werden: ${source.url}`);
         }
       }
     }
     if (!documents.some(document => document.identity === 'bitcoin-network'))
       gaps.push('Keine lesbare Bitcoin-Projektdokumentation für die Risikoprüfung verfügbar.');
+    if (this.tradeRepublicContractDocuments) {
+      try {
+        const storedDocuments = await this.tradeRepublicContractDocuments.loadForRiskReview();
+        for (const stored of storedDocuments) {
+          const excerpt = riskExcerpt(stored.text, 'Crypto', false, 'BTC');
+          if (!excerpt) continue;
+          documents.push({
+            source: { title: `Trade Republic: ${stored.title}`, url: 'https://app.traderepublic.com/' },
+            excerpt, hash: stored.hash, fetchedAt: stored.fetchedAt, period: stored.eventDate?.slice(0, 10) ?? null,
+            identity: 'trade-republic-bitcoin-product', excerptVersion: 1,
+          });
+        }
+      } catch (error) {
+        sourceFailures++;
+        const detail = error instanceof Error ? error.message : 'unbekannter Lesefehler';
+        gaps.push(`Gespeicherte Trade-Republic-Vertragsunterlagen konnten nicht gelesen werden: ${detail}`);
+      }
+    }
     // Undated protocol documentation is not a financial report or current market telemetry.
-    return { documents, gaps, discoveryChecked: networkSourceFailures === 0 };
+    return { documents, gaps, discoveryChecked: sourceFailures === 0 };
   }
   async collect(position: AnalysisPosition, signal?: AbortSignal, sourceHints: AnalysisSource[] = [], forceRefresh = false): Promise<RiskDocumentSet> {
     if (isBitcoinResearchPosition(position)) return this.collectBitcoin(signal, forceRefresh);
@@ -590,7 +646,7 @@ export class PrimaryRiskResearch {
         const contentType = response.headers.get('content-type') ?? '';
         let plain: string;
         if (contentType.includes('pdf') || url.toLowerCase().endsWith('.pdf')) {
-          const { PDFParse } = require('pdf-parse');
+          const { PDFParse } = loadPdfParser();
           const parser = new PDFParse({ data });
           try { plain = (await parser.getText()).text; } finally { await parser.destroy(); }
         } else plain = data.toString('utf8');

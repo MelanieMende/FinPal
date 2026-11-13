@@ -26,8 +26,16 @@ declare global {
       previewTradeRepublicOrder?(draft:import('./app/utils/tradeRepublicTrading').TradeDraft):Promise<import('./app/utils/tradeRepublicTrading').TradePreview>,
       submitTradeRepublicOrder?(id:string,confirmed:boolean):Promise<import('./app/utils/tradeRepublicTrading').TradeReceipt>,
       getTradeRepublicOrders?(accountNumber:string):Promise<{orders:unknown;receipts:import('./app/utils/tradeRepublicTrading').TradeReceipt[]}>,
-      getTradeRepublicStatus?():Promise<{runnerAvailable:boolean; hasSavedCredentials:boolean; lastSyncAt?:string}>,
-      syncTradeRepublic?(args:{phone?:string; pin?:string; remember?:boolean}):Promise<{records:import('./app/utils/tradeRepublicSync').TradeRepublicRecord[]; cashRecords:import('./app/utils/tradeRepublicSync').TradeRepublicCashRecord[]; unsupportedRecords:import('./app/utils/tradeRepublicSync').TradeRepublicUnsupportedRecord[]; skipped:number; quotes:import('./app/utils/tradeRepublicSync').TradeRepublicQuote[]; quotesFetchedAt?:string; quoteError?:string; lastSyncAt?:string}>,
+      getTradeRepublicStatus?():Promise<{runnerAvailable:boolean; hasSavedCredentials:boolean; lastSyncAt?:string;
+        storedBitcoinContractDocuments?:number; contractDocumentsError?:string}>,
+      syncTradeRepublic?(args:{phone?:string; pin?:string; remember?:boolean}):Promise<{
+        records:import('./app/utils/tradeRepublicSync').TradeRepublicRecord[];
+        cashRecords:import('./app/utils/tradeRepublicSync').TradeRepublicCashRecord[];
+        unsupportedRecords:import('./app/utils/tradeRepublicSync').TradeRepublicUnsupportedRecord[];
+        skipped:number; quotes:import('./app/utils/tradeRepublicSync').TradeRepublicQuote[];
+        quotesFetchedAt?:string; quoteError?:string; lastSyncAt?:string;
+      }>,
+      forgetTradeRepublicContractDocuments?():Promise<boolean>,
       getTradeRepublicQuotes?():Promise<import('./app/utils/tradeRepublicSync').TradeRepublicQuoteCache>,
       getEuroExchangeRates?():Promise<import('./app/utils/quoteMetadata').EuroExchangeRates>,
       forgetTradeRepublicCredentials?():Promise<boolean>,
@@ -44,7 +52,7 @@ declare global {
       analyzePortfolio?(request:import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest,snapshot?:string):Promise<import('./app/utils/portfolioAnalysis').PortfolioAnalysisResult>,
       analyzePortfolioLocally?(request:import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest,snapshot?:string):Promise<import('./app/utils/portfolioAnalysis').PortfolioAnalysisResult>,
       refreshPortfolioForecast?(request:import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest,assetId?:number,snapshot?:string):Promise<import('./app/utils/portfolioAnalysis').PortfolioForecastRefreshResult>,
-      refreshPortfolioPrimaryRisk?(asset:import('./app/utils/portfolioAnalysis').ResearchAsset):Promise<import('./app/utils/portfolioAnalysis').PortfolioAnalysisResult>,
+      refreshPortfolioPrimaryRisk?(asset:import('./app/utils/portfolioAnalysis').ResearchAsset,investorContext:import('./app/utils/investorFacts').InvestorContext):Promise<import('./app/utils/portfolioAnalysis').PortfolioAnalysisResult>,
       refreshPortfolioResearch?(asset:import('./app/utils/portfolioAnalysis').ResearchAsset):Promise<import('./app/utils/portfolioAnalysis').PortfolioAnalysisResult>,
       onPortfolioAnalysisProgress?(callback:(progress:import('./app/utils/portfolioAnalysis').PortfolioAnalysisProgress)=>void):()=>void,
       openPortfolioAnalysisSource?(url:string):Promise<void>,

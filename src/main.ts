@@ -229,17 +229,30 @@ ipcMain.handle('trade-republic:trading-submit', (event, id: string, confirmed: b
 ipcMain.handle('trade-republic:trading-orders', (event, accountNumber: string) => trading.orders(tradingOwner(event), accountNumber));
 app.on('before-quit', () => { if (mainRendererId !== undefined) trading.disconnect(mainRendererId); });
 
-ipcMain.handle('trade-republic:status', async () => ({
-  runnerAvailable: await tradeRepublicSync.isRunnerAvailable(),
-  hasSavedCredentials: tradeRepublicSync.hasSavedCredentials(),
-  lastSyncAt: tradeRepublicSync.getLastSyncAt(),
-}));
+ipcMain.handle('trade-republic:status', async () => {
+  const status = {
+    runnerAvailable: await tradeRepublicSync.isRunnerAvailable(),
+    hasSavedCredentials: tradeRepublicSync.hasSavedCredentials(),
+    lastSyncAt: tradeRepublicSync.getLastSyncAt(),
+  };
+  try {
+    return { ...status, storedBitcoinContractDocuments: tradeRepublicSync.getStoredBitcoinContractCount() };
+  } catch (error) {
+    return { ...status, contractDocumentsError: error instanceof Error ? error.message : 'Lokaler Dokumentbestand ist nicht lesbar.' };
+  }
+});
 
-ipcMain.handle('trade-republic:sync', async (_event, args: { phone?: string; pin?: string; remember?: boolean }) => {
+ipcMain.handle('trade-republic:sync', async (_event, args: {
+  phone?: string; pin?: string; remember?: boolean;
+}) => {
   const credentials = args.phone && args.pin ? { phone: args.phone, pin: args.pin } : null;
   return tradeRepublicSync.sync(credentials, !!args.remember);
 });
 
+ipcMain.handle('trade-republic:forget-contract-documents', () => {
+  tradeRepublicSync.forgetBitcoinContractDocuments();
+  return true;
+});
 ipcMain.handle('trade-republic:quotes', async () => tradeRepublicSync.getCachedQuotes());
 let euroRatesPromise: ReturnType<typeof fetchEuroExchangeRates> | undefined;
 let euroRatesRequestedAt = 0;
@@ -278,8 +291,9 @@ ipcMain.handle('portfolio-ai:analyze-local', (event, request: PortfolioAnalysisR
 }, snapshot));
 ipcMain.handle('portfolio-ai:refresh-forecast', (_event, request: PortfolioAnalysisRequest, assetId?: number, snapshot?: string) =>
   portfolioAnalysis.refreshMarketForecast(request, assetId, snapshot));
-ipcMain.handle('portfolio-ai:refresh-risk', (event, asset: import('./app/utils/portfolioAnalysis').ResearchAsset) =>
-  portfolioAnalysis.refreshPrimaryRisk(asset, progress => {
+ipcMain.handle('portfolio-ai:refresh-risk', (event, asset: import('./app/utils/portfolioAnalysis').ResearchAsset,
+  investorContext: import('./app/utils/investorFacts').InvestorContext) =>
+  portfolioAnalysis.refreshPrimaryRisk(asset, investorContext, progress => {
     if (!event.sender.isDestroyed()) event.sender.send('portfolio-ai:progress', progress);
   }));
 ipcMain.handle('portfolio-ai:refresh-research', (event, asset: import('./app/utils/portfolioAnalysis').ResearchAsset) =>

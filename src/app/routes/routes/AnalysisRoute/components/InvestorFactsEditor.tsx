@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { Button, Icon } from '@blueprintjs/core';
-import { resolveTaxContext, hasAssetTaxOverride, type DepotTaxConfirmation } from '../../../../utils/investorFacts';
+import { bitcoinProductDocumentsReviewExpiresAt, currentBitcoinProductDocumentsReview, resolveTaxContext, hasAssetTaxOverride, type DepotTaxConfirmation } from '../../../../utils/investorFacts';
 import { resolveAcquisitionHistory, missingAssetAnalysisFacts, depotHistoryKey, hasAssetHistoryOverride, validAssetInvestorFacts, validCustody, validFactDate,
   type AssetInvestorFacts, type CustodyFact, type InvestorFacts, type DepotHistoryConfirmation, type HistoryCoverage } from '../../../../utils/investorFacts';
+import { isBitcoinResearchPosition } from '../../../../utils/portfolioResearch';
 
 const input = 'mt-1 w-full rounded border border-white/15 bg-slate-900 px-2 py-1 text-sm text-white';
 const numberValue = (v: string) => v.trim() ? Number(v.replace(',', '.')) : null;
@@ -32,6 +33,10 @@ function AssetFactsEditor({ asset, facts, transactions, depotHistories, depotTax
   const history = resolveAcquisitionHistory(asset, transactions, draft, depotHistories);
   const missing = missingAssetAnalysisFacts(asset, facts, resolveAcquisitionHistory(asset, transactions, facts, depotHistories), depotTaxContexts);
   const tax = resolveTaxContext(asset, draft, depotTaxContexts);
+  const isTradeRepublicBitcoin = isBitcoinResearchPosition({ type: asset.type, isin: asset.isin ?? '', symbol: asset.symbol })
+    && draft.custody.kind === 'broker' && depotHistoryKey(draft.custody.provider) === 'trade republic';
+  const bitcoinReviewCurrent = currentBitcoinProductDocumentsReview(draft.bitcoinProductDocumentsReview);
+  const bitcoinReviewExpiresAt = bitcoinProductDocumentsReviewExpiresAt(draft.bitcoinProductDocumentsReview);
   function save() {
     const timestamp = new Date().toISOString();
     const targetWeight = [target, minimum, maximum].some(v => v.trim())
@@ -57,6 +62,17 @@ function AssetFactsEditor({ asset, facts, transactions, depotHistories, depotTax
         <ul className="mt-1 mb-0 list-disc pl-4">{missing.map(field => <li key={field}>{field}</li>)}</ul>
       </div>}
       <CustodyFields value={draft.custody} onChange={custody => setDraft({ ...draft, custody })} />
+      {isTradeRepublicBitcoin && <section className={`rounded border p-3 ${bitcoinReviewCurrent ? 'border-emerald-400/30 bg-emerald-500/5' : 'border-amber-400/30 bg-amber-500/5'}`}
+        aria-label="Trade-Republic-BTC-Produktunterlagen">
+        <p className="m-0 font-bold text-white">BTC-Produktunterlagen bei Trade Republic</p>
+        <p className={bitcoinReviewCurrent ? 'text-emerald-300' : 'text-amber-200'}>{bitcoinReviewCurrent
+          ? `Als geprüfte Restunsicherheit erfasst. Erneute Bestätigung bis ${bitcoinReviewExpiresAt!.toLocaleDateString('de-DE')} erforderlich.`
+          : 'Bitte bestätige, dass aktuell keine exakt BTC zugeordneten Produkt- oder Vertragsunterlagen verfügbar sind. Ohne aktuelle Bestätigung bleibt dies eine offene Datenlücke.'}</p>
+        <Button small onClick={() => onSave({ ...facts, bitcoinProductDocumentsReview: {
+          status: 'not-available-at-trade-republic', confirmedAt: new Date().toISOString(),
+        } })}>{draft.bitcoinProductDocumentsReview ? 'Fehlen erneut für drei Monate bestätigen' : 'Fehlen für drei Monate bestätigen'}</Button>
+        {draft.bitcoinProductDocumentsReview && !bitcoinReviewCurrent && <p className="mb-0 text-gray-400">Die vorige Bestätigung ist abgelaufen.</p>}
+      </section>}
       <div className="analysis-fields">
         <label>Transaktionshistorie<select className={input} value={hasAssetHistoryOverride(draft) ? draft.historyCoverage : 'inherit'} onChange={e => setDraft({ ...draft,
           historyCoverageOverride: e.target.value !== 'inherit', historyCoverage: e.target.value === 'inherit' ? 'unknown' : e.target.value as HistoryCoverage })}>

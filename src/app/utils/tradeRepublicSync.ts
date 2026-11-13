@@ -8,6 +8,7 @@ import extract from 'extract-zip';
 import { TradeRepublicSessionStore } from './tradeRepublicSession';
 import { tradeRepublicTradingWorker } from './tradeRepublicTradingWorker';
 import { tradeRepublicPortfolioExport } from './tradeRepublicPortfolioExport';
+import { TradeRepublicContractDocumentStore } from './tradeRepublicContractDocuments';
 
 const UV_VERSION = '0.11.30';
 const UV_WINDOWS_X64_SHA256 = 'be8d78c992312212e5cc05e9f9de3fa996db73b7c86a186dfb9231eb9f91d33e';
@@ -67,6 +68,7 @@ export interface TradeRepublicQuoteCache {
 
 type PytrRow = Record<string, unknown>;
 const stringValue = (value: unknown): string => typeof value === 'string' ? value.trim() : '';
+
 const numberValue = (value: unknown): number => {
   if (typeof value === 'number') return Number.isFinite(value) ? value : 0;
   if (typeof value !== 'string') return 0;
@@ -199,12 +201,14 @@ export class TradeRepublicSync {
   private readonly runnerDir: string;
   private readonly quoteCacheFile: string;
   private readonly syncStatusFile: string;
+  private readonly contractDocuments: TradeRepublicContractDocumentStore;
   constructor(userDataPath: string) {
     this.credentialsFile = path.join(userDataPath, 'trade-republic-credentials.bin');
     this.tradingSession = new TradeRepublicSessionStore(userDataPath, safeStorage);
     this.runnerDir = path.join(userDataPath, 'tools', `uv-${UV_VERSION}`);
     this.quoteCacheFile = path.join(userDataPath, 'trade-republic-quotes.json');
     this.syncStatusFile = path.join(userDataPath, 'trade-republic-sync-status.json');
+    this.contractDocuments = new TradeRepublicContractDocumentStore(userDataPath);
   }
   getLastSyncAt(): string | undefined {
     try {
@@ -248,7 +252,11 @@ export class TradeRepublicSync {
       return { quotes: [] };
     }
   }
-  async sync(credentials: TradeRepublicCredentials | null, remember: boolean): Promise<TradeRepublicParseResult & { quotes: TradeRepublicQuote[]; quotesFetchedAt?: string; quoteError?: string; lastSyncAt: string }> {
+  getStoredBitcoinContractCount(): number { return this.contractDocuments.getStoredCount(); }
+  forgetBitcoinContractDocuments(): void { this.contractDocuments.clear(); }
+  async sync(credentials: TradeRepublicCredentials | null, remember: boolean): Promise<TradeRepublicParseResult & {
+    quotes: TradeRepublicQuote[]; quotesFetchedAt?: string; quoteError?: string; lastSyncAt: string;
+  }> {
     const login = credentials?.phone && credentials?.pin ? credentials : this.readCredentials();
     if (!login) throw new Error('Bitte Telefonnummer und PIN eingeben.');
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-tr-'));

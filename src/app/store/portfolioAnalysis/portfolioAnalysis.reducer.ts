@@ -4,6 +4,7 @@ import { buildAnalysisPositions } from '../../utils/portfolioAnalysis';
 import { MARKET_PRICE_UPDATED_AT_KEY } from '../../utils/syncTimestamps';
 import { resolveAcquisitionHistory, resolveTaxContext } from '../../utils/investorFacts';
 import type { PortfolioAnalysisRequest, PortfolioAnalysisResult, PortfolioAnalysisProgress, SavedPortfolioAnalysis, ResearchAsset } from '../../utils/portfolioAnalysis';
+import type { InvestorContext } from '../../utils/investorFacts';
 
 interface AnalysisState {
   targetAssetId?: number | null;
@@ -136,16 +137,16 @@ export const refreshPortfolioForecast = createAsyncThunk<
 
 export const refreshPortfolioPrimaryRisk = createAsyncThunk<
   PortfolioAnalysisResult,
-  ResearchAsset,
+  { asset: ResearchAsset; investorContext: InvestorContext },
   { state: { portfolioAnalysis: AnalysisState }; dispatch: ThunkDispatch<{ portfolioAnalysis: AnalysisState }, unknown, UnknownAction>; rejectValue: string }
->('portfolioAnalysis/refreshPrimaryRisk', async (asset, { dispatch, requestId, rejectWithValue }) => {
+>('portfolioAnalysis/refreshPrimaryRisk', async ({ asset, investorContext }, { dispatch, requestId, rejectWithValue }) => {
   let unsubscribe: (() => void) | undefined;
   try {
     if (!window.API.refreshPortfolioPrimaryRisk) throw new Error('Bitte FinPal neu starten, um Unternehmens- und Produktrisiken einzeln zu aktualisieren.');
     unsubscribe = window.API.onPortfolioAnalysisProgress?.(progress => {
       dispatch(analysisProgressReceived({ progress, requestId }));
     });
-    return await window.API.refreshPortfolioPrimaryRisk(asset);
+    return await window.API.refreshPortfolioPrimaryRisk(asset, investorContext);
   } catch (error) {
     return rejectWithValue(error instanceof Error ? error.message : 'Die Risikoprüfung konnte nicht aktualisiert werden.');
   } finally { unsubscribe?.(); }
@@ -250,10 +251,10 @@ const slice = createSlice({
       state.error = action.payload ?? action.error.message ?? 'Der Forecast konnte nicht aktualisiert werden.';
     })
     .addCase(refreshPortfolioPrimaryRisk.pending, (state, action) => {
-      state.targetAssetId = action.meta.arg.id;
+      state.targetAssetId = action.meta.arg.asset.id;
       state.restoreBlocked = true;
       state.startedAt = Date.now();
-      state.progress = { stage: 'risk-review', activeAssetId: action.meta.arg.id, activeRiskStep: 'documents', lastActivityAt: state.startedAt };
+      state.progress = { stage: 'risk-review', activeAssetId: action.meta.arg.asset.id, activeRiskStep: 'documents', lastActivityAt: state.startedAt };
       state.requestId = action.meta.requestId;
       state.error = null;
     })

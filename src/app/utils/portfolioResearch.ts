@@ -107,6 +107,11 @@ export const bitcoinMiningPoolSource = {
   url: 'https://mempool.space/api/v1/mining/pools/1w',
 } as const;
 
+export const bitcoinMiCarSource = {
+  title: 'EUR-Lex: Verordnung (EU) 2023/1114 (MiCAR), deutsche Fassung',
+  url: 'https://eur-lex.europa.eu/legal-content/DE/TXT/?uri=CELEX:02023R1114-20241230',
+} as const;
+
 export const bitcoinPrimarySources = [
   { title: 'Bitcoin.org: Funktionsweise des Bitcoin-Netzwerks', url: 'https://bitcoin.org/en/how-it-works' },
   { title: 'Bitcoin Developer Guide: Blockchain und Konsensregeln', url: 'https://developer.bitcoin.org/devguide/block_chain.html' },
@@ -114,6 +119,7 @@ export const bitcoinPrimarySources = [
   { title: 'Bitcoin.org: Kurs-, Transaktions- und regulatorische Risiken', url: 'https://bitcoin.org/en/you-need-to-know' },
   bitcoinMiningPoolSource,
   { title: 'Trade Republic: Crypto Execution Policy (MiCAR)', url: 'https://assets.traderepublic.com/assets/files/EN_ExecutionPolicy.pdf' },
+  bitcoinMiCarSource,
 ] as const;
 
 export const germanPrivateCryptoTaxSources = [
@@ -149,7 +155,7 @@ export function buildResearchSecurities(positions: Pick<AnalysisPosition, 'id' |
   return positions.map(({ id, name, isin, symbol, type }) => {
     const hints = isBitcoinResearchPosition({ isin, symbol, type })
       ? { issuer: 'Bitcoin-Netzwerk; Projekt- und Protokolldokumentation, kein Emittent', listing: 'BTC; Produktart und Verwahrung gesondert prüfen',
-        sourceUrls: bitcoinPrimarySources.map(source => source.url) }
+        sourceUrls: [...bitcoinPrimarySources, ...germanPrivateCryptoTaxSources].map(source => source.url) }
       : issuerHints[isin.trim().toUpperCase()];
     return { id, name, isin, symbol, type, ...(hints ? { discoveryHints: hints } : {}) };
   });

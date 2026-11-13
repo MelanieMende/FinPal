@@ -5,6 +5,7 @@ import path from 'node:path';
 import type { AnalysisPosition } from './portfolioAnalysis';
 import { PrimaryRiskResearch, riskExcerpt } from './primaryRiskResearch';
 import { knownResearchSources } from './portfolioResearch';
+import { TradeRepublicContractDocumentStore } from './tradeRepublicContractDocuments';
 
 jest.mock('pdf-parse', () => ({ PDFParse: class {
   constructor(private readonly options: { data: Buffer }) {}
@@ -21,23 +22,33 @@ it('loads and persists Bitcoin network documentation without requiring an ISIN o
     <p>Bitcoin wallets use a private key. When a third party controls your keys, you rely on their security.</p>
     <p>Bitcoin price is volatile, with sometimes illiquid markets. Government taxes and regulations apply.</p></html>`;
   const policy = `Trade Republic Bank GmbH is a credit institution licensed in Germany and a crypto-asset services provider under Regulation (EU) 2023/1114 on Markets in Crypto-Assets (MiCAR). Trade Republic executes orders in Crypto-Assets.`;
+  const micar = '<html><p>Verordnung (EU) 2023/1114. Artikel 60: Kreditinstitute dürfen Kryptowerte-Dienstleistungen nach vorheriger Anzeige erbringen.</p></html>';
+  const bmf = '<html><h1>Einzelfragen zur ertragsteuerrechtlichen Behandlung bestimmter Kryptowerte</h1><p>BMF-Schreiben vom 06.03.2025.</p></html>';
+  const estg = '<html><h1>§ 23 EStG</h1><p>Private Veräußerungsgeschäfte mit anderen Wirtschaftsgütern.</p></html>';
   const miningPools = { blockCount: 100, pools: [
     { name: 'Foundry USA', blockCount: 30 }, { name: 'AntPool', blockCount: 20 }, { name: 'Unknown', blockCount: 5 },
   ] };
-  const fetcher = jest.fn(async (url: string) => new Response(url.includes('/mining/pools/1w') ? JSON.stringify(miningPools)
-    : url.includes('EN_ExecutionPolicy.pdf') ? policy : body,
-  { headers: { 'content-type': url.includes('/mining/pools/1w') ? 'application/json'
-    : url.includes('EN_ExecutionPolicy.pdf') ? 'application/pdf' : 'text/html' } }));
+  const sourceBody = (url: string) => url.includes('/mining/pools/1w') ? JSON.stringify(miningPools)
+    : url.includes('EN_ExecutionPolicy.pdf') ? policy
+      : url.includes('eur-lex.europa.eu') ? micar
+        : url.includes('bundesfinanzministerium.de') ? bmf
+          : url.includes('gesetze-im-internet.de') ? estg : body;
+  const fetcher = jest.fn(async (url: string) => new Response(sourceBody(url),
+    { headers: { 'content-type': url.includes('/mining/pools/1w') ? 'application/json'
+      : url.includes('.pdf') ? 'application/pdf' : 'text/html' } }));
   const position = { id: 31, name: 'Bitcoin', isin: 'BTC', symbol: 'BTC', type: 'Crypto' } as AnalysisPosition;
   try {
     const file = path.join(folder, 'documents.json');
     const first = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
     expect(first.discoveryChecked).toBe(true);
     expect(first.gaps).toEqual([]);
-    expect(first.documents).toHaveLength(6);
+    expect(first.documents).toHaveLength(9);
     expect(first.documents.every(document => document.period === null)).toBe(true);
     expect(first.documents.filter(document => document.identity === 'bitcoin-network')).toHaveLength(4);
     expect(first.documents.find(document => document.identity === 'trade-republic-casp')?.excerpt).toContain('licensed in Germany');
+    expect(first.documents.find(document => document.identity === 'eu-micar')?.excerpt).toContain('Artikel 60');
+    expect(first.documents.find(document => document.identity === 'german-bmf-crypto-tax')?.excerpt).toContain('Kryptowerte');
+    expect(first.documents.find(document => document.identity === 'german-estg-23')?.excerpt).toContain('§ 23');
     expect(first.documents.find(document => document.identity === 'bitcoin-mining-pools')?.excerpt)
       .toContain('Foundry USA 30,0 %');
     expect(first.documents.find(document => document.identity === 'bitcoin-mining-pools')?.excerpt)
@@ -46,30 +57,90 @@ it('loads and persists Bitcoin network documentation without requiring an ISIN o
       .toContain('Tatsächliche Hashing-Kontrolle bleibt offen');
     expect(first.documents[0].excerpt).toContain('51 percent attack');
     expect(first.documents[0].excerpt).toContain('during both types of forks');
-    expect(fetcher).toHaveBeenCalledTimes(6);
+    expect(fetcher).toHaveBeenCalledTimes(9);
     const second = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now)
       .collect({ ...position, isin: '', symbol: 'BTC-EUR' });
     expect(second.documents.map(document => document.hash)).toEqual(first.documents.map(document => document.hash));
-    expect(fetcher).toHaveBeenCalledTimes(6);
+    expect(fetcher).toHaveBeenCalledTimes(9);
     now += 25 * 3600000;
     fetcher.mockRejectedValue(new Error('offline'));
     const fallback = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
-    expect(fallback.documents).toHaveLength(5);
+    expect(fallback.documents).toHaveLength(4);
     expect(fallback.documents.some(document => document.identity === 'bitcoin-mining-pools')).toBe(false);
     expect(fallback.discoveryChecked).toBe(false);
-    expect(fallback.gaps).toHaveLength(6);
+    expect(fallback.gaps).toHaveLength(9);
     expect(fallback.gaps.some(gap => gap.includes('Mining-Pool-Daten'))).toBe(true);
     const providerOnlyFailure = jest.fn(async (url: string) => {
       if (url.includes('EN_ExecutionPolicy.pdf')) throw new Error('provider offline');
-      return new Response(url.includes('/mining/pools/1w') ? JSON.stringify(miningPools) : body,
+      return new Response(sourceBody(url),
         { headers: { 'content-type': url.includes('/mining/pools/1w') ? 'application/json' : 'text/html' } });
     });
     const partial = await new PrimaryRiskResearch(path.join(folder, 'provider-failure.json'),
       providerOnlyFailure as unknown as typeof fetch, () => now).collect(position);
-    expect(partial.discoveryChecked).toBe(true);
+    expect(partial.discoveryChecked).toBe(false);
     expect(partial.documents.filter(document => document.identity === 'bitcoin-network')).toHaveLength(4);
-    expect(partial.gaps).toEqual(['Optionale anbieterbezogene Crypto-Primärquelle konnte nicht aktuell geladen werden: https://assets.traderepublic.com/assets/files/EN_ExecutionPolicy.pdf']);
+    expect(partial.gaps).toEqual(['Trade-Republic-Ausführungsrichtlinie konnte nicht aktuell geladen oder validiert werden: https://assets.traderepublic.com/assets/files/EN_ExecutionPolicy.pdf']);
+    const micarPendingFetcher = jest.fn(async (url: string) => {
+      const pending = url.includes('eur-lex.europa.eu');
+      return new Response(pending ? 'The request has been accepted for processing.' : sourceBody(url), {
+        status: pending ? 202 : 200,
+        headers: { 'content-type': url.includes('/mining/pools/1w') ? 'application/json'
+          : url.includes('.pdf') ? 'application/pdf' : 'text/html' },
+      });
+    });
+    const micarUnavailable = await new PrimaryRiskResearch(path.join(folder, 'micar-pending.json'),
+      micarPendingFetcher as unknown as typeof fetch, () => now).collect(position);
+    expect(micarUnavailable.discoveryChecked).toBe(false);
+    expect(micarUnavailable.documents.some(document => document.identity === 'eu-micar')).toBe(false);
+    expect(micarUnavailable.gaps).toContain(
+      'EU-MiCAR-Primärtext konnte nicht aktuell geladen oder validiert werden: https://eur-lex.europa.eu/legal-content/DE/TXT/?uri=CELEX:02023R1114-20241230');
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
+it('adds locally stored Trade Republic crypto terms to Bitcoin research', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-tr-contract-research-'));
+  try {
+    const exportDirectory = path.join(folder, 'export');
+    fs.mkdirSync(exportDirectory, { recursive: true });
+    const pdfPath = path.join(exportDirectory, 'contract.pdf');
+    fs.writeFileSync(pdfPath, Buffer.from('%PDF-1.4\nBitcoin Terms and Conditions for crypto-assets. Custody and execution rules apply.'));
+    fs.writeFileSync(path.join(exportDirectory, 'events_with_documents.json'), JSON.stringify([{
+      eventType: 'CRYPTO_TNC_UPDATE_2025', title: 'Crypto terms updated', timestamp: '2025-01-15T12:00:00Z',
+      details: { sections: [{ type: 'documents', data: [{ title: 'Bitcoin Terms and Conditions', local_filepath: pdfPath }] }] },
+    }]));
+    const contractStore = new TradeRepublicContractDocumentStore(folder);
+    await contractStore.importFromPytrExport(exportDirectory);
+
+    const bodies = {
+      bitcoin: '<html><p>Bitcoin network. Bitcoin public ledger and consensus rules. Bitcoin price is volatile.</p></html>',
+      policy: 'Trade Republic Bank GmbH is a credit institution licensed in Germany and a crypto-asset services provider under Regulation (EU) 2023/1114 on Markets in Crypto-Assets (MiCAR).',
+      micar: 'Verordnung (EU) 2023/1114. Artikel 60: Kreditinstitute dürfen Kryptowerte-Dienstleistungen erbringen.',
+      bmf: 'Ertragsteuerrechtliche Behandlung von Kryptowerten.',
+      estg: '§ 23 EStG: Private Veräußerungsgeschäfte.',
+      pools: JSON.stringify({ blockCount: 100, pools: [{ name: 'Foundry USA', blockCount: 30 }] }),
+    };
+    const fetcher = jest.fn(async (url: string) => {
+      const body = url.includes('/mining/pools/1w') ? bodies.pools
+        : url.includes('EN_ExecutionPolicy.pdf') ? bodies.policy
+          : url.includes('eur-lex.europa.eu') ? bodies.micar
+            : url.includes('bundesfinanzministerium.de') ? bodies.bmf
+              : url.includes('gesetze-im-internet.de') ? bodies.estg : bodies.bitcoin;
+      return new Response(body, { headers: { 'content-type': url.includes('/mining/pools/1w') ? 'application/json' : 'text/html' } });
+    });
+    const position = { id: 31, name: 'Bitcoin', isin: 'BTC', symbol: 'BTC', type: 'Crypto' } as AnalysisPosition;
+    const result = await new PrimaryRiskResearch(path.join(folder, 'research-cache.json'), fetcher as unknown as typeof fetch,
+      Date.now, contractStore).collect(position);
+
+    expect(result.discoveryChecked).toBe(true);
+    expect(result.documents.find(document => document.identity === 'trade-republic-bitcoin-product')).toMatchObject({
+      source: { title: 'Trade Republic: Crypto terms updated · Bitcoin Terms and Conditions' },
+      period: '2025-01-15',
+    });
+    expect(result.documents.find(document => document.identity === 'trade-republic-bitcoin-product')?.excerpt)
+      .toContain('Bitcoin Terms and Conditions');
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
 });
 
 it.each([
@@ -92,7 +163,7 @@ it.each([
 
 it('does not assign Bitcoin project sources from a name, conflicting symbol, or security ISIN', () => {
   const bitcoin = { isin: 'BTC', symbol: 'BTC', type: 'Crypto' as const };
-  expect(knownResearchSources(bitcoin)).toHaveLength(8);
+  expect(knownResearchSources(bitcoin)).toHaveLength(9);
   expect(knownResearchSources({ ...bitcoin, isin: '', symbol: 'ETH' })).toEqual([]);
   expect(knownResearchSources({ ...bitcoin, symbol: 'BCH' })).toEqual([]);
   expect(knownResearchSources({ ...bitcoin, isin: 'DE000A27Z304' })).toEqual([]);

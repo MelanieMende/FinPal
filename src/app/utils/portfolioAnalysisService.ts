@@ -15,11 +15,12 @@ import { checkPortfolioFunding } from './portfolioFunding';
 import { isDescriptiveRiskInfo, riskMessageInstructions, separateAnalysisMessages } from './analysisMessages';
 import { allocationCandidateKey, allocationMismatch, validPortfolioAllocation } from './portfolioAllocation';
 import { tradeDecisionSchema, validTradeDecision, buildTradeDecisionContext, tradeDecisionResearchInstructions, tradeDecisionAnalysisInstructions } from './tradeDecision';
-import { investorFactsAnalysisInstructions, historyCoverageAnalysisInstructions } from './investorFacts';
+import { investorFactsAnalysisInstructions, historyCoverageAnalysisInstructions, validInvestorContext, type InvestorContext } from './investorFacts';
 import type { MarketForecastProvider } from './marketForecastProvider';
 import { candidateForecastPosition, validCandidateMarketQuote, type CandidateMarketQuote, type CandidateMarketQuoteProvider } from './candidateMarketQuote';
 import type { DeterministicResearchProvider, DeterministicResearchResult } from './deterministicOnlineResearch';
 import { PrimaryRiskResearch } from './primaryRiskResearch';
+import { TradeRepublicContractDocumentStore } from './tradeRepublicContractDocuments';
 import { PrimaryRiskAssessmentCache, addRiskReviewContext, riskReviewInput, riskAssessmentSchema, riskForModel, validateRiskAssessment,
   type PrimaryRiskRecord } from './primaryRiskAssessment';
 import { allRiskCheckNames, riskReviewInstructions } from './assetRiskPolicy';
@@ -362,7 +363,8 @@ export class PortfolioAnalysisService {
     this.keyFile = path.join(dataPath, 'portfolio-ai-key.bin');
     this.resultFile = path.join(dataPath, 'portfolio-ai-last-analysis.json');
     this.researchCache = new PortfolioResearchCache(path.join(dataPath, 'portfolio-ai-research-cache.json'));
-    this.primaryRiskResearch = new PrimaryRiskResearch(path.join(dataPath, 'portfolio-primary-risk-documents.json'), requestFetch);
+    this.primaryRiskResearch = new PrimaryRiskResearch(path.join(dataPath, 'portfolio-primary-risk-documents.json'), requestFetch,
+      Date.now, new TradeRepublicContractDocumentStore(dataPath));
     this.primaryRiskCache = new PrimaryRiskAssessmentCache(path.join(dataPath, 'portfolio-primary-risk-assessments.json'));
   }
   status() { return { hasApiKey: fs.existsSync(this.keyFile), secureStorageAvailable: safeStorage.isEncryptionAvailable(), model: DEFAULT_ANALYSIS_MODEL }; }
@@ -644,7 +646,8 @@ export class PortfolioAnalysisService {
     }
   }
 
-  async refreshPrimaryRisk(asset: ResearchAsset, onProgress?: (progress: PortfolioAnalysisProgress) => void): Promise<PortfolioAnalysisResult> {
+  async refreshPrimaryRisk(asset: ResearchAsset, currentInvestorContext?: InvestorContext,
+    onProgress?: (progress: PortfolioAnalysisProgress) => void): Promise<PortfolioAnalysisResult> {
     if (!asset || !Number.isInteger(asset.id) || !['Stock', 'ETF', 'Fund', 'Bond', 'Crypto', 'Commodity', 'RealEstate', 'CashEquivalent'].includes(asset.type)
       || ![asset.name, asset.isin, asset.symbol].every(value => typeof value === 'string' && value.length <= 300))
       throw new Error('Das ausgewählte Asset ist ungültig.');
@@ -652,10 +655,13 @@ export class PortfolioAnalysisService {
     const previous = this.getLastResult();
     if (!previous?.report.recommendations.some(rec => rec.assetId === asset.id))
       throw new Error('Für dieses Asset liegt noch keine gespeicherte Analyse vor.');
+    if (currentInvestorContext !== undefined && !validInvestorContext(currentInvestorContext))
+      throw new Error('Die aktuellen Angaben für die Risikoprüfung sind ungültig.');
     const savedRequest = JSON.parse(fs.readFileSync(this.resultFile, 'utf8')).request as PortfolioAnalysisRequest;
     const position = savedRequest.positions.find(item => item.id === asset.id);
     if (!position || position.type !== asset.type || position.isin.trim().toUpperCase() !== asset.isin.trim().toUpperCase())
       throw new Error('Das Asset wurde seit der gespeicherten Analyse geändert. Bitte die Portfolioanalyse neu starten.');
+    const request = currentInvestorContext ? { ...savedRequest, investorContext: currentInvestorContext } : savedRequest;
     this.running = true;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
@@ -667,7 +673,7 @@ export class PortfolioAnalysisService {
     try {
       progress('documents');
       const set = await this.primaryRiskResearch.collect(position, controller.signal, previous.report.sources, true);
-      addRiskReviewContext(position, set, savedRequest.investorContext);
+      addRiskReviewContext(position, set, request.investorContext);
       let assessment: unknown = null;
       if (set.documents.length && set.discoveryChecked) {
         progress('assessment');
@@ -708,11 +714,11 @@ export class PortfolioAnalysisService {
       const sources = [...new Map([...previous.report.sources, ...record.sources].map(source => [source.url, source])).values()];
       const report: PortfolioAnalysisResult = { ...previous.report, recommendations, fundamentalRisks, sources,
         ...(changed ? { riskReviewUpdatedAt: new Date().toISOString() } : {}) };
-      report.allocationPlan = buildForecastAllocation(savedRequest, previous.report.allocationPlan?.optimization?.forecasts ?? [],
+      report.allocationPlan = buildForecastAllocation(request, previous.report.allocationPlan?.optimization?.forecasts ?? [],
         report.newAssetRecommendations ?? [], previous.report, recommendations,
         previous.report.allocationPlan?.optimization?.reviewedUnavailableKeys ?? [], fundamentalRisks);
-      report.fundingCheck = checkPortfolioFunding(savedRequest, report);
-      this.saveLastResult(report, savedRequest, previous.snapshot);
+      report.fundingCheck = checkPortfolioFunding(request, report);
+      this.saveLastResult(report, request, previous.snapshot);
       progress(undefined, true);
       return report;
     } catch (error) {

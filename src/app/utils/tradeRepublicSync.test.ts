@@ -1,6 +1,34 @@
-import { normalizeLegacyTradeRepublicQuote, parsePytrJsonLines, parsePytrPortfolioCsv } from './tradeRepublicSync';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { normalizeLegacyTradeRepublicQuote, parsePytrJsonLines, parsePytrPortfolioCsv, TradeRepublicSync } from './tradeRepublicSync';
 
 jest.mock('electron', () => ({ safeStorage: {} }));
+
+it('does not request Trade Republic timeline documents during a regular sync', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-tr-sync-'));
+  try {
+    const userDataPath = path.join(root, 'user-data');
+    fs.mkdirSync(userDataPath, { recursive: true });
+    const sync = new TradeRepublicSync(userDataPath);
+    const commands: string[][] = [];
+    Object.defineProperty(sync, 'ensureRunner', { value: async () => 'uvx' });
+    Object.defineProperty(sync, 'runPytrCommand', { value: async (
+      _runner: string, args: string[], _isolatedHome: string, expectedFile: string,
+    ) => {
+      commands.push(args);
+      fs.mkdirSync(path.dirname(expectedFile), { recursive: true });
+      fs.writeFileSync(expectedFile, expectedFile.endsWith('.csv') ? 'Name;ISIN;quantity;price;avgCost;netValue\n' : '');
+    } });
+
+    const result = await sync.sync({ phone: '+49123456789', pin: '1234' }, false);
+
+    expect(commands.some(args => args[1] === 'dl_docs')).toBe(false);
+    expect(result).not.toHaveProperty('contractDocuments');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 it('preserves explicit instrument types from portfolio exports without inventing types for legacy caches', () => {
   const csv = 'Name;ISIN;quantity;price;avgCost;netValue;instrumentType\nBitcoin;BTC;1;100;80;100;crypto';

@@ -7,7 +7,7 @@ import { setDividendsInternal } from '../../../../store/dividends/dividends.redu
 import { analyzePortfolio } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
 import AssetList from '../../AssetsRoute/components/AssetList/AssetList';
 import { buildAnalysisPositions } from '../../../../utils/portfolioAnalysis';
-import PortfolioAnalysis, { ANALYSIS_PROFILE_KEY, ANALYSIS_MODEL_KEY, AssetRecommendationStatus, AssetResearchIndicator, comparableAnalysisSnapshot } from './PortfolioAnalysis';
+import PortfolioAnalysis, { ANALYSIS_PROFILE_KEY, ANALYSIS_MODEL_KEY, AssetRecommendationStatus, AssetResearchIndicator, RiskReview, comparableAnalysisSnapshot } from './PortfolioAnalysis';
 import AnalysisRoute from '../AnalysisRoute';
 import { MARKET_PRICE_UPDATED_AT_KEY, MARKET_PRICE_UPDATED_EVENT } from '../../../../utils/syncTimestamps';
 import { tradeDecisionFixture } from '../../../../../testing/fixtures/tradeDecision';
@@ -96,6 +96,25 @@ it('shows a blocked card status and moves the trade status details into its tool
   fireEvent.mouseEnter(screen.getByLabelText('Halten – Handelsstatus für Strategisch'));
   expect(await screen.findByText('Handelsstatus: Halten – strategische Entscheidung')).toBeInTheDocument();
   view.unmount();
+});
+
+it('makes blocking risk findings visible before the detailed evidence', () => {
+  render(<RiskReview blocked risk={{ key: '1', status: 'unknown', decisionReadiness: 'reviewed-uncertainty',
+    materialRisks: ['low-margin'], rationale: [
+      'Gewinn oder Verlust: kein wesentliches Risiko belegt (Quartalsgewinn belegt.)',
+      'Marge: Risiko belegt (Die berichtete EBIT-Marge beträgt 3,1 %.)',
+      'Fortführung: offen (Kein überprüfbarer Befund mit Textstelle.)',
+      'Periodengewinn: 123 EUR Mio., Periode Q2 2026',
+    ].join('\n'), sources: [{ title: 'Lufthansa Quartalsbericht', url: 'https://example.com/lufthansa.pdf' }] }}
+  openSource={jest.fn()} />);
+  const review = screen.getByRole('region', { name: 'Unternehmens- und Produktrisiken' });
+  expect(within(review).getByText('Blockierender Risikobefund')).toBeInTheDocument();
+  expect(within(review).getByText('Marge')).toBeInTheDocument();
+  expect(within(review).getByText('Warum die Entscheidung blockiert ist')).toBeInTheDocument();
+  expect(within(review).getByText(/Die berichtete EBIT-Marge beträgt 3,1/)).toBeInTheDocument();
+  expect(within(review).getByText('Offene Punkte und Restunsicherheit')).toBeInTheDocument();
+  expect(within(review).getByText('Belegte Kennzahlen')).toBeInTheDocument();
+  expect(within(review).getByRole('link', { name: 'Lufthansa Quartalsbericht' })).toBeInTheDocument();
 });
 
 it('does not mark an analysis stale only because identical quotes were fetched again', () => {

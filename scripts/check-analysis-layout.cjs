@@ -154,6 +154,9 @@ async function checkInChromium(html, output) {
           await scrollToSection('[aria-label^="Prognose und Zielgewichtung "]');
           const assetAnalysisScreenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'asset-analysis-900' + suffix + '.png'), assetAnalysisScreenshot.toPNG());
+          await scrollToSection('[aria-label="Unternehmens- und Produktrisiken"]');
+          const riskReviewScreenshot = await window.webContents.capturePage();
+          fs.writeFileSync(path.join(output, 'risk-review-900' + suffix + '.png'), riskReviewScreenshot.toPNG());
           await scrollToSection('[aria-label="Steuerlicher Kontext je Depot"]');
           const depotScreenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'depot-tax-900' + suffix + '.png'), depotScreenshot.toPNG());
@@ -239,7 +242,18 @@ async function buildAndCheck() {
       const recommendations = allocationPositions.map(position => ({ assetId: position.id, action: 'Prüfen',
         rationale: 'Ausführliche KI-Begründung für die zusammengeführte Asset-Kachel. '.repeat(5),
         risk: 'Risikoangabe für die Layoutprüfung.', sourceIndexes: [] }));
-      const result = { summary: 'Layout fixture', infos: ['Zusätzliche Information für die Layoutprüfung.'], warnings: ['Warnung mit einem längeren Text für die Layoutprüfung.'], sources: [], recommendations, generatedAt: '2026-10-12T10:00:00Z',
+      const fundamentalRisks = [{ key: '1', status: 'unknown', decisionReadiness: 'reviewed-uncertainty', materialRisks: ['low-margin'], structuralRisks: [],
+        rationale: ['Gewinn oder Verlust: kein wesentliches Risiko belegt (Der jüngste Quartalsgewinn wurde im Primärbericht belegt.)',
+          'Marge: Risiko belegt (Die berichtete operative Marge liegt lediglich bei 3,1 Prozent und begründet den blockierenden Befund.)',
+          'Finanzierung: kein wesentliches Risiko belegt (Verfügbare Liquidität und Kreditlinien wurden im Bericht belegt.)',
+          'Fortführung: offen (Kein überprüfbarer Befund mit Textstelle.)',
+          'Regulatorische Risiken: offen (Kein überprüfbarer Befund mit Textstelle.)',
+          'Periodengewinn: 123 EUR Mio., Periode 2026-04-01/2026-06-30',
+          'operative Marge: 3.1 %, Periode 2026-04-01/2026-06-30',
+          'Liquidität: 1799 EUR Mio., Periode 2026-06-30'].join('\\n'),
+        sources: [{ title: 'LH-QR-2026-2-e.pdf', url: 'https://example.com/LH-QR-2026-2-e.pdf' },
+          { title: 'LH-AR-2025-e.pdf', url: 'https://example.com/LH-AR-2025-e.pdf' }] }];
+      const result = { summary: 'Layout fixture', infos: ['Zusätzliche Information für die Layoutprüfung.'], warnings: ['Warnung mit einem längeren Text für die Layoutprüfung.'], sources: [], recommendations, fundamentalRisks, generatedAt: '2026-10-12T10:00:00Z',
         priceUpdatedAt: null, model: 'fixture', allocationPlan,
         newAssetRecommendations: [candidate] };
       const store = setupStore({ ...state, assets, transactions,

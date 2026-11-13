@@ -20,6 +20,7 @@ import { parseDecisionDetails, protectedCashEUR, type DecisionForm } from '../..
 import { useInvestorFacts } from '../../../../utils/useInvestorFacts';
 import { buildInvestorContext } from '../../../../utils/investorFacts';
 import { allocationCandidateKey } from '../../../../utils/portfolioAllocation';
+import type { FundamentalRiskAssessment } from '../../../../utils/robustForecastModel';
 
 export const ANALYSIS_PROFILE_KEY = 'finpal.portfolioAnalysis.profile.v1';
 export const ANALYSIS_MODEL_KEY = 'finpal.portfolioAnalysis.model.v1';
@@ -76,6 +77,93 @@ export function AssetResearchIndicator({ status, now }: { status?: AssetResearch
 }
 const isBlockedRecommendation = (recommendation: Pick<AssetRecommendation, 'action' | 'executionBlocker'>) =>
   recommendation.action === 'Prüfen' || !!recommendation.executionBlocker;
+const riskLabels: Record<string, string> = {
+  'loss-making': 'Verlustlage', 'low-margin': 'Marge', financing: 'Finanzierung', 'going-concern': 'Fortführung',
+  regulatory: 'Regulatorik', identity: 'Identität', strategy: 'Strategie', costs: 'Kosten', concentration: 'Konzentration',
+  liquidity: 'Liquidität', structure: 'Struktur', currency: 'Währung', valuation: 'Bewertung', credit: 'Bonität',
+  terms: 'Bedingungen', seniority: 'Rang', protocol: 'Protokoll', custody: 'Verwahrung', underwriting: 'Versicherungstechnik',
+  solvency: 'Solvenz',
+};
+const riskLineLabels: Record<string, string> = {
+  'loss-making': 'Gewinn oder Verlust', 'low-margin': 'Marge', financing: 'Finanzierung', 'going-concern': 'Fortführung',
+  regulatory: 'Regulatorische Risiken', identity: 'Instrument und Emittent', strategy: 'Strategie', costs: 'Kosten',
+  concentration: 'Konzentration', liquidity: 'Liquidität', structure: 'Struktur', currency: 'Währung', valuation: 'Bewertung',
+  credit: 'Bonität', terms: 'Bedingungen', seniority: 'Rang', protocol: 'Protokoll', custody: 'Verwahrung',
+  underwriting: 'Versicherungstechnik', solvency: 'Solvenz',
+};
+const metricPrefixes = ['Periodengewinn:', 'operative Marge:', 'Liquidität:', 'Fälligkeiten:', 'Combined Ratio:', 'Solvenzquote:', 'debt-maturities:'];
+export function RiskReview({ risk, blocked, openSource }: { risk: FundamentalRiskAssessment; blocked: boolean;
+  openSource: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void }) {
+  const material = new Set(risk.materialRisks.map(item => riskLineLabels[item] ?? item));
+  const lines = risk.rationale.split('\n').map(line => line.trim()).filter(Boolean);
+  const lineLabel = (line: string) => line.slice(0, line.indexOf(':'));
+  const blocking = lines.filter(line => material.has(lineLabel(line)));
+  const metrics = lines.filter(line => metricPrefixes.some(prefix => line.startsWith(prefix)));
+  const open = lines.filter(line => !blocking.includes(line) && !metrics.includes(line)
+    && (/: offen\b/i.test(line) || /keine .*textstelle|nicht (?:belegt|gefunden|verfügbar)|fehlt|ungeklärt/i.test(line)));
+  const verified = lines.filter(line => !blocking.includes(line) && !metrics.includes(line) && !open.includes(line));
+  const hasMaterial = risk.materialRisks.length > 0;
+  const incomplete = risk.status === 'unknown' && risk.decisionReadiness !== 'reviewed-uncertainty';
+  const tone = hasMaterial || incomplete && blocked ? {
+    border: 'border-red-400/35', background: 'bg-red-500/5', text: 'text-red-300', icon: 'error' as const,
+    title: hasMaterial && blocked ? 'Blockierender Risikobefund' : hasMaterial ? 'Wesentliches Risiko belegt' : 'Entscheidungsrelevante Prüfung offen',
+  } : risk.decisionReadiness === 'reviewed-uncertainty' ? {
+    border: 'border-amber-400/30', background: 'bg-amber-500/5', text: 'text-amber-200', icon: 'warning-sign' as const,
+    title: 'Geprüft mit Restunsicherheit',
+  } : {
+    border: 'border-emerald-400/30', background: 'bg-emerald-500/5', text: 'text-emerald-300', icon: 'tick-circle' as const,
+    title: 'Keine wesentlichen Risiken belegt',
+  };
+  return <section aria-label="Unternehmens- und Produktrisiken" className={`my-3 min-w-0 overflow-hidden rounded-lg border ${tone.border} ${tone.background}`}>
+    <div className="flex min-w-0 flex-wrap items-start justify-between gap-2 border-b border-white/10 px-3 py-2.5">
+      <div className="min-w-0">
+        <p className="m-0 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Unternehmens- und Produktrisiken</p>
+        <p className={`mb-0 mt-1 flex items-center gap-1.5 text-sm font-bold ${tone.text}`}>
+          <Icon icon={tone.icon} size={14} aria-hidden="true" /> {tone.title}
+        </p>
+      </div>
+      <span className="rounded-full border border-white/10 bg-slate-950/40 px-2 py-1 text-[11px] text-gray-300">
+        {hasMaterial ? `${risk.materialRisks.length} wesentlich` : incomplete ? 'Prüfung offen' : 'Prüfung abgeschlossen'}
+      </span>
+    </div>
+    {(hasMaterial || risk.structuralRisks?.length) && <div className="flex flex-wrap gap-1.5 px-3 pt-3" aria-label="Risikokategorien">
+      {risk.materialRisks.map(item => <span key={item} className="rounded-full border border-red-400/40 bg-red-500/10 px-2 py-1 text-[11px] font-bold text-red-200">
+        <Icon icon="error" size={10} aria-hidden="true" /> {riskLabels[item] ?? item}
+      </span>)}
+      {risk.structuralRisks?.map(item => <span key={item} className="rounded-full border border-sky-400/30 bg-sky-500/10 px-2 py-1 text-[11px] text-sky-200">
+        {riskLabels[item] ?? item} · strukturell
+      </span>)}
+    </div>}
+    <details open={hasMaterial && blocked} className="group px-3 py-2.5 text-xs text-gray-300">
+      <summary className="cursor-pointer select-none font-semibold text-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400">
+        Befunde und Primärquellen anzeigen
+      </summary>
+      <div className="mt-3 space-y-3">
+        {!!blocking.length && <div className="rounded border border-red-400/25 bg-red-950/20 p-2.5">
+          <p className="m-0 font-bold text-red-200">{blocked ? 'Warum die Entscheidung blockiert ist' : 'Wesentliche Befunde'}</p>
+          <ul className="mb-0 mt-1.5 space-y-1 pl-4 text-gray-200">{blocking.map(line => <li key={line} className="break-words">{line}</li>)}</ul>
+        </div>}
+        {!!open.length && <div className="rounded border border-amber-400/20 bg-amber-950/15 p-2.5">
+          <p className="m-0 font-bold text-amber-200">Offene Punkte und Restunsicherheit</p>
+          <ul className="mb-0 mt-1.5 space-y-1 pl-4">{open.map(line => <li key={line} className="break-words">{line}</li>)}</ul>
+        </div>}
+        {!!metrics.length && <div>
+          <p className="m-0 font-bold text-white">Belegte Kennzahlen</p>
+          <div className="mt-1.5 grid grid-cols-1 gap-1.5 sm:grid-cols-2">{metrics.map(line => <p key={line} className="m-0 rounded border border-white/10 bg-slate-950/35 p-2 break-words">{line}</p>)}</div>
+        </div>}
+        {!!verified.length && <div>
+          <p className="m-0 font-bold text-emerald-300">Weitere geprüfte Befunde</p>
+          <ul className="mb-0 mt-1.5 space-y-1 pl-4">{verified.map(line => <li key={line} className="break-words">{line}</li>)}</ul>
+        </div>}
+        {!!risk.sources.length && <div>
+          <p className="m-0 font-bold text-white">Primärquellen</p>
+          <ul className="mb-0 mt-1.5 space-y-1 pl-4">{risk.sources.map(source => <li key={source.url}><a href={source.url}
+            onClick={event => openSource(event, source.url)} className="break-all text-indigo-300 underline">{source.title}</a></li>)}</ul>
+        </div>}
+      </div>
+    </details>
+  </section>;
+}
 const isCostBlockedHold = (recommendation: AssetRecommendation) => {
   if (recommendation.action !== 'Halten' || recommendation.executionBlocker !== 'independent') return false;
   const explanation = [recommendation.rationale, recommendation.tradeCheck?.costs, recommendation.tradeCheck?.conclusion,
@@ -642,17 +730,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
               {(() => {
                 const risk = result.fundamentalRisks?.find(item => item.key === String(rec.assetId));
                 if (!risk) return null;
-                return <details className="my-2 min-w-0 rounded border border-white/10 bg-slate-950/25 px-2 py-1 text-xs text-gray-300">
-                  <summary className={risk.status === 'assessed' ? 'text-emerald-300' : 'text-amber-200'}>
-                    Unternehmens- und Produktrisiken: {risk.status === 'assessed' ? 'belegt geprüft'
-                      : risk.decisionReadiness === 'reviewed-uncertainty' ? 'geprüft mit Restunsicherheit' : 'Prüfung mit offenen Punkten'}
-                  </summary>
-                  <p className="mb-1 whitespace-pre-wrap break-words">{risk.rationale}</p>
-                  {!!risk.sources.length && <ul className="mb-1 mt-2 list-disc space-y-1 pl-4">
-                    {risk.sources.map(source => <li key={source.url}><a href={source.url} onClick={event => openSource(event, source.url)}
-                      className="break-all text-indigo-300 underline">{source.title}</a></li>)}
-                  </ul>}
-                </details>;
+                return <RiskReview risk={risk} blocked={isBlockedRecommendation(rec)} openSource={openSource} />;
               })()}
               {executions[rec.assetId]?.status !== 'open' && executions[rec.assetId] && <p
                 className="text-xs font-bold text-emerald-400" data-testid={`recommendation-execution-${rec.assetId}`}>

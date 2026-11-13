@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1820" viewBox="0 0 1200 1820" role="img" aria-labelledby="title description">
   <title id="title">FinPal Analyseablauf</title>
-  <desc id="description">Flussdiagramm vom Laden der Finanzdaten über Recherche, Risikoprüfung und Portfoliomodell bis zur validierten Empfehlung. Belegte Risiken sind Entscheidungsfaktoren und keine automatischen Blocker.</desc>
+  <desc id="description">Flussdiagramm vom Laden der Finanzdaten über Recherche, Risikoprüfung und Portfoliomodell bis zur validierten Empfehlung. Die Bitcoin-Mining-Pool-Verteilung wird als aktuelle 7-Tage-Blockstichprobe geprüft; sie belegt keine tatsächliche Hashing-Kontrolle. Belegte Risiken sind Entscheidungsfaktoren und keine automatischen Blocker.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L0,6 L9,3 z" fill="#64748b"/>
@@ -61,7 +61,7 @@
   <path d="M940 604 V642 H600" class="edge"/>
   <rect x="390" y="644" width="420" height="86" rx="14" class="research"/>
   <text x="600" y="676" text-anchor="middle" class="node-title">Primärberichte abgleichen</text>
-  <text x="600" y="701" text-anchor="middle" class="node-text">Dokumentcache und neuesten Berichtsstand prüfen</text>
+  <text x="600" y="701" text-anchor="middle" class="node-text">Berichtsstand und Bitcoin-Poolanteile (7 Tage) prüfen</text>
 
   <path d="M600 730 V778" class="edge"/>
   <text x="60" y="792" class="section">3 · RISIKOPRÜFUNG</text>

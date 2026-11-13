@@ -88,6 +88,51 @@ it('builds and persists a local quantitative analysis without an OpenAI request'
   expect(service.getLastResult()?.report.mode).toBe('local');
 });
 
+it('refreshes only the selected asset research and keeps the existing analysis recommendation', async () => {
+  const oldResearch = { assetId: 1, query: 'Asset', fetchedAt: Date.now() - 60_000, searchStatus: 'completed' as const, newsCount: 1,
+    text: 'Vorherige Recherche', sources: [{ title: 'Alte Quelle', url: 'https://example.com/old' }] };
+  const newResearch = { ...oldResearch, fetchedAt: Date.now(), text: 'Aktuelle Recherche',
+    sources: [{ title: 'Neue Quelle', url: 'https://example.com/new' }] };
+  const onlineProvider = jest.fn().mockResolvedValueOnce(oldResearch).mockResolvedValueOnce(newResearch);
+  const service = new PortfolioAnalysisService(dir, jest.fn(), undefined,
+    jest.fn().mockResolvedValue(robustReturnForecastFixture('1', { targetPrice: 60 })), undefined, onlineProvider);
+  const original = await service.analyzeLocal(request);
+  const previousResearchTime = service.getResearchStatus(request.positions)[0].fetchedAt;
+
+  const refreshed = await service.refreshOnlineResearch({
+    id: 1, name: request.positions[0].name, isin: request.positions[0].isin,
+    symbol: request.positions[0].symbol, type: request.positions[0].type,
+  });
+
+  expect(onlineProvider).toHaveBeenNthCalledWith(2, expect.objectContaining({ id: 1 }), { forceRefresh: true });
+  expect(refreshed.recommendations[0].rationale).toBe(original.recommendations[0].rationale);
+  expect(refreshed.recommendations[0].sourceIndexes.map(index => refreshed.sources[index].url)).toEqual(expect.arrayContaining([
+    'https://example.com/old', 'https://example.com/new',
+  ]));
+  expect(service.getResearchStatus(request.positions)[0].fetchedAt).not.toBe(previousResearchTime);
+  expect(new PortfolioAnalysisService(dir, jest.fn()).getLastResult()?.report.sources).toContainEqual(newResearch.sources[0]);
+});
+
+it('does not replace cached research or the saved report when a refresh search fails', async () => {
+  const oldResearch = { assetId: 1, query: 'Asset', fetchedAt: Date.now() - 60_000, searchStatus: 'completed' as const, newsCount: 1,
+    text: 'Vorherige Recherche', sources: [{ title: 'Alte Quelle', url: 'https://example.com/old' }] };
+  const failedResearch = { ...oldResearch, fetchedAt: Date.now(), searchStatus: 'failed' as const,
+    sources: [{ title: 'Ungeprüfte Quelle', url: 'https://example.com/failed' }] };
+  const onlineProvider = jest.fn().mockResolvedValueOnce(oldResearch).mockResolvedValueOnce(failedResearch);
+  const service = new PortfolioAnalysisService(dir, jest.fn(), undefined,
+    jest.fn().mockResolvedValue(robustReturnForecastFixture('1', { targetPrice: 60 })), undefined, onlineProvider);
+  const original = await service.analyzeLocal(request);
+  const previousResearchTime = service.getResearchStatus(request.positions)[0].fetchedAt;
+
+  await expect(service.refreshOnlineResearch({
+    id: 1, name: request.positions[0].name, isin: request.positions[0].isin,
+    symbol: request.positions[0].symbol, type: request.positions[0].type,
+  })).rejects.toThrow('konnte nicht erfolgreich abgeschlossen werden');
+
+  expect(service.getResearchStatus(request.positions)[0].fetchedAt).toBe(previousResearchTime);
+  expect(new PortfolioAnalysisService(dir, jest.fn()).getLastResult()?.report.sources).toEqual(original.sources);
+});
+
 it('reuses deterministic held-asset discovery and runs one cached sourced search for new ideas', async () => {
   const onlineProvider = jest.fn().mockResolvedValue({ assetId: 1, query: 'Asset', fetchedAt: Date.now(), searchStatus: 'completed', newsCount: 1,
     text: 'Deterministische Suche für Asset 1', sources: [{ title: 'Aktuelle Meldung', url: 'https://example.com/report' }] });

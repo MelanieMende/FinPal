@@ -151,6 +151,23 @@ export const refreshPortfolioPrimaryRisk = createAsyncThunk<
   } finally { unsubscribe?.(); }
 }, { condition: (_asset, { getState }) => !getState().portfolioAnalysis.progress });
 
+export const refreshPortfolioResearch = createAsyncThunk<
+  PortfolioAnalysisResult,
+  ResearchAsset,
+  { state: { portfolioAnalysis: AnalysisState }; dispatch: ThunkDispatch<{ portfolioAnalysis: AnalysisState }, unknown, UnknownAction>; rejectValue: string }
+>('portfolioAnalysis/refreshResearch', async (asset, { dispatch, requestId, rejectWithValue }) => {
+  let unsubscribe: (() => void) | undefined;
+  try {
+    if (!window.API.refreshPortfolioResearch) throw new Error('Bitte FinPal neu starten, um Online-Recherche einzeln zu aktualisieren.');
+    unsubscribe = window.API.onPortfolioAnalysisProgress?.(progress => {
+      dispatch(analysisProgressReceived({ progress, requestId }));
+    });
+    return await window.API.refreshPortfolioResearch(asset);
+  } catch (error) {
+    return rejectWithValue(error instanceof Error ? error.message : 'Die Online-Recherche konnte nicht aktualisiert werden.');
+  } finally { unsubscribe?.(); }
+}, { condition: (_asset, { getState }) => !getState().portfolioAnalysis.progress });
+
 const slice = createSlice({
   name: 'portfolioAnalysis', initialState,
   reducers: {
@@ -250,6 +267,25 @@ const slice = createSlice({
       state.targetAssetId = null;
       state.progress = null; state.requestId = null;
       state.error = action.payload ?? action.error.message ?? 'Die Risikoprüfung konnte nicht aktualisiert werden.';
+    })
+    .addCase(refreshPortfolioResearch.pending, (state, action) => {
+      state.targetAssetId = action.meta.arg.id;
+      state.restoreBlocked = true;
+      state.startedAt = Date.now();
+      state.progress = { stage: 'research', activeAssetId: action.meta.arg.id, researchCompleted: 0, researchTotal: 1, lastActivityAt: state.startedAt };
+      state.requestId = action.meta.requestId;
+      state.error = null;
+    })
+    .addCase(refreshPortfolioResearch.fulfilled, (state, action) => {
+      state.targetAssetId = null;
+      state.progress = null; state.requestId = null;
+      state.lastResult = action.payload;
+      state.result = action.payload;
+    })
+    .addCase(refreshPortfolioResearch.rejected, (state, action) => {
+      state.targetAssetId = null;
+      state.progress = null; state.requestId = null;
+      state.error = action.payload ?? action.error.message ?? 'Die Online-Recherche konnte nicht aktualisiert werden.';
     }),
 });
 export const { setAnalysisOpen, clearAnalysisResult, analysisProgressReceived } = slice.actions;

@@ -4,7 +4,7 @@ import { setupStore } from '../../../../store';
 import { setCashInternal } from '../../../../store/cash/cash.reducer';
 import { setTransactionsInternal } from '../../../../store/transactions/transactions.reducer';
 import { setDividendsInternal } from '../../../../store/dividends/dividends.reducer';
-import { analyzePortfolio } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
+import { analysisProgressReceived, analyzePortfolio } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
 import AssetList from '../../AssetsRoute/components/AssetList/AssetList';
 import { buildAnalysisPositions } from '../../../../utils/portfolioAnalysis';
 import PortfolioAnalysis, { ANALYSIS_PROFILE_KEY, ANALYSIS_MODEL_KEY, AssetRecommendationStatus, AssetResearchIndicator, RiskReview, comparableAnalysisSnapshot } from './PortfolioAnalysis';
@@ -39,6 +39,7 @@ beforeEach(() => {
     getPortfolioChatGptModels: jest.fn().mockResolvedValue([{ slug: 'account-model', displayName: 'Available model' }]),
     refreshPortfolioForecast: jest.fn(),
     refreshPortfolioPrimaryRisk: jest.fn(),
+    refreshPortfolioResearch: jest.fn(),
     analyzePortfolioLocally: jest.fn().mockResolvedValue({ mode: 'local', summary: 'Lokale Analyse', infos: [], warnings: [], sources: [{ title: 'Direkte Kursquelle', url: 'https://example.com/market-data' }], generatedAt: '2026-10-19T10:00:00Z', priceUpdatedAt: null, model: 'FinPal Local v4', allocationPlan: localAllocationPlan, recommendations: [
       { assetId: 1, action: 'Halten', rationale: 'Lokal', risk: 'Keine Webquellen', sourceIndexes: [] },
       { assetId: 2, action: 'Halten', rationale: 'Lokal', risk: 'Keine Webquellen', sourceIndexes: [] },
@@ -108,7 +109,13 @@ it('separates material risk findings from the recommendation blocker', () => {
     ].join('\n'), sources: [{ title: 'Lufthansa Quartalsbericht', url: 'https://example.com/lufthansa.pdf' }] }}
   openSource={jest.fn()} />);
   const review = screen.getByRole('region', { name: 'Unternehmens- und Produktrisiken' });
+  expect(review).toHaveClass('border-red-400/35');
+  expect(within(review).getByText('Prüfung erforderlich')).toBeInTheDocument();
   expect(within(review).getByText('Wesentliches Risiko belegt')).toBeInTheDocument();
+  const findings = within(review).getByText('Befunde und Primärquellen anzeigen').closest('details');
+  expect(findings).not.toHaveAttribute('open');
+  fireEvent.click(within(review).getByText('Befunde und Primärquellen anzeigen'));
+  expect(findings).toHaveAttribute('open');
   expect(within(review).getByText('Marge')).toBeInTheDocument();
   expect(within(review).getByText('Bedeutung für die Entscheidung')).toBeInTheDocument();
   expect(within(review).getByText(/kein automatischer Handelsblocker/)).toBeInTheDocument();
@@ -117,6 +124,22 @@ it('separates material risk findings from the recommendation blocker', () => {
   expect(within(review).getByText('Offene Punkte und Restunsicherheit')).toBeInTheDocument();
   expect(within(review).getByText('Belegte Kennzahlen')).toBeInTheDocument();
   expect(within(review).getByRole('link', { name: 'Lufthansa Quartalsbericht' })).toBeInTheDocument();
+});
+
+it('marks an incomplete risk review red and a material risk without open points amber', () => {
+  const incompleteView = render(<RiskReview blocked={false} risk={{ key: '1', status: 'unknown', materialRisks: [],
+    rationale: 'Kein überprüfbarer Befund mit Textstelle.', sources: [] }} openSource={jest.fn()} />);
+  const incompleteReview = screen.getByRole('region', { name: 'Unternehmens- und Produktrisiken' });
+  expect(incompleteReview).toHaveClass('border-red-400/35');
+  expect(within(incompleteReview).getAllByText('Prüfung erforderlich')).toHaveLength(2);
+  incompleteView.unmount();
+
+  render(<RiskReview blocked={false} risk={{ key: '1', status: 'assessed', materialRisks: ['low-margin'],
+    rationale: 'Marge: Risiko belegt (Die berichtete EBIT-Marge beträgt 3,1 %.)', sources: [] }} openSource={jest.fn()} />);
+  const materialReview = screen.getByRole('region', { name: 'Unternehmens- und Produktrisiken' });
+  expect(materialReview).toHaveClass('border-amber-400/30');
+  expect(within(materialReview).getByText('Wesentliches Risiko belegt')).toBeInTheDocument();
+  expect(within(materialReview).getByText('1 wesentlich')).toBeInTheDocument();
 });
 
 it('does not mark an analysis stale only because identical quotes were fetched again', () => {
@@ -207,7 +230,17 @@ it('shows actual per-asset research availability before analysis and in recommen
   await waitFor(() => expect(screen.getByRole('region', { name: 'Analyseergebnis' })).toBeInTheDocument());
   const cards = screen.getAllByTestId('asset-research-status');
   expect(cards).toHaveLength(2);
-  expect(cards[0].textContent + cards[1].textContent).toContain('Erfolgreich geladen am');
+  const validResearch = screen.getByTestId('asset-research-details-1');
+  const expiredResearch = screen.getByTestId('asset-research-details-2');
+  expect(validResearch).not.toHaveAttribute('open');
+  expect(expiredResearch).not.toHaveAttribute('open');
+  expect(validResearch.querySelector('summary')).toHaveClass('text-emerald-300');
+  expect(validResearch.querySelector('[data-icon="tick-circle"]')).toBeInTheDocument();
+  expect(expiredResearch.querySelector('summary')).toHaveClass('text-amber-300');
+  expect(expiredResearch.querySelector('[data-icon="refresh"]')).toBeInTheDocument();
+  fireEvent.click(within(validResearch).getByText('Online-Recherche: gültig'));
+  expect(validResearch).toHaveAttribute('open');
+  expect(within(validResearch).getByText(/Erfolgreich geladen am/)).toBeInTheDocument();
   expect(screen.queryByText(/30 Minuten/)).not.toBeInTheDocument();
 });
 
@@ -298,6 +331,76 @@ it('shows forecast, target weighting and AI result in one asset card', async () 
   expect(screen.queryByRole('article', { name: 'Zielgewicht Stock Asset' })).not.toBeInTheDocument();
 });
 
+it('orders asset analysis by workflow and replaces quote, research, risk and forecast data while refreshing', async () => {
+  const quotedAsset = { ...assets[0], currencySymbol: '€', quote: {
+    originalPrice: 50, originalCurrency: 'EUR', valuationCurrency: 'EUR' as const, source: 'yahoo-finance',
+    quoteAsOf: '2026-10-19T10:00:00Z', fetchedAt: '2026-10-19T10:01:00Z',
+    convertedAt: null, fxRateToEUR: 1, fxSource: null, fxAsOf: null, fxFetchedAt: null,
+  } } as Asset;
+  const secondQuotedAsset = { ...assets[1], currencySymbol: '€' };
+  const priceUpdatedAt: string | null = null;
+  const request = { provider: 'api' as const, positions: buildAnalysisPositions([quotedAsset, secondQuotedAsset]),
+    profile: { goal: 'growth' as const, risk: 'medium' as const, horizonYears: 10, buyBudget: 0 }, priceUpdatedAt };
+  const snapshot = JSON.stringify({ positions: request.positions, profile: request.profile, priceUpdatedAt });
+  const report = await window.API.analyzePortfolio({} as never);
+  report.mode = 'ai';
+  report.recommendations[0] = { ...report.recommendations[0], sourceIndexes: [0] };
+  report.fundamentalRisks = [{ key: '1', status: 'assessed', materialRisks: [],
+    rationale: 'Alter gespeicherter Risikobefund', sources: [] }];
+  report.allocationPlan = buildForecastAllocation(request, [returnForecastFixture('1', { targetPrice: 60, referencePrice: 50 })]);
+  const store = setupStore({ assets: [quotedAsset, secondQuotedAsset] });
+  store.dispatch(analyzePortfolio.fulfilled({ report, snapshot }, 'initial', { request, snapshot }));
+  render(<PortfolioAnalysis standalone priceUpdatedAt={null} />, { store });
+
+  const getCard = () => {
+    const article = screen.getByRole('region', { name: 'KI-Analyseergebnis für Stock Asset' }).closest('article');
+    if (!article) throw new Error('Asset-Karte fehlt.');
+    return article;
+  };
+  const card = getCard();
+  const price = within(card).getByRole('region', { name: 'Aktueller Kurs für Stock Asset' });
+  const research = within(card).getByRole('region', { name: 'Online-Recherche für Stock Asset' });
+  const risk = within(card).getByRole('region', { name: 'Unternehmens- und Produktrisiken' });
+  const forecast = within(card).getByRole('region', { name: 'Prognose und Zielgewichtung Stock Asset' });
+  const analysis = within(card).getByRole('region', { name: 'KI-Analyseergebnis für Stock Asset' });
+  expect(analysis.compareDocumentPosition(price) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(price.compareDocumentPosition(research) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(research.compareDocumentPosition(risk) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(risk.compareDocumentPosition(forecast) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(price).toHaveTextContent(/50,00/);
+  const researchDetails = within(research).getByTestId('asset-research-details-1');
+  expect(researchDetails).not.toHaveAttribute('open');
+  expect(within(researchDetails).getByText('Online-Recherche: muss neu geladen werden')).toBeInTheDocument();
+  fireEvent.click(within(researchDetails).getByText('Online-Recherche: muss neu geladen werden'));
+  expect(within(researchDetails).getByRole('link', { name: '[0] Report' })).toBeInTheDocument();
+  expect(risk).toHaveTextContent('Alter gespeicherter Risikobefund');
+  expect(forecast).toHaveTextContent('Kursziel: 60 EUR');
+
+  act(() => { store.dispatch(analyzePortfolio.pending('refresh', { request, snapshot })); });
+  expect(store.getState().portfolioAnalysis.progress?.stage).toBe('prices');
+  expect(within(getCard()).getByTestId('asset-price-loading-1')).toBeInTheDocument();
+  expect(within(getCard()).getByRole('region', { name: 'Aktueller Kurs für Stock Asset' })).not.toHaveTextContent('50,00');
+
+  act(() => { store.dispatch(analysisProgressReceived({ requestId: 'refresh', progress: {
+    stage: 'research', activeAssetId: 1, researchCompleted: 0, researchTotal: 2, lastActivityAt: Date.now(),
+  } })); });
+  const refreshedResearch = within(getCard()).getByRole('region', { name: 'Online-Recherche für Stock Asset' });
+  expect(within(refreshedResearch).getByTestId('asset-research-loading-1')).toHaveTextContent('Onlinequellen werden gesucht');
+  expect(within(refreshedResearch).queryByRole('link', { name: '[0] Report' })).not.toBeInTheDocument();
+
+  act(() => { store.dispatch(analysisProgressReceived({ requestId: 'refresh', progress: {
+    stage: 'risk-review', activeAssetId: 1, activeRiskStep: 'documents', completedRiskAssetIds: [],
+    reusedRiskAssetIds: [], lastActivityAt: Date.now(),
+  } })); });
+  expect(within(getCard()).getByTestId('asset-risk-loading-1')).toBeInTheDocument();
+  expect(within(getCard()).queryByText('Alter gespeicherter Risikobefund')).not.toBeInTheDocument();
+
+  act(() => { store.dispatch(analysisProgressReceived({ requestId: 'refresh', progress: { stage: 'forecast', lastActivityAt: Date.now() } })); });
+  expect(within(getCard()).getByTestId('asset-forecast-loading-1')).toBeInTheDocument();
+  expect(within(getCard()).queryByText(/Kursziel: 60 EUR/)).not.toBeInTheDocument();
+  expect(within(getCard()).getByRole('region', { name: 'KI-Analyseergebnis für Stock Asset' })).toHaveTextContent('Begründung');
+});
+
 it('displays sourced new assets outside the local asset list and keeps them after a route remount', async () => {
   const response = await window.API.analyzePortfolio({} as never);
   jest.mocked(window.API.analyzePortfolio).mockClear();
@@ -328,13 +431,13 @@ it('displays sourced new assets outside the local asset list and keeps them afte
   expect(store.getState().assets).toEqual(assets);
 });
 
-it('opens the analysis form directly in its route and updates the displayed price time', async () => {
+it('opens the analysis form directly in its route without a market-price header', async () => {
   localStorage.setItem(MARKET_PRICE_UPDATED_AT_KEY, '2026-10-01T10:30:00.000Z');
   await act(async () => { render(<AnalysisRoute />, { preloadedState: { assets } }); });
   expect(screen.getByLabelText('Anlageziel')).toBeInTheDocument();
-  expect(screen.getByText(/Marktpreise zuletzt aktualisiert/)).toHaveTextContent('01.10.26');
+  expect(screen.queryByText(/Marktpreise zuletzt aktualisiert/)).not.toBeInTheDocument();
   act(() => window.dispatchEvent(new CustomEvent(MARKET_PRICE_UPDATED_EVENT, { detail: '2026-10-02T10:30:00.000Z' })));
-  expect(screen.getByText(/Marktpreise zuletzt aktualisiert/)).toHaveTextContent('02.10.26');
+  expect(screen.queryByText(/Marktpreise zuletzt aktualisiert/)).not.toBeInTheDocument();
   expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
 });
 function fillProfile() {
@@ -382,14 +485,41 @@ it('keeps the asset card visible while refreshing only its primary risk assessme
   await open(); fillProfile();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
   jest.mocked(window.API.analyzePortfolio).mockClear();
-  fireEvent.click(screen.getByRole('button', { name: 'Unternehmens- und Produktrisiken für Asset 1 neu prüfen' }));
+  const refreshRiskButton = screen.getByRole('button', { name: 'Unternehmens- und Produktrisiken für Asset 1 neu prüfen' });
+  expect(refreshRiskButton).toBeInTheDocument();
+  expect(refreshRiskButton.closest('section[aria-label="Unternehmens- und Produktrisiken"]')).not.toBeNull();
+  fireEvent.click(refreshRiskButton);
   expect(window.API.refreshPortfolioPrimaryRisk).toHaveBeenCalledWith(expect.objectContaining({ id: 1, type: 'Stock' }));
   expect(screen.getAllByText('Stock Asset')).toHaveLength(2);
-  expect(screen.getByTestId('asset-reload-status-1')).toHaveTextContent('Aktuelle Primärberichte werden geladen');
+  expect(screen.getByTestId('asset-risk-loading-1')).toHaveTextContent('Aktuelle Primärberichte werden geladen');
   expect(screen.queryByTestId('asset-reload-status-2')).not.toBeInTheDocument();
   await act(async () => { finish(response); });
   expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
   expect(screen.getAllByText('Stock Asset')).toHaveLength(2);
+});
+
+it('refreshes online research for one asset without starting a new AI analysis', async () => {
+  const response = await window.API.analyzePortfolio({} as never);
+  const refreshResearch = window.API.refreshPortfolioResearch;
+  if (!refreshResearch) throw new Error('Die Test-API für die Rechercheaktualisierung fehlt.');
+  let finish!: (value: typeof response) => void;
+  jest.mocked(refreshResearch).mockReturnValue(new Promise(resolve => { finish = resolve; }));
+  render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
+  await open(); fillProfile();
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
+  jest.mocked(window.API.analyzePortfolio).mockClear();
+  const refreshButton = screen.getByRole('button', { name: 'Online-Recherche für Asset 1 neu laden' });
+  expect(refreshButton.closest('section[aria-label="Online-Recherche für Stock Asset"]')).not.toBeNull();
+  expect(screen.getByTestId('asset-research-details-1')).not.toHaveAttribute('open');
+  fireEvent.click(refreshButton);
+  expect(window.API.refreshPortfolioResearch).toHaveBeenCalledWith(expect.objectContaining({ id: 1, type: 'Stock' }));
+  expect(refreshButton).toBeDisabled();
+  expect(screen.getByText('Online-Recherche: wird neu geladen')).toBeInTheDocument();
+  expect(screen.getByTestId('asset-research-loading-1')).toHaveTextContent('Onlinequellen werden gesucht');
+  expect(screen.queryByTestId('asset-research-loading-2')).not.toBeInTheDocument();
+  await act(async () => { finish(response); });
+  expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
+  expect(screen.getByRole('status')).toHaveTextContent('KI-Bewertung wurde beibehalten');
 });
 
 it('displays the shared financing check and its unresolved deductions', async () => {
@@ -443,10 +573,10 @@ it('keeps asset recommendation cards visible during a full rerun and labels the 
   expect(screen.getByText(/Bisherige Analyse vom/)).toBeInTheDocument();
   expect(screen.getByTestId('asset-reload-status-1')).toHaveTextContent('KI-Auswertung wird vorbereitet');
   act(() => progressCallback({ stage: 'research', activeAssetId: 2, researchCompleted: 0, researchTotal: 2, lastActivityAt: Date.now() }));
-  expect(screen.getByTestId('asset-reload-status-2')).toHaveTextContent('Onlinequellen werden gesucht');
+  expect(screen.getByTestId('asset-research-loading-2')).toHaveTextContent('Onlinequellen werden gesucht');
   act(() => progressCallback({ stage: 'risk-review', activeAssetId: 1, activeRiskStep: 'assessment',
     completedRiskAssetIds: [], reusedRiskAssetIds: [], researchCompleted: 0, researchTotal: 1, lastActivityAt: Date.now() }));
-  expect(screen.getByTestId('asset-reload-status-1')).toHaveTextContent('Dokumenttext wird auf Gewinn, Marge, Liquidität, Fälligkeiten');
+  expect(screen.getByTestId('asset-risk-loading-1')).toHaveTextContent('Dokumenttext wird auf Gewinn, Marge, Liquidität, Fälligkeiten');
   expect(screen.getByRole('status')).toHaveTextContent('0/1 Assets abgeschlossen');
   act(() => progressCallback({ stage: 'risk-review', completedRiskAssetIds: [1], reusedRiskAssetIds: [1],
     researchCompleted: 1, researchTotal: 1, lastActivityAt: Date.now() }));

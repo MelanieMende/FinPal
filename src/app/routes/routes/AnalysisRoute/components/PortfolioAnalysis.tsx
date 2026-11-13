@@ -3,7 +3,7 @@ import { Button, Card, Dialog, H5, Icon, Intent, Spinner, Tooltip } from '@bluep
 import { useAppSelector, useAppDispatch } from '../../../../hooks';
 import { ANALYSIS_TIMEOUT_MS, buildAnalysisPositions, validateAnalysisRequest, type InvestmentProfile, type PortfolioAnalysisProgress } from '../../../../utils/portfolioAnalysis';
 import type { ChatGptModel, ChatGptStatus } from '../../../../utils/chatGptAuth';
-import { analyzePortfolio, analyzePortfolioLocally, refreshPortfolioForecast, refreshPortfolioPrimaryRisk, setAnalysisOpen, clearAnalysisResult } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
+import { analyzePortfolio, analyzePortfolioLocally, refreshPortfolioForecast, refreshPortfolioPrimaryRisk, refreshPortfolioResearch, setAnalysisOpen, clearAnalysisResult } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
 import { formatSyncTime } from '../../../../utils/syncTimestamps';
 import { assessQuoteFreshness, isMarketClosedInfo } from '../../../../utils/quoteFreshness';
 import { isDescriptiveRiskInfo } from '../../../../utils/analysisMessages';
@@ -39,24 +39,34 @@ const stageLabels: Record<PortfolioAnalysisProgress['stage'], string> = {
   correcting: 'Empfehlungen werden korrigiert und erneut geprüft',
   validating: 'Antwort und Quellen werden geprüft',
 };
+interface AssetReloadStatus {
+  message: string;
+  refreshingPrice: boolean;
+  refreshingForecast: boolean;
+  refreshingResearch: boolean;
+  refreshingRisk: boolean;
+}
 function assetReloadStatus(progress: PortfolioAnalysisProgress | null, targetAssetId: number | null | undefined,
-  assetId: number, researchReusable: boolean): string | null {
+  assetId: number, researchReusable: boolean): AssetReloadStatus | null {
   if (!progress || (targetAssetId != null && targetAssetId !== assetId)) return null;
   switch (progress.stage) {
-    case 'prices': return 'Kurse werden neu geladen';
-    case 'forecast': return 'Forecast wird neu geladen';
-    case 'research': return progress.activeAssetId === assetId ? 'Onlinequellen werden gesucht'
-      : researchReusable ? 'Gespeicherte Recherche wird wiederverwendet' : 'Online-Suche ausstehend';
-    case 'ai-research': return 'Fehlende Quellen werden mit KI recherchiert';
-    case 'risk-review': return progress.activeAssetId === assetId
+    case 'prices': return { message: 'Aktueller Kurs wird neu geladen', refreshingPrice: true, refreshingForecast: false, refreshingResearch: false, refreshingRisk: false };
+    case 'forecast': return { message: 'Forecast und Zielgewichtung werden neu berechnet', refreshingPrice: false, refreshingForecast: true, refreshingResearch: false, refreshingRisk: false };
+    case 'research': return { message: progress.activeAssetId === assetId ? 'Onlinequellen werden gesucht'
+      : researchReusable ? 'Gespeicherte Online-Recherche wird wiederverwendet' : 'Online-Suche steht noch aus',
+      refreshingPrice: false, refreshingForecast: false, refreshingResearch: progress.activeAssetId === assetId || !researchReusable, refreshingRisk: false };
+    case 'ai-research': return { message: 'Fehlende Quellen werden mit KI recherchiert', refreshingPrice: false, refreshingForecast: false, refreshingResearch: true, refreshingRisk: false };
+    case 'risk-review': return { message: progress.activeAssetId === assetId
       ? progress.activeRiskStep === 'assessment' ? 'Dokumenttext wird auf Gewinn, Marge, Liquidität, Fälligkeiten und weitere Risiken geprüft' : 'Aktuelle Primärberichte werden geladen'
       : progress.reusedRiskAssetIds?.includes(assetId) ? 'Gespeicherte Risikoprüfung wird wiederverwendet'
-        : progress.completedRiskAssetIds?.includes(assetId) ? 'Prüflauf beendet; Befund oder Datenlücke gespeichert' : 'Risikoprüfung steht noch an';
-    case 'preparing': return 'KI-Auswertung wird vorbereitet';
-    case 'analysis': return 'KI-Auswertung läuft';
-    case 'validating': return 'Neue Empfehlung wird geprüft';
-    case 'correcting': return 'Neue Empfehlung wird korrigiert';
-    case 'retrying': return 'KI-Anfrage wird erneut versucht';
+        : progress.completedRiskAssetIds?.includes(assetId) ? 'Prüfung abgeschlossen; Befund oder Datenlücke gespeichert' : 'Risikoprüfung steht noch aus',
+      refreshingPrice: false, refreshingForecast: false, refreshingResearch: false,
+      refreshingRisk: progress.activeAssetId === assetId || (!progress.reusedRiskAssetIds?.includes(assetId) && !progress.completedRiskAssetIds?.includes(assetId)) };
+    case 'preparing': return { message: 'KI-Auswertung wird vorbereitet', refreshingPrice: false, refreshingForecast: false, refreshingResearch: false, refreshingRisk: false };
+    case 'analysis': return { message: 'KI-Auswertung läuft', refreshingPrice: false, refreshingForecast: false, refreshingResearch: false, refreshingRisk: false };
+    case 'validating': return { message: 'Neue Empfehlung wird geprüft', refreshingPrice: false, refreshingForecast: false, refreshingResearch: false, refreshingRisk: false };
+    case 'correcting': return { message: 'Neue Empfehlung wird korrigiert', refreshingPrice: false, refreshingForecast: false, refreshingResearch: false, refreshingRisk: false };
+    case 'retrying': return { message: 'KI-Anfrage wird erneut versucht', refreshingPrice: false, refreshingForecast: false, refreshingResearch: false, refreshingRisk: false };
   }
 }
 function duration(seconds: number) { return Math.floor(seconds / 60) + ':' + String(seconds % 60).padStart(2, '0'); }
@@ -64,10 +74,13 @@ const euros = (amount: number) => new Intl.NumberFormat('de-DE', { style: 'curre
 const fundingLabels = { 'no-trades': 'Keine Käufe oder Verkäufe vorgeschlagen', unknown: 'Finanzierung ungeklärt', insufficient: 'Budget reicht nicht aus', conditional: 'Im Gebührenszenario gedeckt; Steuern und Spreads noch offen' };
 const emptyChatGpt: ChatGptStatus = { connected: false, accounts: [] };
 const actionOrder = { Prüfen: 0, Verkaufen: 1, Kaufen: 2, Halten: 3 };
-export function AssetResearchIndicator({ status, now }: { status?: AssetResearchStatus; now: number }) {
+function researchIsReusable(status: AssetResearchStatus | undefined, now: number) {
   const fetched = status?.fetchedAt ? Date.parse(status.fetchedAt) : NaN;
   const expires = status?.expiresAt ? Date.parse(status.expiresAt) : NaN;
-  const reusable = Number.isFinite(fetched) && fetched <= now && now < expires;
+  return Number.isFinite(fetched) && fetched <= now && now < expires;
+}
+export function AssetResearchIndicator({ status, now }: { status?: AssetResearchStatus; now: number }) {
+  const reusable = researchIsReusable(status, now);
   return <p data-testid="asset-research-status" className={`m-0 min-w-0 break-words text-xs ${reusable ? 'text-sky-200' : 'text-gray-400'}`}>
     Online-Recherche (Suchdaten, getrennt von Primärberichten): {reusable
       ? `Erfolgreich geladen am ${formatSyncTime(status!.fetchedAt)} · Wird bis ${formatSyncTime(status!.expiresAt)} wiederverwendet (24 Stunden).`
@@ -92,8 +105,8 @@ const riskLineLabels: Record<string, string> = {
   underwriting: 'Versicherungstechnik', solvency: 'Solvenz',
 };
 const metricPrefixes = ['Periodengewinn:', 'operative Marge:', 'Liquidität:', 'Fälligkeiten:', 'Combined Ratio:', 'Solvenzquote:', 'debt-maturities:'];
-export function RiskReview({ risk, blocked, openSource }: { risk: FundamentalRiskAssessment; blocked: boolean;
-  openSource: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void }) {
+export function RiskReview({ risk, blocked, openSource, onRefreshRisk, refreshDisabled }: { risk: FundamentalRiskAssessment; blocked: boolean;
+  openSource: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void; onRefreshRisk?: () => void; refreshDisabled?: boolean }) {
   const material = new Set(risk.materialRisks.map(item => riskLineLabels[item] ?? item));
   const lines = risk.rationale.split('\n').map(line => line.trim()).filter(Boolean);
   const lineLabel = (line: string) => line.slice(0, line.indexOf(':'));
@@ -104,9 +117,13 @@ export function RiskReview({ risk, blocked, openSource }: { risk: FundamentalRis
   const verified = lines.filter(line => !materialFindings.includes(line) && !metrics.includes(line) && !open.includes(line));
   const hasMaterial = risk.materialRisks.length > 0;
   const incomplete = risk.status === 'unknown' && risk.decisionReadiness !== 'reviewed-uncertainty';
-  const tone = hasMaterial || incomplete && blocked ? {
+  const requiresManualReview = incomplete || open.length > 0;
+  const tone = requiresManualReview ? {
     border: 'border-red-400/35', background: 'bg-red-500/5', text: 'text-red-300', icon: 'error' as const,
-    title: hasMaterial ? 'Wesentliches Risiko belegt' : 'Entscheidungsrelevante Prüfung offen',
+    title: hasMaterial ? 'Wesentliches Risiko belegt' : 'Prüfung erforderlich',
+  } : hasMaterial ? {
+    border: 'border-amber-400/30', background: 'bg-amber-500/5', text: 'text-amber-200', icon: 'warning-sign' as const,
+    title: 'Wesentliches Risiko belegt',
   } : risk.decisionReadiness === 'reviewed-uncertainty' ? {
     border: 'border-amber-400/30', background: 'bg-amber-500/5', text: 'text-amber-200', icon: 'warning-sign' as const,
     title: 'Geprüft mit Restunsicherheit',
@@ -122,9 +139,13 @@ export function RiskReview({ risk, blocked, openSource }: { risk: FundamentalRis
           <Icon icon={tone.icon} size={14} aria-hidden="true" /> {tone.title}
         </p>
       </div>
-      <span className="rounded-full border border-white/10 bg-slate-950/40 px-2 py-1 text-[11px] text-gray-300">
-        {hasMaterial ? `${risk.materialRisks.length} wesentlich` : incomplete ? 'Prüfung offen' : 'Prüfung abgeschlossen'}
-      </span>
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <span className="rounded-full border border-white/10 bg-slate-950/40 px-2 py-1 text-[11px] text-gray-300">
+          {requiresManualReview ? 'Prüfung erforderlich' : hasMaterial ? `${risk.materialRisks.length} wesentlich` : 'Prüfung abgeschlossen'}
+        </span>
+        {onRefreshRisk && <Button small icon="refresh" disabled={refreshDisabled} onClick={onRefreshRisk}
+          aria-label={`Unternehmens- und Produktrisiken für Asset ${risk.key} neu prüfen`}>Risiken neu prüfen</Button>}
+      </div>
     </div>
     {(hasMaterial || risk.structuralRisks?.length) && <div className="flex flex-wrap gap-1.5 px-3 pt-3" aria-label="Risikokategorien">
       {risk.materialRisks.map(item => <span key={item} className="rounded-full border border-red-400/40 bg-red-500/10 px-2 py-1 text-[11px] font-bold text-red-200">
@@ -137,7 +158,7 @@ export function RiskReview({ risk, blocked, openSource }: { risk: FundamentalRis
     {blocked && hasMaterial && <p className="mx-3 mb-0 mt-2 rounded border border-white/10 bg-slate-950/30 px-2.5 py-2 text-xs text-gray-300">
       Der Handelsstatus ist separat blockiert. Das belegte Risiko allein ist kein Blocker; der konkrete Hinderungsgrund steht im Analyseergebnis und im Handelsstatus.
     </p>}
-    <details open={hasMaterial} className="group px-3 py-2.5 text-xs text-gray-300">
+    <details className="group px-3 py-2.5 text-xs text-gray-300">
       <summary className="cursor-pointer select-none font-semibold text-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400">
         Befunde und Primärquellen anzeigen
       </summary>
@@ -172,7 +193,7 @@ const isCostBlockedHold = (recommendation: AssetRecommendation) => {
   if (recommendation.action !== 'Halten' || recommendation.executionBlocker !== 'independent') return false;
   const explanation = [recommendation.rationale, recommendation.tradeCheck?.costs, recommendation.tradeCheck?.conclusion,
     ...(recommendation.warnings ?? [])].filter(Boolean).join(' ');
-  return /Gebühr.{0,80}(?:Wert übersteigt|höher als (?:der )?Wert|Restwert aufzehrt)|(?:Netto|Vollverkaufs?)erlös.{0,30}(?:−|-) ?\d|kostenpflichtigen Kleinverkauf vermeiden|Verkauf(?:s)?kosten.{0,80}(?:Restwert|Wert).{0,40}(?:übersteig|aufzehr)|Verkauf.{0,60}(?:unwirtschaftlich|aus Kostengründen)|Kosten.{0,60}(?:Verkauf|Trade).{0,40}(?:blockiert|vermeiden|nicht sinnvoll)/i.test(explanation);
+  return /Gebühr.{0,80}(?:Wert übersteigt|höher als (?:der )?Wert|Restwert aufzehrt)|(?:Netto|Vollverkaufs?)erlös.{0,30}(?:−|-)\s?\d|kostenpflichtigen Kleinverkauf vermeiden|Verkauf(?:s)?kosten.{0,80}(?:Restwert|Wert).{0,40}(?:übersteig|aufzehr)|Verkauf.{0,60}(?:unwirtschaftlich|aus Kostengründen)|Kosten.{0,60}(?:Verkauf|Trade).{0,40}(?:blockiert|vermeiden|nicht sinnvoll)/i.test(explanation);
 };
 const isStrategicUnblockedHold = (recommendation: AssetRecommendation) => {
   if (recommendation.action !== 'Halten' || recommendation.executionBlocker !== 'independent') return false;
@@ -576,6 +597,17 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
     });
   }
 
+  function refreshResearch(assetId: number) {
+    void run(async () => {
+      if (!result) throw new Error('Für die Online-Recherche ist zuerst eine gespeicherte Analyse erforderlich.');
+      const asset = positions.find(position => position.id === assetId);
+      if (!asset) throw new Error('Das Asset ist nicht mehr im Portfolio vorhanden.');
+      await dispatch(refreshPortfolioResearch({ id: asset.id, name: asset.name, isin: asset.isin,
+        symbol: asset.symbol, type: asset.type })).unwrap();
+      if (alive.current) setNotice(`Online-Recherche für ${asset.name} aktualisiert. Die KI-Bewertung wurde beibehalten; für eine aktualisierte Empfehlung das Asset neu analysieren.`);
+    });
+  }
+
   const localForecastKeys = new Set(result?.allocationPlan?.optimization?.forecasts.map(forecast => forecast.key) ?? []);
   const localForecastCount = result?.mode === 'local'
     ? positions.filter(position => localForecastKeys.has(String(position.id))).length
@@ -711,37 +743,83 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
             <AnalysisMessages warnings={fundingCheck.warnings} />
           </section>}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {result.recommendations.slice().sort(compareRecommendations).map(rec => <article key={rec.assetId} className="min-w-0 rounded-lg border border-white/10 p-4">
-              <div className="flex justify-between items-start gap-3"><span className="font-bold text-sm text-white">{assets.find(a => a.ID === rec.assetId)?.name || `Asset ${rec.assetId}`}</span>
-                <AssetRecommendationStatus recommendation={rec} assetName={assets.find(a => a.ID === rec.assetId)?.name || `Asset ${rec.assetId}`} />
+            {result.recommendations.slice().sort(compareRecommendations).map(rec => {
+              const assetName = assets.find(a => a.ID === rec.assetId)?.name || `Asset ${rec.assetId}`;
+              const position = positions.find(item => item.id === rec.assetId);
+              const research = researchStatus.find(item => item.assetId === rec.assetId);
+              const reusable = researchIsReusable(research, now);
+              const assetProgress = assetReloadStatus(progress, analysisState.targetAssetId, rec.assetId, reusable);
+              const refreshingResearch = !!assetProgress?.refreshingResearch;
+              const showGeneralProgress = assetProgress && !assetProgress.refreshingPrice && !assetProgress.refreshingForecast
+                && !assetProgress.refreshingResearch && !assetProgress.refreshingRisk;
+              const risk = result.fundamentalRisks?.find(item => item.key === String(rec.assetId)) ?? {
+                key: String(rec.assetId), status: 'unknown' as const, materialRisks: [],
+                rationale: 'Keine gespeicherte Risikoprüfung verfügbar.', sources: [],
+              };
+              return <article key={rec.assetId} className="min-w-0 rounded-lg border border-white/10 p-4">
+              <div className="flex justify-between items-start gap-3"><span className="font-bold text-sm text-white">{assetName}</span>
+                <AssetRecommendationStatus recommendation={rec} assetName={assetName} />
               </div>
-              <section aria-label={`${result.mode === 'ai' ? 'KI-Analyseergebnis' : 'Lokales Analyseergebnis'} für ${assets.find(a => a.ID === rec.assetId)?.name || `Asset ${rec.assetId}`}`} className="mt-3 min-w-0 rounded border border-indigo-400/20 bg-indigo-500/5 p-3">
+              <section aria-label={`${result.mode === 'ai' ? 'KI-Analyseergebnis' : 'Lokales Analyseergebnis'} für ${assetName}`} className="mt-3 min-w-0 rounded border border-indigo-400/20 bg-indigo-500/5 p-3">
                 <p className="m-0 text-xs font-bold text-indigo-200">{result.mode === 'ai' ? 'KI-Analyseergebnis' : 'Lokales Analyseergebnis'}</p>
                 <p className="mb-0 mt-1 whitespace-pre-wrap break-words text-sm text-gray-200">{rec.rationale}</p>
               </section>
-              {(() => {
-                const status = researchStatus.find(item => item.assetId === rec.assetId);
-                const reusable = !!status?.expiresAt && Date.parse(status.expiresAt) > now;
-                const loading = assetReloadStatus(progress, analysisState.targetAssetId, rec.assetId, reusable);
-                const alreadyDone = progress?.stage === 'risk-review' && progress.completedRiskAssetIds?.includes(rec.assetId);
-                return loading && <p data-testid={`asset-reload-status-${rec.assetId}`} className="my-2 min-w-0 break-words rounded border border-sky-400/25 bg-sky-500/10 px-2 py-1 text-xs text-sky-200">
-                  <Icon icon="time" size={12} aria-hidden="true" /> <span className="font-semibold">{alreadyDone ? 'Prüfstand:' : 'Wird aktualisiert:'}</span> {loading}. Bisheriges Ergebnis bleibt sichtbar.
-                </p>;
-              })()}
-              {result.mode === 'local'
-                ? <p className="my-1 text-xs text-gray-400" data-testid={`local-market-data-status-${rec.assetId}`}>{localForecastKeys.has(String(rec.assetId)) ? 'Lokaler Forecast und deterministisch gefundene Onlinequellen vorhanden.' : 'Kein vollständiger lokaler Forecast verfügbar; Onlinequellen werden ohne inhaltliche Bewertung angezeigt.'}</p>
-                : <AssetResearchIndicator status={researchStatus.find(status => status.assetId === rec.assetId)} now={now} />}
-              {(() => {
-                const risk = result.fundamentalRisks?.find(item => item.key === String(rec.assetId));
-                if (!risk) return null;
-                return <RiskReview risk={risk} blocked={isBlockedRecommendation(rec)} openSource={openSource} />;
-              })()}
+              {showGeneralProgress && <p role="status" data-testid={`asset-reload-status-${rec.assetId}`} className="my-2 flex min-w-0 items-center gap-2 break-words rounded border border-sky-400/25 bg-sky-500/10 px-2 py-1.5 text-xs text-sky-200">
+                <Spinner size={14} /> <span><span className="font-semibold">Aktueller Schritt für {assetName}:</span> {assetProgress.message}. Die bisherige KI-Begründung bleibt oben sichtbar.</span>
+              </p>}
+              <section aria-label={`Aktueller Kurs für ${assetName}`} className="my-3 min-w-0 rounded border border-white/10 bg-slate-950/25 p-3">
+                <p className="m-0 text-xs font-bold text-gray-300">Aktueller Kurs</p>
+                {assetProgress?.refreshingPrice
+                  ? <p role="status" data-testid={`asset-price-loading-${rec.assetId}`} className="mb-0 mt-2 flex items-center gap-2 text-xs text-sky-200"><Spinner size={14} /> {assetProgress.message}</p>
+                  : position?.price !== null && position?.price !== undefined && (position.quote?.valuationCurrency === 'EUR' || position.currency === 'EUR')
+                    ? <p className="mb-0 mt-1 text-sm text-white">{euros(position.price)}{position.quote?.quoteAsOf && <span className="ml-2 text-xs text-gray-400">Kurszeit: {formatSyncTime(position.quote.quoteAsOf)}</span>}</p>
+                    : position?.quote?.originalPrice !== undefined
+                      ? <p className="mb-0 mt-1 text-sm text-white">{new Intl.NumberFormat('de-DE', { maximumFractionDigits: 4 }).format(position.quote.originalPrice)} {position.quote.originalCurrency}
+                        {position.quote.valuationCurrency === 'unknown' && <span className="ml-2 text-xs text-amber-200">Keine bestätigte EUR-Bewertung</span>}
+                        {position.quote.quoteAsOf && <span className="ml-2 text-xs text-gray-400">Kurszeit: {formatSyncTime(position.quote.quoteAsOf)}</span>}</p>
+                      : position?.price !== null && position?.price !== undefined
+                        ? <p className="mb-0 mt-1 text-sm text-amber-200">{new Intl.NumberFormat('de-DE', { maximumFractionDigits: 4 }).format(position.price)} · Bewertungswährung nicht bestätigt</p>
+                        : <p className="mb-0 mt-1 text-xs text-gray-400">Kein bestätigter aktueller Kurs verfügbar.</p>}
+                {position?.quote?.error && !assetProgress?.refreshingPrice && <p className="mb-0 mt-1 text-xs text-amber-200">{position.quote.error}</p>}
+              </section>
+              <section aria-label={`Online-Recherche für ${assetName}`} className="my-3 min-w-0 rounded border border-white/10 bg-slate-950/25 p-3">
+                <div className="flex min-w-0 flex-wrap items-start gap-2">
+                  <details data-testid={`asset-research-details-${rec.assetId}`} className="group min-w-0 flex-1">
+                    <summary className={`flex min-w-0 cursor-pointer list-none items-center gap-2 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${refreshingResearch ? 'text-sky-200' : reusable ? 'text-emerald-300' : 'text-amber-300'}`}>
+                      {refreshingResearch ? <Spinner size={14} /> : <Icon icon={reusable ? 'tick-circle' : 'refresh'} size={14} aria-hidden="true" />}
+                      <span className="min-w-0 break-words">Online-Recherche: {refreshingResearch ? 'wird neu geladen' : reusable ? 'gültig' : 'muss neu geladen werden'}</span>
+                      <Icon icon="chevron-right" size={12} aria-hidden="true" className="ml-auto shrink-0 text-gray-500 transition-transform group-open:rotate-90" />
+                    </summary>
+                    <div className="mt-2 min-w-0 space-y-2 border-t border-white/10 pt-2">
+                      {refreshingResearch
+                        ? <p role="status" data-testid={`asset-research-loading-${rec.assetId}`} className="mb-0 flex items-center gap-2 text-xs text-sky-200"><Spinner size={14} /> {assetProgress?.message}</p>
+                        : result.mode === 'local'
+                          ? <p className="my-1 text-xs text-gray-400" data-testid={`local-market-data-status-${rec.assetId}`}>{localForecastKeys.has(String(rec.assetId)) ? 'Lokaler Forecast und deterministisch gefundene Onlinequellen vorhanden.' : 'Kein vollständiger lokaler Forecast verfügbar; Onlinequellen werden ohne inhaltliche Bewertung angezeigt.'}</p>
+                          : <AssetResearchIndicator status={research} now={now} />}
+                      {!refreshingResearch && !!rec.sourceIndexes.length && <div className="flex flex-wrap gap-2" aria-label={`Recherchequellen für ${assetName}`}>
+                        {rec.sourceIndexes.map(index => <a key={index} href={result.sources[index].url} onClick={e => openSource(e, result.sources[index].url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">[{index}] {result.sources[index].title}</a>)}
+                      </div>}
+                    </div>
+                  </details>
+                  <Button small intent="primary" icon="refresh" disabled={busy || !positions.some(position => position.id === rec.assetId)}
+                    aria-label={`Online-Recherche für Asset ${rec.assetId} neu laden`} onClick={() => refreshResearch(rec.assetId)}>
+                    Recherche neu laden
+                  </Button>
+                </div>
+              </section>
+              {assetProgress?.refreshingRisk
+                ? <section aria-label="Unternehmens- und Produktrisiken" data-testid={`asset-risk-loading-${rec.assetId}`} className="my-3 flex items-center gap-2 rounded border border-sky-400/25 bg-sky-500/10 p-3 text-xs text-sky-200"><Spinner size={14} /> {assetProgress.message}</section>
+                : <RiskReview risk={risk} blocked={isBlockedRecommendation(rec)} openSource={openSource}
+                  onRefreshRisk={() => refreshRisk(rec.assetId)}
+                  refreshDisabled={busy || !positions.some(position => position.id === rec.assetId)} />}
+              {assetProgress?.refreshingForecast
+                ? <section aria-label={`Prognose und Zielgewichtung ${assetName}`} data-testid={`asset-forecast-loading-${rec.assetId}`} className="my-3 flex items-center gap-2 rounded border border-sky-400/25 bg-sky-500/10 p-3 text-xs text-sky-200"><Spinner size={14} /> {assetProgress.message}</section>
+                : <AssetOptimizationDetails plan={result.allocationPlan} allocationKey={String(rec.assetId)} assetType={assets.find(asset => asset.ID === rec.assetId)?.type} onOpenSource={openSource} />}
               {executions[rec.assetId]?.status !== 'open' && executions[rec.assetId] && <p
                 className="text-xs font-bold text-emerald-400" data-testid={`recommendation-execution-${rec.assetId}`}>
                 {executions[rec.assetId].status === 'done' ? 'Done' : 'Teilweise umgesetzt'} · {euros(executions[rec.assetId].amountEUR)} erfasst
                 {executions[rec.assetId].remainingEUR !== null && executions[rec.assetId].status !== 'done' && ` · ${euros(executions[rec.assetId].remainingEUR!)} offen`}
               </p>}
-              <AssetOptimizationDetails plan={result.allocationPlan} allocationKey={String(rec.assetId)} assetType={assets.find(asset => asset.ID === rec.assetId)?.type} onOpenSource={openSource} />
               {rec.tradeDecision ? <TradeDecisionReview decision={rec.tradeDecision} />
                 : rec.action === 'Verkaufen' && <p className="text-xs text-sky-200">Diese gespeicherte Empfehlung enthält noch keine Abwägung von Halten und Reduzieren mit Kursszenarien. Über „Neu analysieren“ ergänzen.</p>}
               {typeof rec.plannedAmountEUR === 'number' && !result.allocationPlan?.positions.some(position => position.key === String(rec.assetId)) && <p className="text-xs text-gray-400">Geplanter {rec.action === 'Verkaufen' ? 'Brutto-Verkaufsbetrag' : 'Kaufbetrag'} im Szenario: {euros(rec.plannedAmountEUR)}</p>}
@@ -754,7 +832,6 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
               <div className="flex flex-wrap gap-2">
                 <Button small disabled={busy || !positions.some(position => position.id === rec.assetId)} onClick={() => analyze(rec.assetId)} aria-label={`Asset ${rec.assetId} neu analysieren`}>Neu analysieren</Button>
                 <Button small icon="refresh" disabled={busy || !positions.some(position => position.id === rec.assetId)} onClick={() => refreshForecast(rec.assetId)} aria-label={`Forecast für Asset ${rec.assetId} neu laden`}>Forecast neu laden</Button>
-                <Button small icon="refresh" disabled={busy || !positions.some(position => position.id === rec.assetId)} onClick={() => refreshRisk(rec.assetId)} aria-label={`Unternehmens- und Produktrisiken für Asset ${rec.assetId} neu prüfen`}>Risiken neu prüfen</Button>
               </div>
               <p className="mt-1 mb-0 text-xs text-gray-400">Die inhaltliche Prüfung neuer Primärberichte kann KI-Kontingent verbrauchen.</p>
               {rec.updatedAt && <p className="text-xs text-gray-400">Einzelanalyse vom {formatSyncTime(rec.updatedAt)} · {rec.model}. Portfolio-Zusammenfassung und übrige Empfehlungen stammen aus der Gesamtanalyse.</p>}
@@ -766,8 +843,9 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                 <p className="m-0"><span className="font-bold text-white">Steuern:</span> {rec.tradeCheck.taxes}</p>
                 <p className="m-0"><span className="font-bold text-white">Ergebnis:</span> {rec.tradeCheck.conclusion}</p>
               </div>}
-              <div className="flex flex-wrap gap-2 mt-2">{[...new Set([...rec.sourceIndexes, ...('navEvidence' in rec ? rec.navEvidence?.sourceIndexes ?? [] : []), ...(rec.tradeDecision?.scenarios.flatMap(s => s.sourceIndexes) ?? [])])].map(index => <a key={index} href={result.sources[index].url} onClick={e => openSource(e, result.sources[index].url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">[{index}] {result.sources[index].title}</a>)}</div>
-            </article>)}
+              <div className="flex flex-wrap gap-2 mt-2">{[...new Set([...('navEvidence' in rec ? rec.navEvidence?.sourceIndexes ?? [] : []), ...(rec.tradeDecision?.scenarios.flatMap(s => s.sourceIndexes) ?? [])])].map(index => <a key={index} href={result.sources[index].url} onClick={e => openSource(e, result.sources[index].url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">[{index}] {result.sources[index].title}</a>)}</div>
+            </article>;
+            })}
           </div>
           {result.newAssetRecommendations && <section aria-label="Neue Kaufideen" className="space-y-3">
             <H5 className="text-sm text-indigo-300">Neue Kaufideen</H5>

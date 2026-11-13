@@ -21,34 +21,48 @@ it('loads and persists Bitcoin network documentation without requiring an ISIN o
     <p>Bitcoin wallets use a private key. When a third party controls your keys, you rely on their security.</p>
     <p>Bitcoin price is volatile, with sometimes illiquid markets. Government taxes and regulations apply.</p></html>`;
   const policy = `Trade Republic Bank GmbH is a credit institution licensed in Germany and a crypto-asset services provider under Regulation (EU) 2023/1114 on Markets in Crypto-Assets (MiCAR). Trade Republic executes orders in Crypto-Assets.`;
-  const fetcher = jest.fn(async (url: string) => new Response(url.includes('EN_ExecutionPolicy.pdf') ? policy : body,
-    { headers: { 'content-type': url.includes('EN_ExecutionPolicy.pdf') ? 'application/pdf' : 'text/html' } }));
+  const miningPools = { blockCount: 100, pools: [
+    { name: 'Foundry USA', blockCount: 30 }, { name: 'AntPool', blockCount: 20 }, { name: 'Unknown', blockCount: 5 },
+  ] };
+  const fetcher = jest.fn(async (url: string) => new Response(url.includes('/mining/pools/1w') ? JSON.stringify(miningPools)
+    : url.includes('EN_ExecutionPolicy.pdf') ? policy : body,
+  { headers: { 'content-type': url.includes('/mining/pools/1w') ? 'application/json'
+    : url.includes('EN_ExecutionPolicy.pdf') ? 'application/pdf' : 'text/html' } }));
   const position = { id: 31, name: 'Bitcoin', isin: 'BTC', symbol: 'BTC', type: 'Crypto' } as AnalysisPosition;
   try {
     const file = path.join(folder, 'documents.json');
     const first = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
     expect(first.discoveryChecked).toBe(true);
     expect(first.gaps).toEqual([]);
-    expect(first.documents).toHaveLength(5);
+    expect(first.documents).toHaveLength(6);
     expect(first.documents.every(document => document.period === null)).toBe(true);
     expect(first.documents.filter(document => document.identity === 'bitcoin-network')).toHaveLength(4);
     expect(first.documents.find(document => document.identity === 'trade-republic-casp')?.excerpt).toContain('licensed in Germany');
+    expect(first.documents.find(document => document.identity === 'bitcoin-mining-pools')?.excerpt)
+      .toContain('Foundry USA 30,0 %');
+    expect(first.documents.find(document => document.identity === 'bitcoin-mining-pools')?.excerpt)
+      .toContain('nicht zugeordnet: 50/100');
+    expect(first.documents.find(document => document.identity === 'bitcoin-mining-pools')?.excerpt)
+      .toContain('Tatsächliche Hashing-Kontrolle bleibt offen');
     expect(first.documents[0].excerpt).toContain('51 percent attack');
     expect(first.documents[0].excerpt).toContain('during both types of forks');
-    expect(fetcher).toHaveBeenCalledTimes(5);
+    expect(fetcher).toHaveBeenCalledTimes(6);
     const second = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now)
       .collect({ ...position, isin: '', symbol: 'BTC-EUR' });
     expect(second.documents.map(document => document.hash)).toEqual(first.documents.map(document => document.hash));
-    expect(fetcher).toHaveBeenCalledTimes(5);
+    expect(fetcher).toHaveBeenCalledTimes(6);
     now += 25 * 3600000;
     fetcher.mockRejectedValue(new Error('offline'));
     const fallback = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
     expect(fallback.documents).toHaveLength(5);
+    expect(fallback.documents.some(document => document.identity === 'bitcoin-mining-pools')).toBe(false);
     expect(fallback.discoveryChecked).toBe(false);
-    expect(fallback.gaps).toHaveLength(5);
+    expect(fallback.gaps).toHaveLength(6);
+    expect(fallback.gaps.some(gap => gap.includes('Mining-Pool-Daten'))).toBe(true);
     const providerOnlyFailure = jest.fn(async (url: string) => {
       if (url.includes('EN_ExecutionPolicy.pdf')) throw new Error('provider offline');
-      return new Response(body, { headers: { 'content-type': 'text/html' } });
+      return new Response(url.includes('/mining/pools/1w') ? JSON.stringify(miningPools) : body,
+        { headers: { 'content-type': url.includes('/mining/pools/1w') ? 'application/json' : 'text/html' } });
     });
     const partial = await new PrimaryRiskResearch(path.join(folder, 'provider-failure.json'),
       providerOnlyFailure as unknown as typeof fetch, () => now).collect(position);
@@ -58,9 +72,27 @@ it('loads and persists Bitcoin network documentation without requiring an ISIN o
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });
 
+it.each([
+  [{ blockCount: 2, pools: [{ name: 'Pool A', blockCount: 3 }] }],
+  [{ blockCount: 2, pools: [{ name: 'Pool A', blockCount: 1 }, { name: 'pool a', blockCount: 1 }] }],
+])('leaves Bitcoin mining-pool data open when the API response is inconsistent: %j', async invalidResponse => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-bitcoin-invalid-pools-'));
+  const fetcher = jest.fn(async (url: string) => new Response(url.includes('/mining/pools/1w')
+    ? JSON.stringify(invalidResponse) : '<html>Bitcoin network consensus, wallet and private key.</html>',
+  { headers: { 'content-type': url.includes('/mining/pools/1w') ? 'application/json' : 'text/html' } }));
+  try {
+    const position = { id: 31, name: 'Bitcoin', isin: 'BTC', symbol: 'BTC', type: 'Crypto' } as AnalysisPosition;
+    const result = await new PrimaryRiskResearch(path.join(folder, 'documents.json'), fetcher as unknown as typeof fetch,
+      () => Date.parse('2026-10-30T10:00:00Z')).collect(position);
+    expect(result.discoveryChecked).toBe(false);
+    expect(result.documents.some(document => document.identity === 'bitcoin-mining-pools')).toBe(false);
+    expect(result.gaps).toContain('Aktuelle Bitcoin-Mining-Pool-Daten konnten nicht geladen oder validiert werden: https://mempool.space/api/v1/mining/pools/1w');
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
 it('does not assign Bitcoin project sources from a name, conflicting symbol, or security ISIN', () => {
   const bitcoin = { isin: 'BTC', symbol: 'BTC', type: 'Crypto' as const };
-  expect(knownResearchSources(bitcoin)).toHaveLength(7);
+  expect(knownResearchSources(bitcoin)).toHaveLength(8);
   expect(knownResearchSources({ ...bitcoin, isin: '', symbol: 'ETH' })).toEqual([]);
   expect(knownResearchSources({ ...bitcoin, symbol: 'BCH' })).toEqual([]);
   expect(knownResearchSources({ ...bitcoin, isin: 'DE000A27Z304' })).toEqual([]);

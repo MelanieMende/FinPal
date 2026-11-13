@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { AnalysisPosition, AnalysisSource } from './portfolioAnalysis';
-import { bitcoinPrimarySources, isBitcoinResearchPosition, knownResearchSources } from './portfolioResearch';
+import { bitcoinMiningPoolSource, bitcoinPrimarySources, isBitcoinResearchPosition, knownResearchSources } from './portfolioResearch';
 
 export interface RiskDocument {
   source: AnalysisSource;
@@ -27,6 +27,46 @@ export interface RiskDocumentSet {
 const DAY = 24 * 60 * 60 * 1000;
 const MAX_BYTES = 16_000_000;
 const MAX_DOCUMENTS = 4;
+interface BitcoinMiningPoolStats {
+  blockCount: number;
+  pools: { name: string; blockCount: number }[];
+}
+function bitcoinMiningPoolExcerpt(data: Buffer, fetchedAt: number): string {
+  const parsed = JSON.parse(data.toString('utf8')) as Partial<BitcoinMiningPoolStats>;
+  const totalBlocks = parsed.blockCount;
+  if (!parsed || typeof totalBlocks !== 'number' || !Number.isSafeInteger(totalBlocks) || totalBlocks <= 0
+    || !Array.isArray(parsed.pools) || parsed.pools.length > 500) throw new Error('Invalid mining pool response');
+  const names = new Set<string>();
+  let allPoolBlocks = 0;
+  const pools = parsed.pools.map(pool => {
+    if (!pool || typeof pool.name !== 'string' || !pool.name.trim() || pool.name.length > 100
+      || [...pool.name].some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127)
+      || !Number.isSafeInteger(pool.blockCount) || pool.blockCount < 0
+      || names.has(pool.name.trim().toLowerCase())) throw new Error('Invalid mining pool entry');
+    names.add(pool.name.trim().toLowerCase());
+    allPoolBlocks += pool.blockCount;
+    return { name: pool.name.trim(), blockCount: pool.blockCount };
+  });
+  if (!Number.isSafeInteger(allPoolBlocks) || allPoolBlocks > totalBlocks) throw new Error('Invalid mining pool block totals');
+
+  const attributed = pools.filter(pool => !/^(?:unknown|unidentified|unattributed)(?:\b|$)/i.test(pool.name));
+  const attributedBlocks = attributed.reduce((total, pool) => total + pool.blockCount, 0);
+  const unattributedBlocks = totalBlocks - attributedBlocks;
+  const sorted = attributed.filter(pool => pool.blockCount > 0).sort((a, b) =>
+    b.blockCount - a.blockCount || a.name.localeCompare(b.name));
+  const share = (count: number) => new Intl.NumberFormat('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+    .format(count / totalBlocks * 100);
+  const date = new Date(fetchedAt).toISOString();
+  const dateOnly = date.slice(0, 10);
+  const top = sorted.slice(0, 3).map(pool => `${pool.name} ${share(pool.blockCount)} %`).join('; ') || 'keine benannten Pool-Blöcke';
+  const summary = `Mining pool shares / Mining-Pool-Anteile (mempool.space, 7 Tage bis ${dateOnly}): ${top}; ${totalBlocks} Blöcke. Tatsächliche Hashing-Kontrolle bleibt offen.`;
+  const details = sorted.slice(0, 8).map(pool =>
+    `${pool.name}: ${pool.blockCount}/${totalBlocks} Blöcke (${share(pool.blockCount)} %)`);
+  const additional = sorted.slice(8).reduce((total, pool) => total + pool.blockCount, 0);
+  if (additional) details.push(`Weitere benannte Pools: ${additional}/${totalBlocks} Blöcke (${share(additional)} %)`);
+  details.push(`Benannten Pools zugeordnet: ${attributedBlocks}/${totalBlocks}; nicht zugeordnet: ${unattributedBlocks}/${totalBlocks}`);
+  return `${summary}\nAbruf ${date}. Einzelwerte: ${details.join('; ')}. Quelle misst gefundene Blockzuordnungen, nicht Eigentum oder Kontrolle über Hashing-Leistung.`;
+}
 const TREASURY_BOND_ISIN = 'US912810SQ22';
 const TREASURY_OFFERING_2020 = 'https://www.treasurydirect.gov/instit/annceresult/press/preanre/2020/A_20201015_1.pdf';
 const APOLLO_ELTIF_ISIN = 'LU3170240538';
@@ -395,33 +435,43 @@ export class PrimaryRiskResearch {
     for (const source of bitcoinPrimarySources) {
       const stored = this.cache.get(source.url);
       const tradeRepublicPolicy = source.url === 'https://assets.traderepublic.com/assets/files/EN_ExecutionPolicy.pdf';
-      const identity = tradeRepublicPolicy ? 'trade-republic-casp' : 'bitcoin-network';
-      if (!forceRefresh && stored?.identity === identity && stored.excerptVersion === 2
+      const miningPoolSource = source.url === bitcoinMiningPoolSource.url;
+      const identity = tradeRepublicPolicy ? 'trade-republic-casp' : miningPoolSource ? 'bitcoin-mining-pools' : 'bitcoin-network';
+      const excerptVersion = miningPoolSource ? 1 : 2;
+      if (!forceRefresh && stored?.identity === identity && stored.excerptVersion === excerptVersion
         && this.now() - stored.fetchedAt < DAY && stored.fetchedAt <= this.now()) {
         documents.push(stored);
         continue;
       }
       try {
-        const response = await this.requestFetch(source.url, { headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' },
+        const response = await this.requestFetch(source.url, { headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)',
+          ...(miningPoolSource ? { Accept: 'application/json' } : {}) },
           signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(12000)]) : AbortSignal.timeout(12000) });
+        const contentLength = response.headers.get('content-length');
         if (!response.ok || (response.url && response.url !== source.url)
-          || Number(response.headers.get('content-length')) > 2_000_000) throw new Error('Bitcoin documentation unavailable');
+          || (contentLength !== null && (!/^\d+$/.test(contentLength) || Number(contentLength) > 2_000_000)))
+          throw new Error('Bitcoin documentation unavailable');
         const data = Buffer.from(await response.arrayBuffer());
         if (data.length > 2_000_000) throw new Error('Bitcoin documentation too large');
-        const excerpt = riskExcerpt(data.toString('utf8'), 'Crypto');
+        const fetchedAt = this.now();
+        const excerpt = miningPoolSource ? bitcoinMiningPoolExcerpt(data, fetchedAt) : riskExcerpt(data.toString('utf8'), 'Crypto');
         if (tradeRepublicPolicy
           ? !/Trade Republic Bank GmbH/i.test(excerpt) || !/licensed in Germany/i.test(excerpt) || !/MiCAR/i.test(excerpt)
-          : !/Bitcoin/i.test(excerpt) || !/block.?chain|wallet|consensus|private key|bitcoin price/i.test(excerpt))
+          : !miningPoolSource && (!/Bitcoin/i.test(excerpt) || !/block.?chain|wallet|consensus|private key|bitcoin price/i.test(excerpt)))
           throw new Error(tradeRepublicPolicy ? 'Trade Republic MiCAR context missing' : 'Bitcoin network context missing');
         const document: RiskDocument = { source, excerpt, hash: createHash('sha256').update(data).digest('hex'),
-          fetchedAt: this.now(), period: null, identity, excerptVersion: 2 };
+          fetchedAt, period: null, identity, excerptVersion };
         this.cache.set(source.url, document);
         documents.push(document);
         try { this.save(); } catch { /* This run can still use the downloaded document. */ }
       } catch {
         if (signal?.aborted) throw signal.reason;
-        if (stored?.identity === identity) documents.push(stored);
+        if (!miningPoolSource && stored?.identity === identity) documents.push(stored);
         if (tradeRepublicPolicy) gaps.push(`Optionale anbieterbezogene Crypto-Primärquelle konnte nicht aktuell geladen werden: ${source.url}`);
+        else if (miningPoolSource) {
+          networkSourceFailures++;
+          gaps.push(`Aktuelle Bitcoin-Mining-Pool-Daten konnten nicht geladen oder validiert werden: ${source.url}`);
+        }
         else {
           networkSourceFailures++;
           gaps.push(`Bitcoin-Projektdokumentation konnte nicht aktuell geladen werden: ${source.url}`);

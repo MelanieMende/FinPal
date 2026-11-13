@@ -5,7 +5,7 @@ import type { AnalysisPosition, AnalysisSource } from './portfolioAnalysis';
 import type { FundamentalRiskAssessment } from './robustForecastModel';
 import type { RiskDocument, RiskDocumentSet } from './primaryRiskResearch';
 import { ASSET_RISK_POLICY_VERSION, isInsuranceStock, riskChecksForPosition, riskMetricsForPosition, riskCheckLabels, riskEvidenceTerms, type RiskCheckName } from './assetRiskPolicy';
-import { isBitcoinResearchPosition } from './portfolioResearch';
+import { bitcoinMiningPoolSource, isBitcoinResearchPosition } from './portfolioResearch';
 import type { InvestorContext } from './investorFacts';
 
 export function addRiskReviewContext(position: AnalysisPosition, set: RiskDocumentSet, context?: InvestorContext): void {
@@ -331,6 +331,17 @@ function qualifyBitcoinCheck(position: AnalysisPosition, check: RiskCheck, set: 
     return check.finding === 'unknown' && check.reason === reason && check.documentIndex === null && !check.quote
       ? check : { ...check, finding: 'unknown', reason, documentIndex: null, quote: '' };
   }
+  if (check.flag === 'concentration') {
+    const documentIndex = set.documents.findIndex(document => document.identity === 'bitcoin-mining-pools'
+      && document.source.url === bitcoinMiningPoolSource.url);
+    const document = set.documents[documentIndex];
+    if (document) {
+      const summary = document.excerpt.split('\n', 1)[0];
+      if (!check.reason.startsWith(summary)) return check.finding === 'unknown'
+        ? { ...check, reason: summary, documentIndex: null, quote: '' }
+        : { ...check, reason: `${summary} ${check.reason.trim()}`.slice(0, 700) };
+    }
+  }
   if (check.finding !== 'unknown') return check;
   if (check.flag === 'identity') {
     const documentIndex = set.documents.findIndex(document => document.identity === 'bitcoin-network'
@@ -510,7 +521,7 @@ export function riskFingerprint(position: AnalysisPosition, set: RiskDocumentSet
       taxResidencies: set.reviewContext.taxResidencies?.map(({ country, validFrom }) => ({ country, validFrom }))
         .sort((a, b) => `${a.country}:${a.validFrom}`.localeCompare(`${b.country}:${b.validFrom}`)),
     } } : {}),
-    ...(isBitcoinResearchPosition(position) ? { bitcoinReviewVersion: 2 } : {}),
+    ...(isBitcoinResearchPosition(position) ? { bitcoinReviewVersion: 3 } : {}),
     ...(position.type === 'Bond' && position.isin.trim().toUpperCase() === 'US912810SQ22'
       ? { treasuryContextVersion: 1, nominalCurrency: position.bondHolding?.source === 'user-confirmed' ? position.bondHolding.currency : null } : {}),
     documents: set.documents.map(doc => [doc.source.url, doc.hash,
@@ -544,6 +555,10 @@ export function validateRiskAssessment(position: AnalysisPosition, set: RiskDocu
       documentIndex: qualified.finding === 'unknown' && qualified === check ? null : qualified.documentIndex,
       quote: qualified.finding === 'unknown' && qualified === check ? '' : qualified.quote.trim() };
   });
+  if (isBitcoinResearchPosition(position) && set.documents.some(document =>
+    document.identity === 'bitcoin-mining-pools' && document.source.url === bitcoinMiningPoolSource.url)
+    && checks.find(check => check.flag === 'concentration')?.finding !== 'unknown')
+    gaps.push('concentration: Beobachtete Pool-Blockanteile belegen nicht, wer die Hashing-Leistung tatsächlich kontrolliert.');
   const metrics: RiskMetric[] = Array.isArray(value.metrics) ? value.metrics.flatMap((item: RiskMetric) => {
     if (!item || !riskMetricsForPosition(position).includes(item.name) || !Number.isFinite(item.value)
       || typeof item.unit !== 'string' || typeof item.period !== 'string' || !item.period.trim()
@@ -672,6 +687,10 @@ export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessme
       || (check.flag === 'regulatory' && (check.finding === 'unknown' || check.finding === 'no-risk')))
     && record.gaps.length > 0 && record.gaps.every(gap => /^(?:concentration|regulatory):/.test(gap)
       || /^Optionale anbieterbezogene Crypto-Primärquelle konnte nicht aktuell geladen werden: https:\/\/assets\.traderepublic\.com\/assets\/files\/EN_ExecutionPolicy\.pdf$/.test(gap))
+    && record.sources.some(source => source.url === bitcoinMiningPoolSource.url)
+    && record.checks.some(check => check.flag === 'concentration' && check.finding === 'unknown'
+      && /Mining pool shares.*7 Tage/i.test(check.reason)
+      && /Hashing-Kontrolle bleibt offen/i.test(check.reason))
     && ['https://bitcoin.org/en/how-it-works', 'https://developer.bitcoin.org/devguide/block_chain.html',
       'https://bitcoin.org/en/secure-your-wallet', 'https://bitcoin.org/en/you-need-to-know']
       .every(url => record.sources.some(source => source.url === url));

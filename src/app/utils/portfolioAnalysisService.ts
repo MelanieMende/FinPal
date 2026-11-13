@@ -593,6 +593,57 @@ export class PortfolioAnalysisService {
     }
   }
 
+  async refreshOnlineResearch(asset: ResearchAsset, onProgress?: (progress: PortfolioAnalysisProgress) => void): Promise<PortfolioAnalysisResult> {
+    if (!asset || !Number.isInteger(asset.id) || !['Stock', 'ETF', 'Fund', 'Bond', 'Crypto', 'Commodity', 'RealEstate', 'CashEquivalent'].includes(asset.type)
+      || ![asset.name, asset.isin, asset.symbol].every(value => typeof value === 'string' && value.length <= 300))
+      throw new Error('Das ausgewählte Asset ist ungültig.');
+    if (this.running) throw new Error('Eine Portfolio-Analyse oder Aktualisierung läuft bereits.');
+    const previous = this.getLastResult();
+    const recommendation = previous?.report.recommendations.find(rec => rec.assetId === asset.id);
+    if (!previous || !recommendation)
+      throw new Error('Für dieses Asset liegt noch keine gespeicherte Analyse vor.');
+    if (!this.deterministicResearchProvider) throw new Error('Der Online-Recherche-Anbieter ist nicht verfügbar. Bitte FinPal neu starten.');
+    const savedRequest = JSON.parse(fs.readFileSync(this.resultFile, 'utf8')).request as PortfolioAnalysisRequest;
+    const position = savedRequest.positions.find(item => item.id === asset.id);
+    if (!position || position.type !== asset.type || position.isin.trim().toUpperCase() !== asset.isin.trim().toUpperCase())
+      throw new Error('Das Asset wurde seit der gespeicherten Analyse geändert. Bitte die Portfolioanalyse neu starten.');
+    this.running = true;
+    const progress = (completed: boolean) => onProgress?.({
+      stage: 'research', activeAssetId: asset.id, researchTotal: 1, researchCompleted: completed ? 1 : 0,
+      lastActivityAt: Date.now(),
+    });
+    try {
+      progress(false);
+      const found = await this.deterministicResearchProvider(position, { forceRefresh: true });
+      if (found.assetId !== asset.id || found.searchStatus !== 'completed' || !found.sources.length)
+        throw new Error(`Die Online-Recherche für ${position.name} konnte nicht erfolgreich abgeschlossen werden. Bitte später erneut versuchen.`);
+      const security = buildResearchSecurities([position])[0];
+      const sources = [...previous.report.sources];
+      const sourceIndexes = new Set(recommendation.sourceIndexes);
+      for (const source of found.sources) {
+        let sourceIndex = sources.findIndex(existing => existing.url === source.url);
+        if (sourceIndex < 0) {
+          sourceIndex = sources.length;
+          sources.push(source);
+        }
+        sourceIndexes.add(sourceIndex);
+      }
+      const report = {
+        ...previous.report,
+        sources,
+        recommendations: previous.report.recommendations.map(rec => rec.assetId === asset.id
+          ? { ...rec, sourceIndexes: [...sourceIndexes] }
+          : rec),
+      };
+      this.saveLastResult(report, savedRequest, previous.snapshot);
+      this.cacheDeterministicResearch(security, found);
+      progress(true);
+      return report;
+    } finally {
+      this.running = false;
+    }
+  }
+
   async refreshPrimaryRisk(asset: ResearchAsset, onProgress?: (progress: PortfolioAnalysisProgress) => void): Promise<PortfolioAnalysisResult> {
     if (!asset || !Number.isInteger(asset.id) || !['Stock', 'ETF', 'Fund', 'Bond', 'Crypto', 'Commodity', 'RealEstate', 'CashEquivalent'].includes(asset.type)
       || ![asset.name, asset.isin, asset.symbol].every(value => typeof value === 'string' && value.length <= 300))

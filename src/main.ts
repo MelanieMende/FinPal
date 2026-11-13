@@ -282,6 +282,10 @@ ipcMain.handle('portfolio-ai:refresh-risk', (event, asset: import('./app/utils/p
   portfolioAnalysis.refreshPrimaryRisk(asset, progress => {
     if (!event.sender.isDestroyed()) event.sender.send('portfolio-ai:progress', progress);
   }));
+ipcMain.handle('portfolio-ai:refresh-research', (event, asset: import('./app/utils/portfolioAnalysis').ResearchAsset) =>
+  portfolioAnalysis.refreshOnlineResearch(asset, progress => {
+    if (!event.sender.isDestroyed()) event.sender.send('portfolio-ai:progress', progress);
+  }));
 ipcMain.handle('portfolio-ai:open-source', (_event, value: string) => {
   const url = new URL(value);
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password) throw new Error('Ungültiger Quellenlink.');

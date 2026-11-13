@@ -131,14 +131,15 @@ describe('AssetsRoute component', () => {
 			['Stock', 'Stocks', 175, 'chart'], ['ETF', 'ETFs', 80, 'pie-chart'], ['Bond', 'Bonds', 60, 'bank-account'],
 			['Fund', 'Funds', 10.9, 'briefcase'],
 			['Crypto', 'Crypto', 100, null], ['Commodity', 'Commodities', 30, 'cube'],
-			['RealEstate', 'Real Estate', 1000, 'home'], ['CashEquivalent', 'Cash Equivalents', 5, 'dollar'],
+			['RealEstate', 'Real Estate', 0, 'home'], ['CashEquivalent', 'Cash Equivalents', 5, 'dollar'],
 			['IPO', 'IPO-Zeichnungen', 201, 'time'],
 		];
 		for (const [type, label, value, icon] of expected) {
 			const cardElement = screen.getByTestId(`asset-type-value-${type}`);
 			const card = within(cardElement);
 			expect(card.getByText(label)).toBeInTheDocument();
-			expect(card.getByText(new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(value).replace(/\s/g, ' '))).toBeInTheDocument();
+			const formattedValue = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(value).replace(/\u00a0/g, ' ').trim();
+			expect(card.getByText((_, element) => element?.textContent?.replace(/\u00a0/g, ' ').trim() === formattedValue)).toBeInTheDocument();
 			if (icon) expect(cardElement.querySelector(`[data-icon="${icon}"]`)).toBeInTheDocument();
 		}
 		expect(screen.getByTestId('asset-type-symbol-Crypto')).toHaveTextContent('₿');

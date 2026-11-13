@@ -102,11 +102,17 @@ const issuerHints: Record<string, { issuer: string; listing: string; sourceUrls:
   },
 };
 
+export const bitcoinMiningPoolSource = {
+  title: 'mempool.space: erkannte Mining-Pool-Blockanteile, 7 Tage',
+  url: 'https://mempool.space/api/v1/mining/pools/1w',
+} as const;
+
 export const bitcoinPrimarySources = [
   { title: 'Bitcoin.org: Funktionsweise des Bitcoin-Netzwerks', url: 'https://bitcoin.org/en/how-it-works' },
   { title: 'Bitcoin Developer Guide: Blockchain und Konsensregeln', url: 'https://developer.bitcoin.org/devguide/block_chain.html' },
   { title: 'Bitcoin.org: Wallet- und Verwahrrisiken', url: 'https://bitcoin.org/en/secure-your-wallet' },
   { title: 'Bitcoin.org: Kurs-, Transaktions- und regulatorische Risiken', url: 'https://bitcoin.org/en/you-need-to-know' },
+  bitcoinMiningPoolSource,
   { title: 'Trade Republic: Crypto Execution Policy (MiCAR)', url: 'https://assets.traderepublic.com/assets/files/EN_ExecutionPolicy.pdf' },
 ] as const;
 

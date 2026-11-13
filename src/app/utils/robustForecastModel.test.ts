@@ -67,7 +67,7 @@ it('estimates symmetric PSD covariance from aligned EUR intervals and preserves 
   expect(estimateEuroCovariance([{ ...first, riskHistory: { ...first.riskHistory!, closes: first.riskHistory!.closes.slice(-180) } }])).toBeNull();
 });
 
-it('does not recommend the original concentrated Bitcoin-to-Jinko switch from a seven-analyst signal', () => {
+it('keeps cited company risks visible without turning them into an automatic trade veto', () => {
   const bitcoin = robustReturnForecastFixture('31', { referencePrice: 74184.09, targetPrice: 75600.29, annualVolatilityPercent: 43.35,
     uncertainty: { method: 'historical-bootstrap', historyYears: 5 }, scenarioReturns: { p10: -45.88, median: 7.636, p90: 103.23 } });
   const jinko = robustReturnForecastFixture('33', { referencePrice: 8.61, targetPrice: 20.01571, annualVolatilityPercent: 60.78,
@@ -75,11 +75,11 @@ it('does not recommend the original concentrated Bitcoin-to-Jinko switch from a 
   const plan = buildRobustForecastAllocation(request(), [bitcoin, jinko], [], undefined, undefined, [], [
     { key: '33', status: 'assessed', materialRisks: ['loss-making', 'low-margin'], rationale: 'Synthetic evidence of losses and weak margin.', sources: jinko.forecastSources },
   ]);
-  expect(plan.positions.find(p => p.key === '33')!.action).not.toBe('Kaufen');
-  expect(plan.positions.find(p => p.key === '33')!.reason).toContain('Verlustlage');
+  expect(plan.positions.find(p => p.key === '33')!.action).toBe('Kaufen');
+  expect(plan.warnings.join(' ')).toContain('Verlustlage, schwache Marge');
+  expect(plan.warnings.join(' ')).toContain('kein automatischer Handelsblocker');
   expect(plan.optimization!.robust!.decisionStatus).toBe('stable-scenario');
-  expect(plan.optimization!.robust!.scenarioTrades.every(trade => trade.key !== '33')).toBe(true);
-  expect(plan.assumptions.join(' ')).toContain('Assetbezogener ausführbarer Teilplan');
+  expect(plan.optimization!.robust!.scenarioTrades.some(trade => trade.key === '33')).toBe(true);
   expect(plan.optimization!.robust!.estimates.find(e => e.key === '33')!.adjustedReturnPercent).toBeCloseTo(132.4705 * .25 * 7 / 17, 4);
   expect(validPortfolioAllocation(plan)).toBe(true);
 });
@@ -108,7 +108,9 @@ it('keeps reviewed residual uncertainty visible without making it a risk gate', 
   expect(reviewed.warnings.join(' ')).toContain('verbleibende Unsicherheit');
   const material = buildRobustForecastAllocation(request(), [jinko], [], undefined, undefined, [],
     [{ ...risk, decisionReadiness: 'reviewed-uncertainty', materialRisks: ['loss-making'] }]);
-  expect(material.optimization!.robust!.reviewReasons.join(' ')).toContain('Verlustlage');
+  expect(material.optimization!.robust!.reviewReasons.join(' ')).not.toContain('Verlustlage');
+  expect(material.warnings.join(' ')).toContain('Verlustlage');
+  expect(material.warnings.join(' ')).toContain('kein automatischer Handelsblocker');
 });
 
 it('compares a cash-only purchase independently without using sale proceeds or the protected reserve', () => {
@@ -189,22 +191,23 @@ it('keeps funding- and scale-only buys eligible and resizes them to cash after a
   }
 });
 
-it('makes cited corporate risks binding for proposed buys and preserves the linked trade review after AI holds', () => {
+it('does not turn a cited corporate risk into a review reason without a separate blocker', () => {
   const r = request(); r.profile.buyBudget = 1000;
+  r.profile.decisionDetails = { reserveEUR: 100, plannedWithdrawalsEUR: 0, confirmedAt: new Date().toISOString() };
   const bitcoin = robustReturnForecastFixture('31', { referencePrice: 74456.65, targetPrice: 60000, annualVolatilityPercent: 10 });
   const jinko = robustReturnForecastFixture('33', { referencePrice: 8.61, targetPrice: 100, annualVolatilityPercent: 10,
     uncertainty: { method: 'analyst-consensus', analystCount: 30, targetLowPrice: 99, targetHighPrice: 101 } });
   const risks = [{ key: '33', status: 'assessed' as const, materialRisks: ['loss-making'], rationale: 'Documented synthetic loss.', sources: jinko.forecastSources }];
   const plan = buildRobustForecastAllocation(r, [bitcoin, jinko], [], undefined, undefined, [], risks);
-  expect(plan.optimization!.robust!.reviewReasons.join(' ')).toContain('Verlustlage');
-  expect(plan.optimization!.robust!.decisionStatus).toBe('review-required');
-  expect(plan.positions.every(p => p.amountEUR === null)).toBe(true);
-  expect(plan.optimization!.expectedReturnPercent).toBeNull();
+  expect(plan.optimization!.robust!.reviewReasons.join(' ')).not.toContain('Verlustlage');
+  expect(plan.warnings.join(' ')).toContain('Verlustlage');
+  expect(plan.warnings.join(' ')).toContain('kein automatischer Handelsblocker');
+  expect(plan.optimization!.robust!.decisionStatus).toBe('stable-scenario');
+  expect(plan.positions.some(p => p.action === 'Kaufen' && p.amountEUR !== null)).toBe(true);
   const holds = r.positions.map(p => ({ assetId: p.id, action: 'Halten' as const, rationale: 'Review', risk: 'Review', sourceIndexes: [] as number[] }));
   const corrected = buildRobustForecastAllocation(r, [bitcoin, jinko], [], undefined, holds, [], risks);
-  expect(corrected.optimization!.robust!.decisionStatus).toBe('review-required');
+  expect(corrected.optimization!.robust!.reviewReasons.join(' ')).not.toContain('Verlustlage');
   expect(allocationMismatch(corrected, holds)).toBeNull();
-  expect(allocationMismatch(corrected, [{ ...holds[1], action: 'Kaufen', plannedAmountEUR: 100 }])).toContain('offener Entscheidung');
 });
 
 it('keeps negative stress results visible without treating them as the sole veto', () => {

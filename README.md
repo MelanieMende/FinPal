@@ -30,6 +30,7 @@ A Finance Visualization application build with Electron, React, Typescript, Tail
 
 * [Install](#install)
 * [Usage](#usage)
+* [Analyseablauf](#analyseablauf)
 * [Code of Conduct](#code-of-conduct)
 * [License](#license)
 
@@ -66,6 +67,14 @@ npm run package
 ```
 npm run make
 ```
+
+### Analyseablauf
+
+Die Analyse verbindet aktuelle Portfolio- und Marktdaten mit Primärberichten, einer separaten Risikoprüfung, dem robusten Portfoliomodell und einer abschließenden Validierung. Belegte Risiken beeinflussen Richtung und Positionsgröße, sind aber ohne einen zusätzlichen konkreten Hinderungsgrund kein automatischer Handelsblocker.
+
+![FinPal Analyseablauf](docs/analysis-flow.svg)
+
+Die Grafik ist Bestandteil der technischen Dokumentation. Änderungen an Analysephasen, Risikosemantik, Blockierungslogik, Portfoliomodell oder Ergebnisvalidierung müssen gemeinsam mit `docs/analysis-flow.svg` aktualisiert werden.
 
 ### Code of Conduct
 

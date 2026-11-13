@@ -11,3 +11,9 @@ Es soll sich wie ein erfahrener Finanz- und Steuerberater verhalten, der dabei h
 - Screenshots in `.vite/layout-check/analysis-900.png` und `.vite/layout-check/asset-fields-900.png` visuell prüfen. Bei neuen Formularbereichen die Layoutprüfung passend erweitern.
 - Achte darauf, dass eine einheitliche Farbpalette verwendet wird. Bei positiven Hervorherbungen bspw. für Text var(--color-emerald-300);
 - Verwende für Text standardmäßig Deutsch, außer bei englischen Begriffen, die im Deutschen geläufig sind.
+
+# Dokumentation des Analyseablaufs
+
+- `README.md` bindet `docs/analysis-flow.svg` als verbindliche Übersicht des FinPal-Analyseablaufs ein.
+- Bei Änderungen an Analysephasen, Recherche, Primärrisikoprüfung, `materialRisks`, `decisionReadiness`, Blockierungslogik, Portfoliomodell, Finanzierung, Teilplänen oder Ergebnisvalidierung muss das Flussdiagramm im selben Änderungssatz fachlich aktualisiert werden.
+- Belegte Risiken im Diagramm als Entscheidungsfaktoren darstellen. Nur ein separat benannter konkreter Daten-, Strategie-, Finanzierungs- oder Ausführungsgrund ist ein Blocker.

@@ -97,16 +97,16 @@ export function RiskReview({ risk, blocked, openSource }: { risk: FundamentalRis
   const material = new Set(risk.materialRisks.map(item => riskLineLabels[item] ?? item));
   const lines = risk.rationale.split('\n').map(line => line.trim()).filter(Boolean);
   const lineLabel = (line: string) => line.slice(0, line.indexOf(':'));
-  const blocking = lines.filter(line => material.has(lineLabel(line)));
+  const materialFindings = lines.filter(line => material.has(lineLabel(line)));
   const metrics = lines.filter(line => metricPrefixes.some(prefix => line.startsWith(prefix)));
-  const open = lines.filter(line => !blocking.includes(line) && !metrics.includes(line)
+  const open = lines.filter(line => !materialFindings.includes(line) && !metrics.includes(line)
     && (/: offen\b/i.test(line) || /keine .*textstelle|nicht (?:belegt|gefunden|verfügbar)|fehlt|ungeklärt/i.test(line)));
-  const verified = lines.filter(line => !blocking.includes(line) && !metrics.includes(line) && !open.includes(line));
+  const verified = lines.filter(line => !materialFindings.includes(line) && !metrics.includes(line) && !open.includes(line));
   const hasMaterial = risk.materialRisks.length > 0;
   const incomplete = risk.status === 'unknown' && risk.decisionReadiness !== 'reviewed-uncertainty';
   const tone = hasMaterial || incomplete && blocked ? {
     border: 'border-red-400/35', background: 'bg-red-500/5', text: 'text-red-300', icon: 'error' as const,
-    title: hasMaterial && blocked ? 'Blockierender Risikobefund' : hasMaterial ? 'Wesentliches Risiko belegt' : 'Entscheidungsrelevante Prüfung offen',
+    title: hasMaterial ? 'Wesentliches Risiko belegt' : 'Entscheidungsrelevante Prüfung offen',
   } : risk.decisionReadiness === 'reviewed-uncertainty' ? {
     border: 'border-amber-400/30', background: 'bg-amber-500/5', text: 'text-amber-200', icon: 'warning-sign' as const,
     title: 'Geprüft mit Restunsicherheit',
@@ -134,14 +134,18 @@ export function RiskReview({ risk, blocked, openSource }: { risk: FundamentalRis
         {riskLabels[item] ?? item} · strukturell
       </span>)}
     </div>}
-    <details open={hasMaterial && blocked} className="group px-3 py-2.5 text-xs text-gray-300">
+    {blocked && hasMaterial && <p className="mx-3 mb-0 mt-2 rounded border border-white/10 bg-slate-950/30 px-2.5 py-2 text-xs text-gray-300">
+      Der Handelsstatus ist separat blockiert. Das belegte Risiko allein ist kein Blocker; der konkrete Hinderungsgrund steht im Analyseergebnis und im Handelsstatus.
+    </p>}
+    <details open={hasMaterial} className="group px-3 py-2.5 text-xs text-gray-300">
       <summary className="cursor-pointer select-none font-semibold text-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400">
         Befunde und Primärquellen anzeigen
       </summary>
       <div className="mt-3 space-y-3">
-        {!!blocking.length && <div className="rounded border border-red-400/25 bg-red-950/20 p-2.5">
-          <p className="m-0 font-bold text-red-200">{blocked ? 'Warum die Entscheidung blockiert ist' : 'Wesentliche Befunde'}</p>
-          <ul className="mb-0 mt-1.5 space-y-1 pl-4 text-gray-200">{blocking.map(line => <li key={line} className="break-words">{line}</li>)}</ul>
+        {!!materialFindings.length && <div className="rounded border border-red-400/25 bg-red-950/20 p-2.5">
+          <p className="m-0 font-bold text-red-200">Bedeutung für die Entscheidung</p>
+          <p className="mb-1 mt-1 text-gray-300">Bei Kaufen, Halten, Verkaufen und der Positionsgröße berücksichtigen; kein automatischer Handelsblocker.</p>
+          <ul className="mb-0 mt-1.5 space-y-1 pl-4 text-gray-200">{materialFindings.map(line => <li key={line} className="break-words">{line}</li>)}</ul>
         </div>}
         {!!open.length && <div className="rounded border border-amber-400/20 bg-amber-950/15 p-2.5">
           <p className="m-0 font-bold text-amber-200">Offene Punkte und Restunsicherheit</p>

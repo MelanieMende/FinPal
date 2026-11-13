@@ -98,7 +98,7 @@ it('shows a blocked card status and moves the trade status details into its tool
   view.unmount();
 });
 
-it('makes blocking risk findings visible before the detailed evidence', () => {
+it('separates material risk findings from the recommendation blocker', () => {
   render(<RiskReview blocked risk={{ key: '1', status: 'unknown', decisionReadiness: 'reviewed-uncertainty',
     materialRisks: ['low-margin'], rationale: [
       'Gewinn oder Verlust: kein wesentliches Risiko belegt (Quartalsgewinn belegt.)',
@@ -108,9 +108,11 @@ it('makes blocking risk findings visible before the detailed evidence', () => {
     ].join('\n'), sources: [{ title: 'Lufthansa Quartalsbericht', url: 'https://example.com/lufthansa.pdf' }] }}
   openSource={jest.fn()} />);
   const review = screen.getByRole('region', { name: 'Unternehmens- und Produktrisiken' });
-  expect(within(review).getByText('Blockierender Risikobefund')).toBeInTheDocument();
+  expect(within(review).getByText('Wesentliches Risiko belegt')).toBeInTheDocument();
   expect(within(review).getByText('Marge')).toBeInTheDocument();
-  expect(within(review).getByText('Warum die Entscheidung blockiert ist')).toBeInTheDocument();
+  expect(within(review).getByText('Bedeutung für die Entscheidung')).toBeInTheDocument();
+  expect(within(review).getByText(/kein automatischer Handelsblocker/)).toBeInTheDocument();
+  expect(within(review).getByText(/Handelsstatus ist separat blockiert/)).toBeInTheDocument();
   expect(within(review).getByText(/Die berichtete EBIT-Marge beträgt 3,1/)).toBeInTheDocument();
   expect(within(review).getByText('Offene Punkte und Restunsicherheit')).toBeInTheDocument();
   expect(within(review).getByText('Belegte Kennzahlen')).toBeInTheDocument();

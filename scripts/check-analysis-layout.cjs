@@ -244,7 +244,7 @@ async function buildAndCheck() {
         risk: 'Risikoangabe für die Layoutprüfung.', sourceIndexes: [] }));
       const fundamentalRisks = [{ key: '1', status: 'unknown', decisionReadiness: 'reviewed-uncertainty', materialRisks: ['low-margin'], structuralRisks: [],
         rationale: ['Gewinn oder Verlust: kein wesentliches Risiko belegt (Der jüngste Quartalsgewinn wurde im Primärbericht belegt.)',
-          'Marge: Risiko belegt (Die berichtete operative Marge liegt lediglich bei 3,1 Prozent und begründet den blockierenden Befund.)',
+          'Marge: Risiko belegt (Die berichtete operative Marge liegt lediglich bei 3,1 Prozent und muss bei Richtung und Positionsgröße berücksichtigt werden.)',
           'Finanzierung: kein wesentliches Risiko belegt (Verfügbare Liquidität und Kreditlinien wurden im Bericht belegt.)',
           'Fortführung: offen (Kein überprüfbarer Befund mit Textstelle.)',
           'Regulatorische Risiken: offen (Kein überprüfbarer Befund mit Textstelle.)',

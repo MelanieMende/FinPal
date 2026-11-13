@@ -17,6 +17,7 @@ describe('README.md Tests', () => {
 			'### Table of contents',
 			'### Install',
 			'### Usage',
+			'### Analyseablauf',
 			'### Code of Conduct',
 			'### License',
 		];
@@ -29,12 +30,26 @@ describe('README.md Tests', () => {
 		const tocEntries = [
 			'* [Install](#install)',
 			'* [Usage](#usage)',
+			'* [Analyseablauf](#analyseablauf)',
 			'* [Code of Conduct](#code-of-conduct)',
 			'* [License](#license)',
 		];
 		tocEntries.forEach((entry) => {
 			expect(readmeContent).toContain(entry);
 		});
+	});
+
+	test('should embed the maintained analysis flow diagram with current blocker semantics', () => {
+		expect(readmeContent).toContain('![FinPal Analyseablauf](docs/analysis-flow.svg)');
+		const diagramPath = path.join(__dirname, 'docs', 'analysis-flow.svg');
+		const diagram = fs.readFileSync(diagramPath, 'utf-8');
+		expect(diagram).toContain('Kein automatischer Blocker');
+		expect(diagram).toContain('Konkreter Hinderungsgrund?');
+		expect(diagram).toContain('Kaufen · Halten · Verkaufen');
+		expect(diagram).toContain('Gehaltene Assets nacheinander');
+		expect(diagram).toContain('Forecasts parallel laden');
+		expect(diagram).toContain('Primärberichte abgleichen');
+		expect(diagram).toContain('Unverändert: Cache');
 	});
 
 	test('should contain valid commands under Install', () => {

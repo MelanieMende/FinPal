@@ -6,6 +6,7 @@ import { loadTransactions } from '../transactions/transactions.reducer';
 import { calendarDate, todayDate, upcomingForecasts, isDividendForecastAsset, needsDividendForecast, type DividendForecast } from '../../utils/dividendForecasts';
 import { recordMarketPriceUpdate } from '../../utils/syncTimestamps';
 import { readBondHolding, type BondHolding } from '../../utils/bondHoldings';
+import { estimateGermanPropertyMarketValue, germanHousePriceIndexSource } from '../../utils/germanHousePriceIndex';
 
 export const initialState = [] as Asset[]
 
@@ -65,6 +66,41 @@ export const loadAsset = createAsyncThunk(
 		thunkAPI.dispatch(loadPricesAndDividends({ assetIDs: [props.assetID], preferTradeRepublicPrice: false }))
   }
 )
+
+export const refreshPropertyMarketValue = createAsyncThunk(
+	'assets/refreshPropertyMarketValue',
+	async ({ assetID }: { assetID: number }, thunkAPI) => {
+		const state = thunkAPI.getState() as State;
+		const asset = (state.assets ?? []).find(item => item.ID === assetID);
+		if (!asset || asset.type !== 'RealEstate') throw new Error('Die Immobilie konnte nicht gefunden werden.');
+		if (!window.API.getGermanHousePriceIndex) throw new Error('Der Zugriff auf den Häuserpreisindex ist nicht verfügbar.');
+		if (asset.property_purchase_price == null || !asset.property_purchase_date) {
+			throw new Error('Für die Schätzung werden Kaufpreis und Kaufdatum benötigt.');
+		}
+
+		const observations = await window.API.getGermanHousePriceIndex();
+		const estimate = estimateGermanPropertyMarketValue(
+			asset.property_purchase_price,
+			asset.property_purchase_date,
+			observations
+		);
+		const sql = `UPDATE assets
+			SET property_market_value = ${estimate.value},
+				property_valuation_period = '${estimate.period}',
+				property_valuation_source = '${germanHousePriceIndexSource.replace(/'/g, "''")}'
+			WHERE ID = ${assetID}`;
+		const result = await window.API.sendToDB(sql);
+		if (typeof result === 'string') throw new Error(`Immobilienwert konnte nicht gespeichert werden: ${result}`);
+
+		thunkAPI.dispatch(setAsset({
+			ID: assetID,
+			property_market_value: estimate.value,
+			property_valuation_period: estimate.period,
+			property_valuation_source: germanHousePriceIndexSource,
+		}));
+		return { assetID, ...estimate };
+	}
+);
 
 export const loadPricesAndDividends = createAsyncThunk(
   'assets/loadPrices',

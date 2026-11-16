@@ -8,6 +8,7 @@ if (typeof window !== 'undefined') window.API = {
   dbFileExists: jest.fn(() => { return true }),
   sendToDB: jest.fn((param) => { if(param == 'SELECT MAX(ID) as ID FROM assets') return [{ID: 1}] }),
   sendToYahooFinanceAPI: jest.fn(),
+  getGermanHousePriceIndex: jest.fn().mockResolvedValue([]),
   sendToDivvyDiaryAPI: jest.fn(),
   openFiles: jest.fn().mockResolvedValue([]),
   parsePDF: jest.fn().mockResolvedValue(''),

@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS assets (
   "property_purchase_price" REAL,
   "property_monthly_rent" REAL DEFAULT 0,
   "property_monthly_costs" REAL DEFAULT 0,
+  "property_valuation_period" TEXT,
+  "property_valuation_source" TEXT,
   CONSTRAINT assets_pk PRIMARY KEY("ID" AUTOINCREMENT)
 );
 

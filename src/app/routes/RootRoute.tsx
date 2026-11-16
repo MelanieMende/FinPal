@@ -102,6 +102,8 @@ export default function RootRoute() {
 			['property_purchase_price', 'REAL'],
 			['property_monthly_rent', 'REAL DEFAULT 0'],
 			['property_monthly_costs', 'REAL DEFAULT 0'],
+			['property_valuation_period', 'TEXT'],
+			['property_valuation_source', 'TEXT'],
 		]
 		for (const [name, type] of propertyColumns) {
 			if (!columns.some((column: { name: string }) => column.name === name)) {

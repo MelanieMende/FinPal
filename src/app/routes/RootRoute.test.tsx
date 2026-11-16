@@ -45,6 +45,8 @@ describe('RootRoute component', () => {
     await act(async () => { render(<RootRoute />); });
     await waitFor(() => expect(sendToDB).toHaveBeenCalledWith('ALTER TABLE assets ADD COLUMN reserved_amount REAL DEFAULT 0'));
     expect(sendToDB).toHaveBeenCalledWith('ALTER TABLE assets ADD COLUMN reserved_since TEXT');
+    expect(sendToDB).toHaveBeenCalledWith('ALTER TABLE assets ADD COLUMN property_valuation_period TEXT');
+    expect(sendToDB).toHaveBeenCalledWith('ALTER TABLE assets ADD COLUMN property_valuation_source TEXT');
     expect(sendToDB).not.toHaveBeenCalledWith("ALTER TABLE assets ADD COLUMN type TEXT DEFAULT 'Stock'");
   });
 

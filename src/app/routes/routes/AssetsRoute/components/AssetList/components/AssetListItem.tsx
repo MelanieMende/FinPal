@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useState, type MouseEvent } from 'react';
 import AssetAnalysisIndicator from './AssetAnalysisIndicator';
 import { useAppSelector, useAppDispatch } from '../../../../../../hooks'
 import * as selectors from '../../../../../../selectors';
@@ -8,12 +8,15 @@ import * as assetsSelector from '../../../../../../store/assets/assets.selectors
 import * as appStateReducer from '../../../../../../store/appState/appState.reducer';
 import * as assetCreationReducer from '../../../../../../store/assetCreation/assetCreation.reducer';
 import * as assetReducer from '../../../../../../store/assets/assets.reducer';
+import { formatHousePriceIndexPeriod, germanHousePriceIndexSource } from '../../../../../../utils/germanHousePriceIndex';
 
-export default function AssetListItem(props: {i: number, asset:Asset, hideRealizedGainLoss?: boolean}) {
+export default function AssetListItem(props: {i: number, asset:Asset, hideRealizedGainLoss?: boolean; showPropertyValuationButton?: boolean}) {
 
   const dispatch = useAppDispatch();
 	const transactions = useAppSelector(state => state.transactions);
 	const [showTransactions, setShowTransactions] = useState(false);
+	const [isRefreshingPropertyValue, setIsRefreshingPropertyValue] = useState(false);
+	const [propertyValueError, setPropertyValueError] = useState('');
 	const assetTransactions = transactions
 		.filter(transaction => transaction.asset_ID === props.asset.ID)
 		.slice()
@@ -135,9 +138,28 @@ export default function AssetListItem(props: {i: number, asset:Asset, hideRealiz
 			<TableCell className="p-3 text-right">
 				<div data-testid={"current-price-" + props.asset.ID} className={`text-sm font-medium uppercase ${currentPriceColor}`}>
 					{isPendingIpo ? 'Noch kein Kurs' : isRealEstate
-						? euroFormatter.format(props.asset.property_market_value || 0)
+						? <span className="inline-flex items-center justify-end gap-1">
+							{euroFormatter.format(props.asset.property_market_value || 0)}
+							{props.showPropertyValuationButton && <Button
+								small
+								minimal
+								icon="refresh"
+								loading={isRefreshingPropertyValue}
+								aria-label={`Immobilienwert für ${props.asset.name} neu berechnen`}
+								title="Grobe Schätzung mit dem bundesweiten BIS-Häuserpreisindex"
+								onClick={refreshPropertyValue}
+								onKeyDown={event => event.stopPropagation()}
+							/>}
+						</span>
 						: props.asset.quote?.valuationCurrency === 'unknown' ? 'Nicht bewertet' : euroFormatter.format(props.asset.price || 0)}
 				</div>
+				{props.showPropertyValuationButton && props.asset.property_valuation_period && <div
+					className="mt-1 text-[10px] text-gray-500"
+					title={props.asset.property_valuation_source || germanHousePriceIndexSource}
+				>
+					Index-Schätzung · {formatHousePriceIndexPeriod(props.asset.property_valuation_period)}
+				</div>}
+				{props.showPropertyValuationButton && propertyValueError && <div role="alert" className="mt-1 text-xs text-amber-300">{propertyValueError}</div>}
 				{props.asset.quote?.error && <div className="text-xs text-amber-300">{props.asset.quote.error}</div>}
 			</TableCell>
 
@@ -238,10 +260,10 @@ export default function AssetListItem(props: {i: number, asset:Asset, hideRealiz
 	function openAssetOverlay() {
 		dispatch(appStateReducer.setAssetOverlayType(appStateReducer.AssetOverlayType.EDIT))
 		dispatch(assetCreationReducer.setID(props.asset.ID))
-		dispatch(assetCreationReducer.setNameInput(props.asset.name))
-		dispatch(assetCreationReducer.setSymbolInput(props.asset.symbol))
-		dispatch(assetCreationReducer.setISINInput(props.asset.isin))
-		dispatch(assetCreationReducer.setKGVInput(props.asset.kgv))
+		dispatch(assetCreationReducer.setNameInput(props.asset.name || ''))
+		dispatch(assetCreationReducer.setSymbolInput(props.asset.symbol || ''))
+		dispatch(assetCreationReducer.setISINInput(props.asset.isin || ''))
+		dispatch(assetCreationReducer.setKGVInput(props.asset.kgv || ''))
 		dispatch(assetCreationReducer.setTypeInput(props.asset.type || 'Stock'))
 		dispatch(assetCreationReducer.setPropertyLocationInput(props.asset.property_location || ''))
 		dispatch(assetCreationReducer.setPropertyMarketValueInput(props.asset.property_market_value == null ? '' : String(props.asset.property_market_value)))
@@ -256,5 +278,20 @@ export default function AssetListItem(props: {i: number, asset:Asset, hideRealiz
 
 	function toggleIsWatched(asset: Asset) {
 		dispatch(assetReducer.setIsWatched({asset, is_watched: !asset.is_watched}))
+	}
+
+	function refreshPropertyValue(event: MouseEvent<HTMLButtonElement>) {
+		event.stopPropagation();
+		setIsRefreshingPropertyValue(true);
+		setPropertyValueError('');
+		void dispatch(assetReducer.refreshPropertyMarketValue({ assetID: props.asset.ID }))
+			.unwrap()
+			.catch(error => {
+				const message = error && typeof error === 'object' && 'message' in error
+					? String(error.message)
+					: String(error);
+				setPropertyValueError(message);
+			})
+			.finally(() => setIsRefreshingPropertyValue(false));
 	}
 }

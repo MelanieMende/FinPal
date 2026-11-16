@@ -12,6 +12,7 @@ declare global {
       saveTransactionsAssetFilter?(transactions_AssetFilter:any):any,
       sendToDB(sql:string):any,
       sendToYahooFinanceAPI?(args:{symbol:string, isin?:string, type?:Asset['type']}):any,
+      getGermanHousePriceIndex?():Promise<import('./app/utils/germanHousePriceIndex').HousePriceIndexObservation[]>,
       getDivvyDiaryStatus?():Promise<{hasApiKey:boolean;secureStorageAvailable:boolean}>,
       saveDivvyDiaryKey?(key:string):Promise<boolean>,
       forgetDivvyDiaryKey?():Promise<boolean>,

@@ -16,6 +16,7 @@ import YahooFinance from 'yahoo-finance2';
 import { createYahooMarketForecastProvider } from './app/utils/marketForecastProvider';
 import { createCandidateMarketQuoteProvider } from './app/utils/candidateMarketQuote';
 import { createDeterministicOnlineResearchProvider } from './app/utils/deterministicOnlineResearch';
+import { fetchGermanHousePriceIndex } from './app/utils/germanHousePriceIndex';
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {
@@ -388,6 +389,7 @@ ipcMain.handle('yahoo-finance-api-message', async (_event, args: { symbol: strin
 	}
 });
 
+ipcMain.handle('market:german-house-price-index', () => fetchGermanHousePriceIndex());
 ipcMain.handle('divvy-diary:status', () => divvyDiary.status());
 ipcMain.handle('divvy-diary:save-key', (_event, key: string) => divvyDiary.saveKey(key));
 ipcMain.handle('divvy-diary:forget-key', () => divvyDiary.forgetKey());

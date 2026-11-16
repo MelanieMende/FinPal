@@ -16,6 +16,8 @@ interface Asset {
   property_purchase_price?: number,
   property_monthly_rent?: number,
   property_monthly_costs?: number,
+  property_valuation_period?: string,
+  property_valuation_source?: string,
   current_shares?: float,
   current_shares_before_ex_date?: float,
   current_invest?: float,

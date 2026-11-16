@@ -99,7 +99,13 @@ export default function AnalysisRoute(props: { assets?: Asset[]; newAssetType?: 
 
 	function AssetListRows(props:{assets:Asset[]}):JSX.Element {
 		return <>{
-			props.assets.map((asset, i) => (<AssetListItem key={"asset-" + asset.ID} i={i+1} asset={asset} hideRealizedGainLoss={isRealEstateView} />))
+			props.assets.map((asset, i) => (<AssetListItem
+				key={"asset-" + asset.ID}
+				i={i+1}
+				asset={asset}
+				hideRealizedGainLoss={isRealEstateView}
+				showPropertyValuationButton={isRealEstateView}
+			/>))
 		}</>
 	}
 }

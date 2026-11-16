@@ -63,6 +63,7 @@ contextBridge.exposeInMainWorld('API', {
   sendToYahooFinanceAPI(args: { symbol:string, isin?:string, type?:Asset['type']}) {
     return ipcRenderer.invoke('yahoo-finance-api-message', args);
   },
+  getGermanHousePriceIndex: () => ipcRenderer.invoke('market:german-house-price-index'),
   getDivvyDiaryStatus: () => ipcRenderer.invoke('divvy-diary:status'),
   saveDivvyDiaryKey: (key: string) => ipcRenderer.invoke('divvy-diary:save-key', key),
   forgetDivvyDiaryKey: () => ipcRenderer.invoke('divvy-diary:forget-key'),

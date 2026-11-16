@@ -63,6 +63,32 @@ describe('AssetCreation reducer', () => {
 
   describe('Assets Thunks', () => {
 
+    it('recalculates a property value from the purchase-quarter index and persists its provenance', async () => {
+      const property = {
+        ID: 7, type: 'RealEstate', property_purchase_price: 200000, property_purchase_date: '2013-06-11',
+        property_market_value: 250000,
+      } as Asset;
+      const sendToDB = jest.fn().mockResolvedValue([]);
+      window.API = {
+        sendToDB,
+        getGermanHousePriceIndex: jest.fn().mockResolvedValue([
+          { period: '2013-Q2', value: 108.684 },
+          { period: '2026-Q2', value: 180.1253 },
+        ]),
+      };
+      const store = setupStore({ assets: [property] });
+
+      const result = await store.dispatch(assetsReducer.refreshPropertyMarketValue({ assetID: 7 })).unwrap();
+
+      expect(result).toEqual({ assetID: 7, value: 331466.09, period: '2026-Q2' });
+      expect(sendToDB).toHaveBeenCalledWith(expect.stringContaining('property_market_value = 331466.09'));
+      expect(sendToDB).toHaveBeenCalledWith(expect.stringContaining("property_valuation_period = '2026-Q2'"));
+      expect(store.getState().assets[0]).toMatchObject({
+        property_market_value: 331466.09,
+        property_valuation_period: '2026-Q2',
+      });
+    });
+
     it.each([false, true])('rebuilds current investment from transactions after an asset reload (single: %s)', async single => {
       const assets = [
         { ID: 1, name: 'Partially sold', symbol: 'PART', current_shares: 6, current_invest: -1000 },

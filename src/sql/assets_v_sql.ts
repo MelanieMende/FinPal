@@ -26,6 +26,8 @@ CREATE VIEW IF NOT EXISTS assets_v AS
 	    assets.property_purchase_price,
 	    assets.property_monthly_rent,
 	    assets.property_monthly_costs,
+	    assets.property_valuation_period,
+	    assets.property_valuation_source,
 	    assets.exDividendDate,
 	    AVG(transactions.price_per_share) AS avg_price_paid,
 	    SUM(CASE WHEN transactions.type = 'Buy' THEN transactions.amount * transactions.price_per_share ELSE 0 END) AS invested,

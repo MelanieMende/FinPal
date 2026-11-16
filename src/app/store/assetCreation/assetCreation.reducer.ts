@@ -86,8 +86,16 @@ export const validateAndSave = createAsyncThunk(
     const realEstateUpdates = realEstatePropertyFields
       .map((column, index) => `${column}=${realEstateValues[index]}`)
       .join(',\n          ')
+    const existingAsset = state.assets.find(asset => asset.ID === state.assetCreation.ID)
+    const valuationMetadataReset = existingAsset && (
+      parseNumberInput(state.assetCreation.propertyMarketValueInput) !== (existingAsset.property_market_value ?? null)
+      || parseNumberInput(state.assetCreation.propertyPurchasePriceInput) !== (existingAsset.property_purchase_price ?? null)
+      || state.assetCreation.propertyPurchaseDateInput.trim() !== (existingAsset.property_purchase_date ?? '')
+    )
+      ? ',\n          property_valuation_period=NULL,\n          property_valuation_source=NULL'
+      : ''
 
-    if (state.assetCreation.ID && state.assets.some(a => a.ID === state.assetCreation.ID)) {
+    if (state.assetCreation.ID && existingAsset) {
       sql = `
         UPDATE assets SET 
           name=${sqlText(state.assetCreation.nameInput)},
@@ -98,6 +106,7 @@ export const validateAndSave = createAsyncThunk(
           reserved_amount=${state.assetCreation.typeInput === 'IPO' ? 'reserved_amount' : '0'},
           reserved_since=${state.assetCreation.typeInput === 'IPO' ? 'reserved_since' : 'NULL'},
           ${realEstateUpdates}
+          ${valuationMetadataReset}
         WHERE ID = ${state.assetCreation.ID}
       `;
     } else {

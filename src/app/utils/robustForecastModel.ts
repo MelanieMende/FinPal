@@ -8,6 +8,11 @@ import { allRiskCheckNames, riskCheckLabels } from './assetRiskPolicy';
 export interface FundamentalRiskAssessment {
   key: string;
   status: 'assessed' | 'unknown';
+  primaryDocumentsCheckedAt?: string;
+  primaryDocuments?: AnalysisSource[];
+  primaryDocumentsFingerprint?: string;
+  primaryDocumentsFingerprintVersion?: 2;
+  primaryDocumentsChanged?: boolean;
   decisionReadiness?: 'reviewed-uncertainty';
   materialRisks: string[];
   structuralRisks?: string[];
@@ -108,6 +113,18 @@ export function readFundamentalRisks(value: unknown, sources: AnalysisSource[]):
     && Array.isArray(v.sourceIndexes) && v.sourceIndexes.length <= 30 && v.sourceIndexes.every((i: unknown) => Number.isInteger(i) && Number(i) >= 0 && Number(i) < sources.length)
     && (v.status === 'unknown' || v.sourceIndexes.length > 0));
   return read.filter(v => read.filter(other => other.key === v.key).length === 1).map(v => ({ key: v.key, status: v.status,
+    ...(typeof v.primaryDocumentsCheckedAt === 'string' && Number.isFinite(Date.parse(v.primaryDocumentsCheckedAt))
+      ? { primaryDocumentsCheckedAt: new Date(Date.parse(v.primaryDocumentsCheckedAt)).toISOString() } : {}),
+    ...(typeof v.primaryDocumentsFingerprint === 'string' && /^[a-f0-9]{64}$/i.test(v.primaryDocumentsFingerprint)
+      ? { primaryDocumentsFingerprint: v.primaryDocumentsFingerprint } : {}),
+    ...(v.primaryDocumentsFingerprintVersion === 2 ? { primaryDocumentsFingerprintVersion: 2 as const } : {}),
+    ...(v.primaryDocumentsChanged === true ? { primaryDocumentsChanged: true } : {}),
+    ...(Array.isArray(v.primaryDocuments) ? { primaryDocuments: v.primaryDocuments.flatMap((document: unknown) => {
+      if (!document || typeof document !== 'object') return [];
+      const candidate = document as AnalysisSource;
+      const matched = sources.find(source => source.url === candidate.url && source.title === candidate.title);
+      return matched ? [matched] : [];
+    }) } : {}),
     ...(v.decisionReadiness === 'reviewed-uncertainty' && v.sourceIndexes.length > 0
       ? { decisionReadiness: 'reviewed-uncertainty' as const } : {}),
     materialRisks: v.materialRisks, rationale: v.rationale, sources: v.sourceIndexes.map((i: number) => sources[i]) }));

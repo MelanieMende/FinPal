@@ -56,7 +56,8 @@ function assetReloadStatus(progress: PortfolioAnalysisProgress | null, targetAss
       refreshingPrice: false, refreshingForecast: false, refreshingResearch: progress.activeAssetId === assetId || !researchReusable, refreshingRisk: false };
     case 'ai-research': return { message: 'Fehlende Quellen werden mit KI recherchiert', refreshingPrice: false, refreshingForecast: false, refreshingResearch: true, refreshingRisk: false };
     case 'risk-review': return { message: progress.activeAssetId === assetId
-      ? progress.activeRiskStep === 'assessment' ? 'Dokumenttext wird auf Gewinn, Marge, Liquidität, Fälligkeiten und weitere Risiken geprüft' : 'Aktuelle Primärberichte werden geladen'
+      ? progress.activeRiskStep === 'assessment' ? 'Dokumenttext wird auf Gewinn, Marge, Liquidität, Fälligkeiten und weitere Risiken geprüft'
+        : progress.documentsRefreshForced ? 'Aktuelle Primärberichte werden neu geladen' : 'Gültige Primärberichte werden wiederverwendet oder auf Aktualität geprüft'
       : progress.reusedRiskAssetIds?.includes(assetId) ? 'Gespeicherte Risikoprüfung wird wiederverwendet'
         : progress.completedRiskAssetIds?.includes(assetId) ? 'Prüfung abgeschlossen; Befund oder Datenlücke gespeichert' : 'Risikoprüfung steht noch aus',
       refreshingPrice: false, refreshingForecast: false, refreshingResearch: false,
@@ -87,6 +88,35 @@ export function AssetResearchIndicator({ status, now }: { status?: AssetResearch
         : 'Status der gespeicherten Online-Recherche nicht verfügbar.'}
   </p>;
 }
+function PrimaryDocumentsIndicator({ risk, now, openSource, onReload, disabled, loading, forceReload }: { risk: FundamentalRiskAssessment; now: number; openSource: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void; onReload: () => void; disabled: boolean; loading: boolean; forceReload: boolean }) {
+  const checkedAt = risk.primaryDocumentsCheckedAt ? Date.parse(risk.primaryDocumentsCheckedAt) : NaN;
+  const current = Number.isFinite(checkedAt) && checkedAt <= now && now - checkedAt < 24 * 60 * 60 * 1000;
+  const documents = (risk.primaryDocuments ?? []).filter(source => source && typeof source.url === 'string' && typeof source.title === 'string');
+  return <section aria-label="Primärberichte" className="my-3 min-w-0 rounded border border-white/10 bg-slate-950/25 p-3">
+    <div className="flex min-w-0 flex-wrap items-start gap-2">
+    <details className="group min-w-0 flex-1">
+      <summary className={`flex min-w-0 cursor-pointer list-none items-center gap-2 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${current ? 'text-emerald-300' : 'text-amber-300'}`}>
+        <Icon icon={current ? 'tick-circle' : 'refresh'} size={14} aria-hidden="true" />
+        <span className="min-w-0 break-words">Primärberichte: {loading && forceReload ? 'werden neu geladen' : current ? 'geladen · aktuell' : 'nicht aktuell oder nicht verfügbar'}</span>
+        <Icon icon="chevron-right" size={12} aria-hidden="true" className="ml-auto shrink-0 text-gray-500 transition-transform group-open:rotate-90" />
+      </summary>
+      <div className="mt-2 min-w-0 space-y-2 border-t border-white/10 pt-2">
+        {Number.isFinite(checkedAt)
+          ? <p className="m-0 text-xs text-gray-400">Zuletzt geprüft: {formatSyncTime(new Date(checkedAt).toISOString())} · Status 24 Stunden gültig. Das ist der Prüfzeitpunkt, nicht das Veröffentlichungsdatum der Berichte.</p>
+          : <p className="m-0 text-xs text-gray-400">Für diese Analyse ist kein Prüfzeitpunkt der Primärberichte gespeichert.</p>}
+        {documents.length
+          ? <div className="flex flex-wrap gap-2" aria-label="Geladene Primärberichte">
+            {documents.map((source, index) => <a key={`${source.url}-${index}`} href={source.url} onClick={event => openSource(event, source.url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">{source.title}</a>)}
+          </div>
+          : <p className="m-0 text-xs text-gray-400">Keine geladenen Primärberichte in der gespeicherten Prüfung.</p>}
+      </div>
+    </details>
+    <Button className="ml-auto shrink-0" small intent="primary" icon={loading ? undefined : 'refresh'} disabled={disabled || loading} aria-label="Primärberichte neu laden" onClick={onReload}>
+      {loading ? <><Spinner size={14} /> Berichte werden geladen</> : 'Berichte neu laden'}
+    </Button>
+    </div>
+  </section>;
+}
 const isBlockedRecommendation = (recommendation: Pick<AssetRecommendation, 'action' | 'executionBlocker'>) =>
   recommendation.action === 'Prüfen' || !!recommendation.executionBlocker;
 const riskLabels: Record<string, string> = {
@@ -104,25 +134,34 @@ const riskLineLabels: Record<string, string> = {
   underwriting: 'Versicherungstechnik', solvency: 'Solvenz',
 };
 const metricPrefixes = ['Periodengewinn:', 'operative Marge:', 'Liquidität:', 'Fälligkeiten:', 'Combined Ratio:', 'Solvenzquote:', 'debt-maturities:'];
-export function RiskReview({ risk, blocked, openSource, onRefreshRisk, refreshDisabled }: { risk: FundamentalRiskAssessment; blocked: boolean;
-  openSource: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void; onRefreshRisk?: () => void; refreshDisabled?: boolean }) {
+export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, checkStatus }: { risk: FundamentalRiskAssessment;
+  openSource: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void; onRefreshRisk?: () => void; refreshDisabled?: boolean; checkStatus?: string }) {
   const material = new Set(risk.materialRisks.map(item => riskLineLabels[item] ?? item));
   const lines = risk.rationale.split('\n').map(line => line.trim()).filter(Boolean);
   const lineLabel = (line: string) => line.slice(0, line.indexOf(':'));
   const materialFindings = lines.filter(line => material.has(lineLabel(line)));
   const metrics = lines.filter(line => metricPrefixes.some(prefix => line.startsWith(prefix)));
-  const open = lines.filter(line => !materialFindings.includes(line) && !metrics.includes(line)
+  const reviewedResidual = lines.filter(line => line.toLocaleLowerCase('de-DE').includes(': geprüfte restunsicherheit')
+    || (risk.decisionReadiness === 'reviewed-uncertainty' && lineLabel(line) === 'Regulatorische Risiken' && /: offen\b/i.test(line))
+    || (risk.decisionReadiness === 'reviewed-uncertainty' && lineLabel(line) === 'Fortführung'
+      && /Verfügbare Primärberichte geprüft: Eine konkrete unternehmensbezogene Aussage zu wesentlichen Fortführungsunsicherheiten fehlt/i.test(line)));
+  const open = lines.filter(line => !materialFindings.includes(line) && !metrics.includes(line) && !reviewedResidual.includes(line)
     && (/: offen\b/i.test(line) || /keine .*textstelle|nicht (?:belegt|gefunden|verfügbar)|fehlt|ungeklärt/i.test(line)));
-  const verified = lines.filter(line => !materialFindings.includes(line) && !metrics.includes(line) && !open.includes(line));
+  const verified = lines.filter(line => !materialFindings.includes(line) && !metrics.includes(line)
+    && !reviewedResidual.includes(line) && !open.includes(line));
   const hasMaterial = risk.materialRisks.length > 0;
-  const incomplete = risk.status === 'unknown' && risk.decisionReadiness !== 'reviewed-uncertainty';
+  const documentsChanged = risk.primaryDocumentsChanged === true;
+  const incomplete = documentsChanged || (risk.status === 'unknown' && risk.decisionReadiness !== 'reviewed-uncertainty');
   const requiresManualReview = incomplete || open.length > 0;
-  const tone = requiresManualReview ? {
+  const tone = documentsChanged ? {
     border: 'border-red-400/35', background: 'bg-red-500/5', text: 'text-red-300', icon: 'error' as const,
-    title: hasMaterial ? 'Wesentliches Risiko belegt' : 'Prüfung erforderlich',
+    title: 'Neue Risikoprüfung erforderlich',
+  } : requiresManualReview ? {
+    border: 'border-red-400/35', background: 'bg-red-500/5', text: 'text-red-300', icon: 'error' as const,
+    title: 'Geprüft · offene Punkte',
   } : hasMaterial ? {
     border: 'border-amber-400/30', background: 'bg-amber-500/5', text: 'text-amber-200', icon: 'warning-sign' as const,
-    title: 'Wesentliches Risiko belegt',
+    title: 'Wesentliche Risiken · Entscheidungsfaktor',
   } : risk.decisionReadiness === 'reviewed-uncertainty' ? {
     border: 'border-amber-400/30', background: 'bg-amber-500/5', text: 'text-amber-200', icon: 'warning-sign' as const,
     title: 'Geprüft mit Restunsicherheit',
@@ -139,37 +178,41 @@ export function RiskReview({ risk, blocked, openSource, onRefreshRisk, refreshDi
         </p>
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <span className="rounded-full border border-white/10 bg-slate-950/40 px-2 py-1 text-[11px] text-gray-300">
-          {requiresManualReview ? 'Prüfung erforderlich' : hasMaterial ? `${risk.materialRisks.length} wesentlich` : 'Prüfung abgeschlossen'}
-        </span>
         {onRefreshRisk && <Button small icon="refresh" disabled={refreshDisabled} onClick={onRefreshRisk}
           aria-label={`Unternehmens- und Produktrisiken für Asset ${risk.key} neu prüfen`}>Risiken neu prüfen</Button>}
       </div>
     </div>
+    {checkStatus && <p role="status" className="mx-3 mb-0 mt-2 flex items-center gap-2 rounded border border-sky-400/25 bg-sky-500/10 px-2.5 py-2 text-xs text-sky-200">
+      <Spinner size={14} /> {checkStatus}
+    </p>}
+    {!!open.length && <div className="mx-3 mb-0 mt-2 rounded border border-amber-400/25 bg-amber-950/15 p-2.5 text-xs text-gray-200" aria-label="Offene Prüfpunkte">
+      <p className="m-0 font-bold text-amber-200">Offene Punkte</p>
+      <ul className="mb-0 mt-1.5 space-y-1 pl-4">{open.map(line => <li key={line} className="break-words">{line}</li>)}</ul>
+    </div>}
+    {documentsChanged && <p role="status" className="mx-3 mb-0 mt-2 rounded border border-amber-400/25 bg-amber-500/5 px-2.5 py-2 text-xs text-amber-200">
+      Seit der letzten inhaltlichen Risikoprüfung haben sich Primärberichte geändert. Der gespeicherte Befund bleibt sichtbar, ist aber bis zur erneuten Prüfung nicht aktuell.
+    </p>}
     {(hasMaterial || risk.structuralRisks?.length) && <div className="flex flex-wrap gap-1.5 px-3 pt-3" aria-label="Risikokategorien">
-      {risk.materialRisks.map(item => <span key={item} className="rounded-full border border-red-400/40 bg-red-500/10 px-2 py-1 text-[11px] font-bold text-red-200">
-        <Icon icon="error" size={10} aria-hidden="true" /> {riskLabels[item] ?? item}
+      {risk.materialRisks.map(item => <span key={item} className="rounded-full border border-amber-400/35 bg-amber-500/10 px-2 py-1 text-[11px] font-bold text-amber-200">
+        <Icon icon="warning-sign" size={10} aria-hidden="true" /> {riskLabels[item] ?? item}
       </span>)}
       {risk.structuralRisks?.map(item => <span key={item} className="rounded-full border border-sky-400/30 bg-sky-500/10 px-2 py-1 text-[11px] text-sky-200">
         {riskLabels[item] ?? item} · strukturell
       </span>)}
     </div>}
-    {blocked && hasMaterial && <p className="mx-3 mb-0 mt-2 rounded border border-white/10 bg-slate-950/30 px-2.5 py-2 text-xs text-gray-300">
-      Der Handelsstatus ist separat blockiert. Das belegte Risiko allein ist kein Blocker; der konkrete Hinderungsgrund steht im Analyseergebnis und im Handelsstatus.
-    </p>}
     <details className="group px-3 py-2.5 text-xs text-gray-300">
       <summary className="cursor-pointer select-none font-semibold text-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400">
-        Befunde und Primärquellen anzeigen
+        Befunde anzeigen
       </summary>
       <div className="mt-3 space-y-3">
-        {!!materialFindings.length && <div className="rounded border border-red-400/25 bg-red-950/20 p-2.5">
-          <p className="m-0 font-bold text-red-200">Bedeutung für die Entscheidung</p>
+        {!!materialFindings.length && <div className="rounded border border-amber-400/25 bg-amber-950/15 p-2.5">
+          <p className="m-0 font-bold text-amber-200">Bedeutung für die Entscheidung</p>
           <p className="mb-1 mt-1 text-gray-300">Bei Kaufen, Halten, Verkaufen und der Positionsgröße berücksichtigen; kein automatischer Handelsblocker.</p>
           <ul className="mb-0 mt-1.5 space-y-1 pl-4 text-gray-200">{materialFindings.map(line => <li key={line} className="break-words">{line}</li>)}</ul>
         </div>}
-        {!!open.length && <div className="rounded border border-amber-400/20 bg-amber-950/15 p-2.5">
-          <p className="m-0 font-bold text-amber-200">Offene Punkte und Restunsicherheit</p>
-          <ul className="mb-0 mt-1.5 space-y-1 pl-4">{open.map(line => <li key={line} className="break-words">{line}</li>)}</ul>
+        {!!reviewedResidual.length && <div className="rounded border border-amber-400/20 bg-amber-950/15 p-2.5">
+          <p className="m-0 font-bold text-amber-200">Geprüfte Restunsicherheiten</p>
+          <ul className="mb-0 mt-1.5 space-y-1 pl-4">{reviewedResidual.map(line => <li key={line} className="break-words">{line}</li>)}</ul>
         </div>}
         {!!metrics.length && <div>
           <p className="m-0 font-bold text-white">Belegte Kennzahlen</p>
@@ -178,11 +221,6 @@ export function RiskReview({ risk, blocked, openSource, onRefreshRisk, refreshDi
         {!!verified.length && <div>
           <p className="m-0 font-bold text-emerald-300">Weitere geprüfte Befunde</p>
           <ul className="mb-0 mt-1.5 space-y-1 pl-4">{verified.map(line => <li key={line} className="break-words">{line}</li>)}</ul>
-        </div>}
-        {!!risk.sources.length && <div>
-          <p className="m-0 font-bold text-white">Primärquellen</p>
-          <ul className="mb-0 mt-1.5 space-y-1 pl-4">{risk.sources.map(source => <li key={source.url}><a href={source.url}
-            onClick={event => openSource(event, source.url)} className="break-all text-indigo-300 underline">{source.title}</a></li>)}</ul>
         </div>}
       </div>
     </details>
@@ -580,18 +618,22 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
     });
   }
 
-  function refreshRisk(assetId: number) {
+  function refreshRisk(assetId: number, documentsOnly = false) {
     void run(async () => {
       if (!result) throw new Error('Für die Risikoprüfung ist zuerst eine gespeicherte Analyse erforderlich.');
       const asset = positions.find(position => position.id === assetId);
       if (!asset) throw new Error('Das Asset ist nicht mehr im Portfolio vorhanden.');
       const refreshed = await dispatch(refreshPortfolioPrimaryRisk({ asset: { id: asset.id, name: asset.name, isin: asset.isin,
-        symbol: asset.symbol, type: asset.type }, investorContext })).unwrap();
+        symbol: asset.symbol, type: asset.type }, investorContext, documentsOnly })).unwrap();
       if (alive.current) {
         const risk = refreshed.fundamentalRisks?.find(item => item.key === String(assetId));
-        setNotice(risk?.status === 'assessed'
-          ? `Unternehmens- und Produktrisiken für ${asset.name} aktualisiert. Falls sich der Befund geändert hat, bitte das Asset für eine neue Anlageentscheidung erneut analysieren.`
-          : `Risikoprüfung für ${asset.name} aktualisiert. Offene Punkte und fehlende Primärdaten stehen in der Asset-Kachel.`);
+        setNotice(documentsOnly
+          ? risk?.primaryDocumentsChanged
+            ? `Primärberichte für ${asset.name} haben sich geändert. Bitte jetzt „Risiken neu prüfen“ ausführen.`
+            : `Primärberichte für ${asset.name} wurden neu geladen. Der gespeicherte Risikobefund bleibt unverändert.`
+          : risk?.status === 'assessed'
+            ? `Unternehmens- und Produktrisiken für ${asset.name} aktualisiert. Falls sich der Befund geändert hat, bitte das Asset für eine neue Anlageentscheidung erneut analysieren.`
+            : `Risikoprüfung für ${asset.name} aktualisiert. Offene Punkte und fehlende Primärdaten stehen in der Asset-Kachel.`);
       }
     });
   }
@@ -769,6 +811,10 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
               const refreshingResearch = !!assetProgress?.refreshingResearch;
               const showGeneralProgress = assetProgress && !assetProgress.refreshingPrice && !assetProgress.refreshingForecast
                 && !assetProgress.refreshingResearch && !assetProgress.refreshingRisk;
+              const recommendationSources = rec.sourceIndexes.flatMap(index => {
+                const source = Number.isInteger(index) ? result.sources[index] : undefined;
+                return source && typeof source.url === 'string' && typeof source.title === 'string' ? [{ index, source }] : [];
+              });
               const risk = result.fundamentalRisks?.find(item => item.key === String(rec.assetId)) ?? {
                 key: String(rec.assetId), status: 'unknown' as const, materialRisks: [],
                 rationale: 'Keine gespeicherte Risikoprüfung verfügbar.', sources: [],
@@ -819,8 +865,8 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                         : result.mode === 'local'
                           ? <p className="my-1 text-xs text-gray-400" data-testid={`local-market-data-status-${rec.assetId}`}>{localForecastKeys.has(String(rec.assetId)) ? 'Lokaler Forecast und deterministisch gefundene Onlinequellen vorhanden.' : 'Kein vollständiger lokaler Forecast verfügbar; Onlinequellen werden ohne inhaltliche Bewertung angezeigt.'}</p>
                           : <AssetResearchIndicator status={research} now={now} />}
-                      {!refreshingResearch && !!rec.sourceIndexes.length && <div className="flex flex-wrap gap-2" aria-label={`Recherchequellen für ${assetName}`}>
-                        {rec.sourceIndexes.map(index => <a key={index} href={result.sources[index].url} onClick={e => openSource(e, result.sources[index].url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">[{index}] {result.sources[index].title}</a>)}
+                      {!refreshingResearch && !!recommendationSources.length && <div className="flex flex-wrap gap-2" aria-label={`Recherchequellen für ${assetName}`}>
+                        {recommendationSources.map(({ index, source }) => <a key={index} href={source.url} onClick={e => openSource(e, source.url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">[{index}] {source.title}</a>)}
                       </div>}
                     </div>
                   </details>
@@ -830,11 +876,15 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                   </Button>
                 </div>
               </section>
-              {assetProgress?.refreshingRisk
-                ? <section aria-label="Unternehmens- und Produktrisiken" data-testid={`asset-risk-loading-${rec.assetId}`} className="my-3 flex items-center gap-2 rounded border border-sky-400/25 bg-sky-500/10 p-3 text-xs text-sky-200"><Spinner size={14} /> {assetProgress.message}</section>
-                : <RiskReview risk={risk} blocked={isBlockedRecommendation(rec)} openSource={openSource}
-                  onRefreshRisk={() => refreshRisk(rec.assetId)}
-                  refreshDisabled={busy || !positions.some(position => position.id === rec.assetId)} />}
+              <PrimaryDocumentsIndicator risk={risk} now={now} openSource={openSource} onReload={() => refreshRisk(rec.assetId, true)}
+                disabled={busy || !positions.some(position => position.id === rec.assetId)}
+                loading={assetProgress?.refreshingRisk === true && progress?.activeRiskStep === 'documents'
+                  && progress?.documentsRefreshForced === true}
+                forceReload={progress?.documentsRefreshForced === true} />
+              <RiskReview risk={risk} openSource={openSource}
+                checkStatus={assetProgress?.refreshingRisk ? assetProgress.message : undefined}
+                onRefreshRisk={() => refreshRisk(rec.assetId)}
+                refreshDisabled={busy || !positions.some(position => position.id === rec.assetId)} />
               {assetProgress?.refreshingForecast
                 ? <section aria-label={`Prognose und Zielgewichtung ${assetName}`} data-testid={`asset-forecast-loading-${rec.assetId}`} className="my-3 flex items-center gap-2 rounded border border-sky-400/25 bg-sky-500/10 p-3 text-xs text-sky-200"><Spinner size={14} /> {assetProgress.message}</section>
                 : <AssetOptimizationDetails plan={result.allocationPlan} allocationKey={String(rec.assetId)} assetType={assets.find(asset => asset.ID === rec.assetId)?.type} onOpenSource={openSource} />}

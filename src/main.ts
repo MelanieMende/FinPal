@@ -293,10 +293,10 @@ ipcMain.handle('portfolio-ai:analyze-local', (event, request: PortfolioAnalysisR
 ipcMain.handle('portfolio-ai:refresh-forecast', (_event, request: PortfolioAnalysisRequest, assetId?: number, snapshot?: string) =>
   portfolioAnalysis.refreshMarketForecast(request, assetId, snapshot));
 ipcMain.handle('portfolio-ai:refresh-risk', (event, asset: import('./app/utils/portfolioAnalysis').ResearchAsset,
-  investorContext: import('./app/utils/investorFacts').InvestorContext) =>
+  investorContext: import('./app/utils/investorFacts').InvestorContext, documentsOnly?: boolean) =>
   portfolioAnalysis.refreshPrimaryRisk(asset, investorContext, progress => {
     if (!event.sender.isDestroyed()) event.sender.send('portfolio-ai:progress', progress);
-  }));
+  }, documentsOnly));
 ipcMain.handle('portfolio-ai:refresh-research', (event, asset: import('./app/utils/portfolioAnalysis').ResearchAsset) =>
   portfolioAnalysis.refreshOnlineResearch(asset, progress => {
     if (!event.sender.isDestroyed()) event.sender.send('portfolio-ai:progress', progress);

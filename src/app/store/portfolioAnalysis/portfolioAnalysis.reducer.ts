@@ -137,16 +137,16 @@ export const refreshPortfolioForecast = createAsyncThunk<
 
 export const refreshPortfolioPrimaryRisk = createAsyncThunk<
   PortfolioAnalysisResult,
-  { asset: ResearchAsset; investorContext: InvestorContext },
+  { asset: ResearchAsset; investorContext: InvestorContext; documentsOnly?: boolean },
   { state: { portfolioAnalysis: AnalysisState }; dispatch: ThunkDispatch<{ portfolioAnalysis: AnalysisState }, unknown, UnknownAction>; rejectValue: string }
->('portfolioAnalysis/refreshPrimaryRisk', async ({ asset, investorContext }, { dispatch, requestId, rejectWithValue }) => {
+>('portfolioAnalysis/refreshPrimaryRisk', async ({ asset, investorContext, documentsOnly }, { dispatch, requestId, rejectWithValue }) => {
   let unsubscribe: (() => void) | undefined;
   try {
     if (!window.API.refreshPortfolioPrimaryRisk) throw new Error('Bitte FinPal neu starten, um Unternehmens- und Produktrisiken einzeln zu aktualisieren.');
     unsubscribe = window.API.onPortfolioAnalysisProgress?.(progress => {
       dispatch(analysisProgressReceived({ progress, requestId }));
     });
-    return await window.API.refreshPortfolioPrimaryRisk(asset, investorContext);
+    return await window.API.refreshPortfolioPrimaryRisk(asset, investorContext, documentsOnly);
   } catch (error) {
     return rejectWithValue(error instanceof Error ? error.message : 'Die Risikoprüfung konnte nicht aktualisiert werden.');
   } finally { unsubscribe?.(); }

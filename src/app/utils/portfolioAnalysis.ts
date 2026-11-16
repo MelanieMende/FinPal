@@ -193,6 +193,7 @@ export function validateAnalysisRequest(request: PortfolioAnalysisRequest): void
 export interface PortfolioAnalysisProgress {
   stage: 'prices' | 'forecast' | 'preparing' | 'research' | 'ai-research' | 'risk-review' | 'analysis' | 'validating' | 'correcting' | 'retrying';
   activeRiskStep?: 'documents' | 'assessment';
+  documentsRefreshForced?: boolean;
   activeCandidateName?: string;
   completedRiskAssetIds?: number[];
   reusedRiskAssetIds?: number[];

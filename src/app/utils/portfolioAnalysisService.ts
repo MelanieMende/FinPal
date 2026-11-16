@@ -6,7 +6,7 @@ import type { ChatGptAuth } from './chatGptAuth';
 import { PortfolioResearchCache, RESEARCH_CACHE_TTL_MS, RESEARCH_POLICY } from './portfolioResearchCache';
 import { forecastResearchGaps, forecastResearchRequirements, forecastCoverageInstructions, forecastRecoveryInstructions, reviewedUnavailableForecasts } from './forecastResearch';
 import { forecastInputSchema, forecastAnalysisInstructions, forecastResearchInstructions, readReturnForecasts, validReturnForecast, type ReturnForecast } from './portfolioForecastOptimization';
-import { buildRobustForecastAllocation as buildForecastAllocation, readFundamentalRisks, robustAnalysisInstructions } from './robustForecastModel';
+import { buildRobustForecastAllocation as buildForecastAllocation, readFundamentalRisks, robustAnalysisInstructions, type FundamentalRiskAssessment } from './robustForecastModel';
 import { buildResearchSecurities, equityResearchInstructions, fundResearchInstructions, bondResearchInstructions, bondAnalysisInstructions, currencyExposureResearchInstructions, currencyExposureAnalysisInstructions } from './portfolioResearch';
 import { assessQuoteFreshness, isMarketClosedInfo, quoteFreshnessInfos, quoteFreshnessWarnings } from './quoteFreshness';
 import { buildTradeEconomics, tradeCheckResearchInstructions } from './tradeEconomics';
@@ -21,7 +21,7 @@ import { candidateForecastPosition, validCandidateMarketQuote, type CandidateMar
 import type { DeterministicResearchProvider, DeterministicResearchResult } from './deterministicOnlineResearch';
 import { PrimaryRiskResearch } from './primaryRiskResearch';
 import { TradeRepublicContractDocumentStore } from './tradeRepublicContractDocuments';
-import { PrimaryRiskAssessmentCache, addRiskReviewContext, riskReviewInput, riskAssessmentSchema, riskForModel, validateRiskAssessment,
+import { PrimaryRiskAssessmentCache, addRiskReviewContext, primaryDocumentsFingerprint, riskReviewInput, riskAssessmentSchema, riskForModel, validateRiskAssessment,
   type PrimaryRiskRecord } from './primaryRiskAssessment';
 import { allRiskCheckNames, riskReviewInstructions } from './assetRiskPolicy';
 import {
@@ -382,6 +382,7 @@ export class PortfolioAnalysisService {
       const saved = JSON.parse(fs.readFileSync(this.resultFile, 'utf8'));
       if (saved.version !== 1 || typeof saved.snapshot !== 'string' || saved.snapshot.length > 1_000_000) return null;
       validateAnalysisRequest(saved.request);
+      const savedRequest = saved.request as PortfolioAnalysisRequest;
       const report = saved.report as PortfolioAnalysisResult;
       if (!report || (report.mode !== undefined && !['ai', 'local'].includes(report.mode)) || !Array.isArray(report.sources) || !report.sources.every(source => {
         if (!source || typeof source.title !== 'string' || typeof source.url !== 'string') return false;
@@ -389,6 +390,44 @@ export class PortfolioAnalysisService {
         catch { return false; }
       }) || !Number.isFinite(Date.parse(report.generatedAt)) || typeof report.model !== 'string'
         || (report.priceUpdatedAt !== null && !Number.isFinite(Date.parse(report.priceUpdatedAt)))) return null;
+      let recoveredMissingRecommendations = false;
+      if (Array.isArray(report.recommendations) && report.recommendations.length < savedRequest.positions.length) {
+        const positionIds = new Set(savedRequest.positions.map(position => position.id));
+        const recommendationIds = report.recommendations.map(rec => rec?.assetId);
+        if (recommendationIds.every(id => positionIds.has(id)) && new Set(recommendationIds).size === recommendationIds.length) {
+          const missingPositions = savedRequest.positions.filter(position => !recommendationIds.includes(position.id));
+          for (const position of missingPositions) report.recommendations.push({
+            assetId: position.id, action: 'Prüfen', plannedAmountEUR: null,
+            rationale: 'Für dieses Asset fehlt im gespeicherten Analyseergebnis eine Empfehlung. Bitte das Asset neu analysieren.',
+            risk: 'Es liegt kein gespeicherter KI-Risikobefund für dieses Asset vor.', sourceIndexes: [],
+            executionBaseline: { shares: position.shares },
+          });
+          if (missingPositions.length) {
+            report.warnings = [...report.warnings, ...missingPositions.map(position =>
+              `Für ${position.name} fehlte im gespeicherten Analyseergebnis eine Empfehlung; die Asset-Kachel wurde zur erneuten Prüfung ergänzt.`)];
+            recoveredMissingRecommendations = true;
+          }
+        }
+      }
+      if (Array.isArray(report.recommendations)) for (const recommendation of report.recommendations) {
+        if (!Array.isArray(recommendation.sourceIndexes)) continue;
+        const missingIndexes = recommendation.sourceIndexes.filter(index => !Number.isInteger(index) || index < 0 || index >= report.sources.length);
+        if (!missingIndexes.length) continue;
+        const missing = new Set(missingIndexes);
+        recommendation.sourceIndexes = recommendation.sourceIndexes.filter(index => !missing.has(index));
+        const missingCitation = (_match: string, rawIndex: string) => Number(rawIndex) >= report.sources.length
+          ? '[Quelle nicht im gespeicherten Bericht]' : _match;
+        if (typeof recommendation.rationale === 'string') recommendation.rationale = recommendation.rationale.replace(/\[(\d+)\]/g, missingCitation);
+        if (typeof recommendation.risk === 'string') recommendation.risk = recommendation.risk.replace(/\[(\d+)\]/g, missingCitation);
+        recommendation.warnings = [...new Set([...(recommendation.warnings ?? []),
+          'Einige Quellenverweise dieser gespeicherten Empfehlung fehlen im Quellenbestand; bitte die Empfehlung neu analysieren.'])];
+        if (['Kaufen', 'Verkaufen'].includes(recommendation.action) && !recommendation.sourceIndexes.length) {
+          recommendation.action = 'Prüfen';
+          recommendation.plannedAmountEUR = null;
+          recommendation.rationale += ' Ohne gespeicherte Belegquelle bleibt die Handelsrichtung offen.';
+        }
+        recoveredMissingRecommendations = true;
+      }
       validateAnalysisResult(report, saved.request, report.sources);
       Object.assign(report, separateAnalysisMessages(report.infos, report.warnings));
       report.recommendations.forEach(rec => {
@@ -408,6 +447,7 @@ export class PortfolioAnalysisService {
         report.fundingCheck = checkPortfolioFunding(saved.request, report);
         report.fundingCheck.warnings.push(...singleAnalysisNotes);
       }
+      if (recoveredMissingRecommendations) this.saveLastResult(report, savedRequest, saved.snapshot);
       return { report, snapshot: saved.snapshot, provider: saved.request.provider };
     } catch { return null; }
   }
@@ -647,7 +687,7 @@ export class PortfolioAnalysisService {
   }
 
   async refreshPrimaryRisk(asset: ResearchAsset, currentInvestorContext?: InvestorContext,
-    onProgress?: (progress: PortfolioAnalysisProgress) => void): Promise<PortfolioAnalysisResult> {
+    onProgress?: (progress: PortfolioAnalysisProgress) => void, documentsOnly = false): Promise<PortfolioAnalysisResult> {
     if (!asset || !Number.isInteger(asset.id) || !['Stock', 'ETF', 'Fund', 'Bond', 'Crypto', 'Commodity', 'RealEstate', 'CashEquivalent'].includes(asset.type)
       || ![asset.name, asset.isin, asset.symbol].every(value => typeof value === 'string' && value.length <= 300))
       throw new Error('Das ausgewählte Asset ist ungültig.');
@@ -662,18 +702,53 @@ export class PortfolioAnalysisService {
     if (!position || position.type !== asset.type || position.isin.trim().toUpperCase() !== asset.isin.trim().toUpperCase())
       throw new Error('Das Asset wurde seit der gespeicherten Analyse geändert. Bitte die Portfolioanalyse neu starten.');
     const request = currentInvestorContext ? { ...savedRequest, investorContext: currentInvestorContext } : savedRequest;
+    const oldRisk = previous.report.fundamentalRisks?.find(item => item.key === String(asset.id));
+    const checkedAt = oldRisk?.primaryDocumentsCheckedAt ? Date.parse(oldRisk.primaryDocumentsCheckedAt) : NaN;
+    const documentsCurrent = Number.isFinite(checkedAt) && checkedAt <= Date.now() && Date.now() - checkedAt < 24 * 60 * 60 * 1000;
+    const reusedDocuments = !documentsOnly && documentsCurrent
+      ? this.primaryRiskResearch.reuseCached(position, oldRisk?.primaryDocuments ?? []) : null;
+    if (!documentsOnly && documentsCurrent && !reusedDocuments)
+      throw new Error('Die gespeicherten Primärberichtsauszüge fehlen. Bitte zuerst „Berichte neu laden“ auswählen; danach kannst du die Risiken erneut prüfen.');
     this.running = true;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), ANALYSIS_TIMEOUT_MS);
     const progress = (step: PortfolioAnalysisProgress['activeRiskStep'], completed = false) => onProgress?.({
       stage: 'risk-review', activeAssetId: asset.id, activeRiskStep: step, researchTotal: 1,
+      documentsRefreshForced: documentsOnly,
       researchCompleted: completed ? 1 : 0, completedRiskAssetIds: completed ? [asset.id] : [],
       reusedRiskAssetIds: [], lastActivityAt: Date.now(),
     });
     try {
-      progress('documents');
-      const set = await this.primaryRiskResearch.collect(position, controller.signal, previous.report.sources, true);
+      progress(reusedDocuments ? 'assessment' : 'documents');
+      const set = reusedDocuments ?? await this.primaryRiskResearch.collect(position, controller.signal, previous.report.sources, documentsOnly);
       addRiskReviewContext(position, set, request.investorContext);
+      if (documentsOnly) {
+        const documentsFingerprint = primaryDocumentsFingerprint(set);
+        const oldRisk = previous.report.fundamentalRisks?.find(item => item.key === String(asset.id));
+        const priorDocuments = oldRisk?.primaryDocuments ?? [];
+        const sameLegacySources = priorDocuments.length === set.documents.length
+          && priorDocuments.every(source => set.documents.some(document => document.source.url === source.url));
+        const changed = !oldRisk || (oldRisk.primaryDocumentsFingerprintVersion === 2
+          ? oldRisk.primaryDocumentsFingerprint !== documentsFingerprint : !sameLegacySources);
+        const updatedRisk: FundamentalRiskAssessment = {
+          ...(oldRisk ?? { key: String(asset.id), status: 'unknown' as const, materialRisks: [],
+            rationale: 'Die Dokumente wurden geladen; eine inhaltliche Risikoprüfung steht noch aus.', sources: [] }),
+          primaryDocumentsCheckedAt: new Date().toISOString(), primaryDocuments: set.documents.map(document => document.source),
+          primaryDocumentsFingerprint: documentsFingerprint, primaryDocumentsFingerprintVersion: 2,
+          ...(changed ? { primaryDocumentsChanged: true } : { primaryDocumentsChanged: undefined }),
+        };
+        const fundamentalRisks = [...(previous.report.fundamentalRisks ?? []).filter(item => item.key !== updatedRisk.key), updatedRisk];
+        const sources = [...new Map([...previous.report.sources, ...set.documents.map(document => document.source)]
+          .map(source => [source.url, source])).values()];
+        const report = { ...previous.report, fundamentalRisks, sources };
+        report.allocationPlan = buildForecastAllocation(request, previous.report.allocationPlan?.optimization?.forecasts ?? [],
+          report.newAssetRecommendations ?? [], previous.report, previous.report.recommendations,
+          previous.report.allocationPlan?.optimization?.reviewedUnavailableKeys ?? [], fundamentalRisks);
+        report.fundingCheck = checkPortfolioFunding(request, report);
+        this.saveLastResult(report, request, previous.snapshot);
+        progress(undefined, true);
+        return report;
+      }
       let assessment: unknown = null;
       if (set.documents.length && set.discoveryChecked) {
         progress('assessment');

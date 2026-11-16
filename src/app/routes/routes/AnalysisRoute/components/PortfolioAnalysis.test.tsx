@@ -100,7 +100,7 @@ it('shows a blocked card status and moves the trade status details into its tool
 });
 
 it('separates material risk findings from the recommendation blocker', () => {
-  render(<RiskReview blocked risk={{ key: '1', status: 'unknown', decisionReadiness: 'reviewed-uncertainty',
+  render(<RiskReview risk={{ key: '1', status: 'unknown', decisionReadiness: 'reviewed-uncertainty',
     materialRisks: ['low-margin'], rationale: [
       'Gewinn oder Verlust: kein wesentliches Risiko belegt (Quartalsgewinn belegt.)',
       'Marge: Risiko belegt (Die berichtete EBIT-Marge beträgt 3,1 %.)',
@@ -110,7 +110,7 @@ it('separates material risk findings from the recommendation blocker', () => {
   openSource={jest.fn()} />);
   const review = screen.getByRole('region', { name: 'Unternehmens- und Produktrisiken' });
   expect(review).toHaveClass('border-red-400/35');
-  expect(within(review).getByText('Prüfung erforderlich')).toBeInTheDocument();
+  expect(within(review).getByText('Geprüft · offene Punkte')).toBeInTheDocument();
   expect(within(review).getByText('Wesentliches Risiko belegt')).toBeInTheDocument();
   const findings = within(review).getByText('Befunde und Primärquellen anzeigen').closest('details');
   expect(findings).not.toHaveAttribute('open');
@@ -119,27 +119,37 @@ it('separates material risk findings from the recommendation blocker', () => {
   expect(within(review).getByText('Marge')).toBeInTheDocument();
   expect(within(review).getByText('Bedeutung für die Entscheidung')).toBeInTheDocument();
   expect(within(review).getByText(/kein automatischer Handelsblocker/)).toBeInTheDocument();
-  expect(within(review).getByText(/Handelsstatus ist separat blockiert/)).toBeInTheDocument();
   expect(within(review).getByText(/Die berichtete EBIT-Marge beträgt 3,1/)).toBeInTheDocument();
-  expect(within(review).getByText('Offene Punkte und Restunsicherheit')).toBeInTheDocument();
+  expect(within(review).getByText('Offene Punkte')).toBeInTheDocument();
   expect(within(review).getByText('Belegte Kennzahlen')).toBeInTheDocument();
   expect(within(review).getByRole('link', { name: 'Lufthansa Quartalsbericht' })).toBeInTheDocument();
 });
 
 it('marks an incomplete risk review red and a material risk without open points amber', () => {
-  const incompleteView = render(<RiskReview blocked={false} risk={{ key: '1', status: 'unknown', materialRisks: [],
+  const incompleteView = render(<RiskReview risk={{ key: '1', status: 'unknown', materialRisks: [],
     rationale: 'Kein überprüfbarer Befund mit Textstelle.', sources: [] }} openSource={jest.fn()} />);
   const incompleteReview = screen.getByRole('region', { name: 'Unternehmens- und Produktrisiken' });
   expect(incompleteReview).toHaveClass('border-red-400/35');
-  expect(within(incompleteReview).getAllByText('Prüfung erforderlich')).toHaveLength(2);
+  expect(within(incompleteReview).getAllByText('Geprüft · offene Punkte')).toHaveLength(2);
   incompleteView.unmount();
 
-  render(<RiskReview blocked={false} risk={{ key: '1', status: 'assessed', materialRisks: ['low-margin'],
+  render(<RiskReview risk={{ key: '1', status: 'assessed', materialRisks: ['low-margin'],
     rationale: 'Marge: Risiko belegt (Die berichtete EBIT-Marge beträgt 3,1 %.)', sources: [] }} openSource={jest.fn()} />);
   const materialReview = screen.getByRole('region', { name: 'Unternehmens- und Produktrisiken' });
   expect(materialReview).toHaveClass('border-amber-400/30');
   expect(within(materialReview).getByText('Wesentliches Risiko belegt')).toBeInTheDocument();
   expect(within(materialReview).getByText('1 wesentlich')).toBeInTheDocument();
+});
+
+it('shows Munich Re going-concern uncertainty as reviewed residual uncertainty', () => {
+  render(<RiskReview risk={{ key: '11', status: 'unknown', decisionReadiness: 'reviewed-uncertainty', materialRisks: [],
+    rationale: 'Fortführung: offen (Verfügbare Primärberichte geprüft: Eine konkrete unternehmensbezogene Aussage zu wesentlichen Fortführungsunsicherheiten fehlt. Allgemeine Prüferpflichten sind keine Entwarnung.)',
+    sources: [] }} openSource={jest.fn()} />);
+  const review = screen.getByRole('region', { name: 'Unternehmens- und Produktrisiken' });
+  expect(within(review).getByText('Geprüft mit Restunsicherheit')).toBeInTheDocument();
+  fireEvent.click(within(review).getByText('Befunde anzeigen'));
+  expect(within(review).getByText('Geprüfte Restunsicherheiten')).toBeInTheDocument();
+  expect(within(review).queryByLabelText('Offene Prüfpunkte')).not.toBeInTheDocument();
 });
 
 it('does not mark an analysis stale only because identical quotes were fetched again', () => {

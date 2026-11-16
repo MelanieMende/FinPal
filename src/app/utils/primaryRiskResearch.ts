@@ -82,7 +82,7 @@ const APOLLO_ELTIF_ISIN = 'LU3170240538';
 const APOLLO_ELTIF_KID_ARCHIVE = 'https://www.francetransactions.com/IMG/pdf/dic-apollo-private-equity.pdf';
 const APOLLO_ELTIF_PAGE = 'https://www.apollo.com/agpm-eltif';
 const stockExcerptVersion = (isin: string) => ['US5801351017', 'DK0062498333', 'US6701002056', 'DE0007030009', 'US6092071058',
-  'DE0008430026'].includes(isin) ? 3 : 2;
+  'DE0008430026', 'US84615Q1031'].includes(isin) ? 3 : 2;
 const apolloEltifDocumentUrl = (url: string) => url === APOLLO_ELTIF_KID_ARCHIVE;
 const treasuryAuctionUrl = (url: string) => /^https:\/\/www\.treasurydirect\.gov\/instit\/annceresult\/press\/preanre\/2020\/(?:R_20200819_3|A_20201015_1)\.pdf$/i.test(url);
 const treasuryGeneralUrl = (url: string) => [
@@ -156,6 +156,13 @@ const keywordGroups = [
   /short.term borrowings|long.term debt|credit facilit|maturit|debt obligations/ig,
   /going concern|substantial doubt/ig,
   /legal proceedings|regulator|tariff|trade restriction|anti.dump|forced labor/ig,
+];
+const spaceXKeywords = [
+  /Revenue\s+\$\s*14,575/i,
+  /Income \(loss\) from operations\s+2,791/i,
+  /Revenue\s+\$\s*27,083/i,
+  /Income \(loss\) from operations\s+705/i,
+  /We believe that our existing sources of liquidity and other financing activities will be sufficient to meet our anticipated cash needs for at least the next twelve months/i,
 ];
 const mondelezKeywords = [
   /Current portion of long-term debt/ig,
@@ -286,13 +293,14 @@ export function riskExcerpt(html: string, type: AnalysisPosition['type'] = 'Stoc
   const found: string[] = [];
   const qdve = type === 'ETF' && isin === 'IE00B3WJKG14';
   const vgwd = type === 'ETF' && isin === 'IE00B8GKDB10';
+  const spaceX = type === 'Stock' && isin === 'US84615Q1031';
   const rheinmetall = type === 'Stock' && isin === 'DE0007030009';
   const mondelez = type === 'Stock' && isin === 'US6092071058';
   const treasuryBond = type === 'Bond' && isin === TREASURY_BOND_ISIN;
   const apolloEltif = type === 'Fund' && isin === APOLLO_ELTIF_ISIN;
   for (const pattern of insurance ? insuranceKeywords : type === 'Stock'
     ? rheinmetall ? [...rheinmetallKeywords, ...keywordGroups]
-      : mondelez ? [...mondelezKeywords, ...keywordGroups] : keywordGroups
+      : mondelez ? [...mondelezKeywords, ...keywordGroups] : spaceX ? [...spaceXKeywords, ...keywordGroups] : keywordGroups
     : type === 'Crypto' ? [...bitcoinKeywords, ...productKeywords]
       : qdve ? [...qdveKeywords, ...productKeywords] : vgwd ? [...vgwdKeywords, ...productKeywords]
       : treasuryBond ? [...treasuryBondKeywords, ...productKeywords]
@@ -408,6 +416,21 @@ export class PrimaryRiskResearch {
       fs.renameSync(temporary, this.file);
     } finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
   }
+  reuseCached(position: AnalysisPosition, sources: AnalysisSource[]): RiskDocumentSet | null {
+    if (!sources.length) return null;
+    const isin = position.isin.trim().toUpperCase();
+    const documents: RiskDocument[] = [];
+    for (const source of sources) {
+      const document = this.cache.get(source.url);
+      if (!document || (position.type !== 'Stock' && document.identity !== isin)
+        || (position.type === 'Stock' && document.excerptVersion !== stockExcerptVersion(isin))
+        || (isin === 'IE00B3WJKG14' && document.excerptVersion !== 3)
+        || (isin === 'IE00B8GKDB10' && document.excerptVersion !== 2)
+        || (isin === APOLLO_ELTIF_ISIN && document.excerptVersion !== 3)) return null;
+      documents.push(document);
+    }
+    return { documents, gaps: [], discoveryChecked: true };
+  }
   private async resolveCik(position: AnalysisPosition, signal?: AbortSignal): Promise<string | null> {
     const known = SEC_CIK_BY_ISIN[position.isin.trim().toUpperCase()];
     if (known) return known;
@@ -479,7 +502,8 @@ export class PrimaryRiskResearch {
           || source.url.toLowerCase().endsWith('.pdf'))) {
           const { PDFParse } = loadPdfParser();
           const parser = new PDFParse({ data });
-          try { plain = (await parser.getText()).text; } finally { await parser.destroy(); }
+          try { plain = (await parser.getText({ first: 1, last: 40 })).text; }
+          finally { await parser.destroy(); }
         }
         const excerpt = miningPoolSource ? bitcoinMiningPoolExcerpt(data, fetchedAt) : riskExcerpt(plain, 'Crypto');
         const evidence = `${plain}\n${excerpt}`;
@@ -648,7 +672,10 @@ export class PrimaryRiskResearch {
         if (contentType.includes('pdf') || url.toLowerCase().endsWith('.pdf')) {
           const { PDFParse } = loadPdfParser();
           const parser = new PDFParse({ data });
-          try { plain = (await parser.getText()).text; } finally { await parser.destroy(); }
+          try {
+            // Avoid parsing an entire long report on Electron's main process.
+            plain = (await parser.getText({ first: 1, last: 40 })).text;
+          } finally { await parser.destroy(); }
         } else plain = data.toString('utf8');
         const treasuryGeneral = position.type === 'Bond' && position.isin.trim().toUpperCase() === TREASURY_BOND_ISIN
           && treasuryGeneralUrl(url) && documents.some(document => treasuryAuctionUrl(document.source.url));

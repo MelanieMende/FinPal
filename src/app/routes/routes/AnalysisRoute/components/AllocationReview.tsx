@@ -1,4 +1,5 @@
 import React from 'react';
+import { Button } from '@blueprintjs/core';
 import type { PortfolioAllocation } from '../../../../utils/portfolioAllocation';
 
 const euros = (n: number | null) => n === null ? 'Ungeklärt' : new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(n);
@@ -9,9 +10,11 @@ type AssetOptimizationDetailsProps = {
   allocationKey: string;
   assetType?: Asset['type'];
   onOpenSource?: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void;
+  onRefreshForecast?: () => void;
+  refreshDisabled?: boolean;
 };
 
-export function AssetOptimizationDetails({ plan, allocationKey, assetType, onOpenSource }: AssetOptimizationDetailsProps) {
+export function AssetOptimizationDetails({ plan, allocationKey, assetType, onOpenSource, onRefreshForecast, refreshDisabled }: AssetOptimizationDetailsProps) {
   const position = plan?.positions.find(p => p.key === allocationKey);
   if (!position) return null;
   const forecast = plan?.optimization?.forecasts.find(f => f.key === allocationKey);
@@ -30,9 +33,12 @@ export function AssetOptimizationDetails({ plan, allocationKey, assetType, onOpe
         : 'Aus Anlageprofil abgeleitet';
 
   return <section aria-label={`Prognose und Zielgewichtung ${position.name}`} className="my-3 min-w-0 space-y-2 rounded border border-sky-400/20 bg-sky-500/5 p-3 text-xs text-gray-300">
-    <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-2">
+    <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
       <p className="m-0 font-bold text-sky-200">{forecast ? 'Prognose und Zielgewichtung' : 'Zielgewichtung'}</p>
-      <p className="m-0 text-sky-200">{sourceLabel}</p>
+      <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
+        <p className="m-0 text-sky-200">{sourceLabel}</p>
+        {onRefreshForecast && <Button small icon="refresh" disabled={refreshDisabled} onClick={onRefreshForecast}>Forecast neu laden</Button>}
+      </div>
     </div>
     {forecast && <div className="min-w-0 space-y-1 break-words">
       <p className="m-0">{forecast.publisher} · Datenstand {forecast.publishedAt.slice(0, 10)} · Zieltermin {forecast.targetDate.slice(0, 10)}</p>

@@ -529,7 +529,8 @@ it('refreshes one asset forecast without starting a new AI asset analysis', asyn
   await open(); fillProfile();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
   jest.mocked(window.API.analyzePortfolio).mockClear();
-  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Forecast für Asset 1 neu laden' })); });
+  const forecastTile = screen.getByRole('region', { name: 'Prognose und Zielgewichtung Bitcoin' });
+  await act(async () => { fireEvent.click(within(forecastTile).getByRole('button', { name: 'Forecast neu laden' })); });
   await waitFor(() => expect(window.API.refreshPortfolioForecast).toHaveBeenCalledWith(
     expect.not.objectContaining({ targetAssetId: expect.anything() }), 1, expect.any(String)));
   expect(window.API.analyzePortfolio).not.toHaveBeenCalled();

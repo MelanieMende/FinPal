@@ -887,7 +887,9 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                 refreshDisabled={busy || !positions.some(position => position.id === rec.assetId)} />
               {assetProgress?.refreshingForecast
                 ? <section aria-label={`Prognose und Zielgewichtung ${assetName}`} data-testid={`asset-forecast-loading-${rec.assetId}`} className="my-3 flex items-center gap-2 rounded border border-sky-400/25 bg-sky-500/10 p-3 text-xs text-sky-200"><Spinner size={14} /> {assetProgress.message}</section>
-                : <AssetOptimizationDetails plan={result.allocationPlan} allocationKey={String(rec.assetId)} assetType={assets.find(asset => asset.ID === rec.assetId)?.type} onOpenSource={openSource} />}
+                : <AssetOptimizationDetails plan={result.allocationPlan} allocationKey={String(rec.assetId)} assetType={assets.find(asset => asset.ID === rec.assetId)?.type}
+                  onOpenSource={openSource} onRefreshForecast={() => refreshForecast(rec.assetId)}
+                  refreshDisabled={busy || !positions.some(position => position.id === rec.assetId)} />}
               {executions[rec.assetId]?.status !== 'open' && executions[rec.assetId] && <p
                 className="text-xs font-bold text-emerald-400" data-testid={`recommendation-execution-${rec.assetId}`}>
                 {executions[rec.assetId].status === 'done' ? 'Done' : 'Teilweise umgesetzt'} · {euros(executions[rec.assetId].amountEUR)} erfasst
@@ -904,7 +906,6 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
               </div>}
               <div className="flex flex-wrap gap-2">
                 <Button small disabled={busy || !positions.some(position => position.id === rec.assetId)} onClick={() => analyze(rec.assetId)} aria-label={`Asset ${rec.assetId} neu analysieren`}>Neu analysieren</Button>
-                <Button small icon="refresh" disabled={busy || !positions.some(position => position.id === rec.assetId)} onClick={() => refreshForecast(rec.assetId)} aria-label={`Forecast für Asset ${rec.assetId} neu laden`}>Forecast neu laden</Button>
               </div>
               <p className="mt-1 mb-0 text-xs text-gray-400">Die inhaltliche Prüfung neuer Primärberichte kann KI-Kontingent verbrauchen.</p>
               {rec.updatedAt && <p className="text-xs text-gray-400">Einzelanalyse vom {formatSyncTime(rec.updatedAt)} · {rec.model}. Portfolio-Zusammenfassung und übrige Empfehlungen stammen aus der Gesamtanalyse.</p>}

@@ -322,13 +322,45 @@ it('shows forecast, target weighting and AI result in one asset card', async () 
   const details = screen.getByRole('region', { name: 'Prognose und Zielgewichtung Stock Asset' });
   const article = details.closest('article')!;
   const analysis = within(article).getByRole('region', { name: 'KI-Analyseergebnis für Stock Asset' });
+  const assetFacts = within(article).getByTestId('investor-facts-1');
   expect(within(analysis).getByText('KI-Analyseergebnis')).toBeInTheDocument();
   expect(analysis).toHaveTextContent('Begründung');
-  expect(analysis.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(analysis.compareDocumentPosition(assetFacts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(assetFacts.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(within(assetFacts).getByText(/Dauerhafte Angaben zu Stock Asset/)).toBeInTheDocument();
   expect(details).toHaveTextContent('Kursziel: 60 EUR');
   expect(details).toHaveTextContent('Modellaktion:');
   expect(within(article).getByText('Begründung')).toBeInTheDocument();
   expect(screen.queryByRole('article', { name: 'Zielgewicht Stock Asset' })).not.toBeInTheDocument();
+});
+
+it('keeps one analysis card for every currently held asset when an AI recommendation is missing', async () => {
+  const savedReport = await window.API.analyzePortfolio({} as never);
+  savedReport.mode = 'ai';
+  savedReport.recommendations = savedReport.recommendations.filter(rec => rec.assetId === 1);
+  window.API.getLastPortfolioAnalysis = jest.fn().mockResolvedValue({ report: savedReport, snapshot: '', provider: 'chatgpt' });
+  await act(async () => { render(<PortfolioAnalysis standalone priceUpdatedAt={null} />, { preloadedState: { assets } }); });
+
+  const stockCard = screen.getByRole('region', { name: 'KI-Analyseergebnis für Stock Asset' }).closest('article')!;
+  const cryptoCard = screen.getByRole('region', { name: 'KI-Analyseergebnis für Crypto Asset' }).closest('article')!;
+  expect(stockCard).not.toBe(cryptoCard);
+  expect(within(cryptoCard).getByText(/kein Einzelbefund vor/)).toBeInTheDocument();
+  expect(within(cryptoCard).getByTestId('investor-facts-2')).toBeInTheDocument();
+  expect(screen.queryByText('Sold Asset')).not.toBeInTheDocument();
+});
+
+it('shows one card with durable facts for every held asset before the first analysis', async () => {
+  window.API.getLastPortfolioAnalysis = jest.fn().mockResolvedValue(null);
+  const property = { ID: 4, name: 'Eigenheim', type: 'RealEstate', property_market_value: 500000,
+    property_ownership_share: 50, property_mortgage_balance: 100000 } as Asset;
+  await act(async () => { render(<PortfolioAnalysis standalone priceUpdatedAt={null} />, { preloadedState: { assets: [...assets, property] } }); });
+  const stockPlaceholder = screen.getByRole('region', { name: 'Noch kein Analyseergebnis für Stock Asset' });
+  const cryptoPlaceholder = screen.getByRole('region', { name: 'Noch kein Analyseergebnis für Crypto Asset' });
+  expect(within(stockPlaceholder.closest('article')!).getByTestId('investor-facts-1')).toBeInTheDocument();
+  expect(within(cryptoPlaceholder.closest('article')!).getByTestId('investor-facts-2')).toBeInTheDocument();
+  expect(within(screen.getByRole('region', { name: 'Noch kein Analyseergebnis für Eigenheim' }).closest('article')!)
+    .getByTestId('investor-facts-4')).toBeInTheDocument();
+  expect(screen.queryByText('Sold Asset')).not.toBeInTheDocument();
 });
 
 it('orders asset analysis by workflow and replaces quote, research, risk and forecast data while refreshing', async () => {

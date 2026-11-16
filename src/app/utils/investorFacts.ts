@@ -1,4 +1,5 @@
 import { isBitcoinResearchPosition } from './portfolioResearch';
+import { isCurrentlyHeldAsset } from './heldAssets';
 
 export const INVESTOR_FACTS_KEY = 'finpal.analysis.investorFacts.v1';
 export type HistoryCoverage = 'unknown' | 'complete' | 'incomplete';
@@ -214,7 +215,7 @@ export function deriveAcquisitionHistory(asset: Asset, transactions: Transaction
 export function buildInvestorContext(facts: InvestorFacts, assets: Asset[], transactions: Transaction[]): InvestorContext {
   const seeded = seedInvestorFacts(facts, assets);
   return { defaultCustody: facts.defaultCustody, taxResidencies: facts.taxResidencies, depotHistories: facts.depotHistories ?? {}, depotTaxContexts: facts.depotTaxContexts ?? {}, spread: { status: 'requires-current-order-quote' },
-    assets: assets.filter(a => a.current_shares > 0).map(asset => {
+    assets: assets.filter(isCurrentlyHeldAsset).map(asset => {
       const assetFacts = seeded.assets[asset.ID];
       return { ...assetFacts, assetId: asset.ID,
         resolvedTaxContext: resolveTaxContext(asset, assetFacts, facts.depotTaxContexts),

@@ -1,5 +1,6 @@
 import { validQuote, type QuoteMetadata } from './quoteMetadata';
 import { validInvestorContext, type InvestorContext } from './investorFacts';
+import { isCurrentlyHeldAsset, realEstateEquityEUR } from './heldAssets';
 import { validDecisionDetails, type DecisionDetails } from './decisionProfile';
 import { eltifProductTerms, validEltifProductTerms, type EltifProductTerms } from './eltifProductTerms';
 
@@ -106,19 +107,20 @@ const finiteOrNull = (value: unknown): number | null => typeof value === 'number
 
 // Send only currently held positions, without transactions or personal comments.
 export function buildAnalysisPositions(assets: Asset[]): AnalysisPosition[] {
-  return assets.filter(asset => asset.current_shares > 0).map(asset => {
+  return assets.filter(isCurrentlyHeldAsset).map(asset => {
     const invest = finiteOrNull(asset.current_invest);
     const flow = finiteOrNull(asset.current_sum_in_out);
     const dividends = finiteOrNull(asset.dividends_earned) ?? 0;
-    const price = finiteOrNull(asset.price);
+    const propertyEquity = realEstateEquityEUR(asset);
+    const price = asset.type === 'RealEstate' ? propertyEquity : finiteOrNull(asset.price);
     const identity = { isin: asset.isin || '', type: asset.type || 'Stock' };
     const terms = eltifProductTerms(identity);
     const base = {
       id: asset.ID, name: asset.name || '', symbol: asset.symbol || '', isin: asset.isin || '',
-      type: asset.type || 'Stock', shares: asset.current_shares,
+      type: asset.type || 'Stock', shares: asset.type === 'RealEstate' ? 1 : asset.current_shares,
       price: asset.quote?.valuationCurrency === 'unknown' ? null : price !== null && price > 0 ? price : null,
       // Do not assume that every unlabelled quote is in EUR.
-      currency: asset.quote?.valuationCurrency || (asset.currencySymbol === '€' ? 'EUR' : asset.currencySymbol || 'unknown'),
+      currency: asset.type === 'RealEstate' ? 'EUR' : asset.quote?.valuationCurrency || (asset.currencySymbol === '€' ? 'EUR' : asset.currencySymbol || 'unknown'),
       quote: asset.quote, ...(asset.bondHolding ? { bondHolding: asset.bondHolding } : {}),
       currencyExposure: asset.type === 'Bond' && asset.bondHolding?.source === 'user-confirmed'
         ? { kind: 'direct-nominal' as const, currency: asset.bondHolding.currency, source: 'user-confirmed' as const } : 'unknown' as const,

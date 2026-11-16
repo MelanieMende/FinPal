@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="1820" viewBox="0 0 1200 1820" role="img" aria-labelledby="title description">
   <title id="title">FinPal Analyseablauf</title>
-  <desc id="description">Flussdiagramm vom Laden der Finanzdaten über Recherche, Risikoprüfung mit aktuell bestätigten Verwahr-, Produkt- und Steuerangaben und Portfoliomodell bis zur validierten Empfehlung. Der optionale Trade-Republic-Dokumentensync behält nur erkannte Krypto-Vertrags-PDFs dauerhaft; andere Timeline-PDFs werden nach der temporären Prüfung entfernt. Eine ausdrücklich nutzerbestätigte Angabe zu direkt gehaltenen Kryptowerten kann zusammen mit bestätigter Trade-Republic-Verwahrung die angegebene Halteform zuordnen, ersetzt aber keine Produktverifizierung oder passenden Vertragsunterlagen. Bei Bitcoin werden MiCAR-Diensterahmen, Steuerquellen, Anbieterstatus und exakt passende Produktvertragsunterlagen getrennt bewertet. Bestätigt der Nutzer, dass bei Trade Republic keine BTC-Produktunterlagen verfügbar sind, gilt dies höchstens drei Monate als geprüfte Restunsicherheit; danach ist eine erneute Bestätigung erforderlich. Eine Anbieterzulassung oder Steuerregel belegt keine Produktbilligung. Die Bitcoin-Mining-Pool-Verteilung wird als aktuelle 7-Tage-Blockstichprobe geprüft; sie belegt keine tatsächliche Hashing-Kontrolle. Belegte Risiken sind Entscheidungsfaktoren und keine automatischen Blocker.</desc>
+  <desc id="description">Flussdiagramm vom Laden der Finanzdaten über Recherche, Risikoprüfung mit aktuell bestätigten Verwahr-, Produkt- und Steuerangaben und Portfoliomodell bis zur validierten Empfehlung. Der optionale Trade-Republic-Dokumentensync behält nur erkannte Krypto-Vertrags-PDFs dauerhaft; andere Timeline-PDFs werden nach der temporären Prüfung entfernt. Eine ausdrücklich nutzerbestätigte Angabe zu direkt gehaltenen Kryptowerten kann zusammen mit bestätigter Trade-Republic-Verwahrung die angegebene Halteform zuordnen, ersetzt aber keine Produktverifizierung oder passenden Vertragsunterlagen. Bei Bitcoin werden MiCAR-Diensterahmen, Steuerquellen, Anbieterstatus und exakt passende Produktvertragsunterlagen getrennt bewertet. Bestätigt der Nutzer, dass bei Trade Republic keine BTC-Produktunterlagen verfügbar sind, gilt dies höchstens drei Monate als geprüfte Restunsicherheit; danach ist eine erneute Bestätigung erforderlich. Eine Anbieterzulassung oder Steuerregel belegt keine Produktbilligung. Die Bitcoin-Mining-Pool-Verteilung wird als aktuelle 7-Tage-Blockstichprobe geprüft; sie belegt keine tatsächliche Hashing-Kontrolle. Belegte Risiken sind Entscheidungsfaktoren und keine automatischen Blocker. Das Ergebnis enthält für jedes aktuell gehaltene Asset eine eigene Karte; dessen dauerhafte Einzelangaben stehen direkt unter dem KI-Ergebnis.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L0,6 L9,3 z" fill="#64748b"/>
@@ -32,7 +32,7 @@
   <text x="60" y="138" class="section">1 · DATENGRUNDLAGE</text>
   <rect x="390" y="112" width="420" height="78" rx="14" class="process"/>
   <text x="600" y="143" text-anchor="middle" class="node-title">Analyse starten</text>
-  <text x="600" y="168" text-anchor="middle" class="node-text">Portfolio, Cash und Anlageprofil laden</text>
+  <text x="600" y="168" text-anchor="middle" class="node-text">Portfolio inkl. Immobilien, Cash und Anlageprofil laden</text>
 
   <path d="M600 190 V224" class="edge"/>
   <rect x="390" y="226" width="420" height="86" rx="14" class="process"/>
@@ -43,7 +43,8 @@
   <text x="60" y="368" class="section">2 · RECHERCHE UND PRIMÄRBERICHTE</text>
   <polygon points="600,342 770,414 600,486 430,414" class="decision"/>
   <text x="600" y="405" text-anchor="middle" class="node-title">Suchdaten aktuell?</text>
-  <text x="600" y="430" text-anchor="middle" class="node-text">24-Stunden-Cache prüfen</text>
+  <text x="600" y="430" text-anchor="middle" class="node-text">Unverändert: Cache</text>
+  <text x="600" y="452" text-anchor="middle" class="small">Geändert oder abgelaufen: neu laden</text>
 
   <path d="M430 414 H260 V520" class="edge"/>
   <text x="310" y="401" class="edge-label">Nein</text>
@@ -134,5 +135,5 @@
   <rect x="390" y="1692" width="420" height="92" rx="14" class="positive"/>
   <text x="600" y="1724" text-anchor="middle" class="node-title">KI-Empfehlung validieren</text>
   <text x="600" y="1749" text-anchor="middle" class="node-text">Quellen, Beträge, Finanzierung und Blocker prüfen</text>
-  <text x="600" y="1774" text-anchor="middle" class="node-text">Bei Fehlern korrigieren · anschließend speichern</text>
+  <text x="600" y="1774" text-anchor="middle" class="node-text">Asset-Karten: KI-Ergebnis → dauerhafte Angaben</text>
 </svg>

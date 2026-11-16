@@ -108,3 +108,24 @@ it('includes private property equity in total assets and net worth', async () =>
     expect(within(card as HTMLElement).getByText('100.000,00 €')).toBeInTheDocument();
   }
 });
+
+it('shows estimated monthly passive income from dividends and the owned share of net rent', async () => {
+  render(<DashboardRoute />, { preloadedState: {
+    assets: [
+      {
+        ID: 1, type: 'Stock', current_shares_before_ex_date: 10,
+        next_estimated_dividend_per_share: 0.5, dividendFrequency: 'quarterly',
+      } as Asset,
+      {
+        ID: 2, type: 'RealEstate', property_ownership_share: 50,
+        property_monthly_rent: 1200, property_monthly_costs: 350,
+      } as Asset,
+    ],
+    transactions: [], dividends: [], cash: [],
+  } });
+  await act(() => Promise.resolve());
+
+  const card = screen.getByText('Monatliches passives Einkommen').closest('.glass-card')!;
+  expect(within(card as HTMLElement).getByText('426,67 €')).toBeInTheDocument();
+  expect(within(card as HTMLElement).getByText(/Schätzung vor Steuern/)).toBeInTheDocument();
+});

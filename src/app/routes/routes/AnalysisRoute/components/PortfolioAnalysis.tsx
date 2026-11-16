@@ -13,7 +13,7 @@ import { selectRecommendationExecutions } from '../../../../utils/recommendation
 import { checkPortfolioFunding } from '../../../../utils/portfolioFunding';
 import TradeDecisionReview from './TradeDecisionReview';
 import AllocationReview, { AssetOptimizationDetails } from './AllocationReview';
-import InvestorFactsEditor from './InvestorFactsEditor';
+import InvestorFactsEditor, { AssetFactsEditor } from './InvestorFactsEditor';
 import DecisionProfileEditor from './DecisionProfileEditor';
 import { parseDecisionDetails, protectedCashEUR, type DecisionForm } from '../../../../utils/decisionProfile';
 import { useInvestorFacts } from '../../../../utils/useInvestorFacts';
@@ -611,6 +611,11 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
   const localForecastCount = result?.mode === 'local'
     ? positions.filter(position => localForecastKeys.has(String(position.id))).length
     : 0;
+  const heldRecommendations = result ? positions.map(position => result.recommendations.find(rec => rec.assetId === position.id) ?? {
+    assetId: position.id, action: 'Prüfen' as const,
+    rationale: 'Für dieses aktuell gehaltene Asset liegt in der gespeicherten Analyse kein Einzelbefund vor. Die Karte bleibt sichtbar; bitte das Asset neu analysieren.',
+    risk: 'Kein assetbezogener KI-Risikotext verfügbar.', sourceIndexes: [],
+  }) : [];
 
   return (
     <Card className="glass-card analysis-form mb-6" data-testid="portfolio-analysis">
@@ -708,11 +713,23 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
         </div>
         <p className="mt-1 text-xs text-gray-400">„Lokal analysieren“ verwendet keine OpenAI- oder ChatGPT-Anfrage. Es sucht deterministisch online nach Name, ISIN und Ticker und berechnet das Modell lokal. „Analyse starten“ ergänzt eine qualitative KI-Auswertung. „Alle Forecasts neu laden“ aktualisiert Forecasts und lokale Zielgewichtung.</p>
         <p className="mt-1 text-xs text-gray-400">Erfolgreiche deterministische Online-Suchen werden je Asset 24 Stunden wiederverwendet. Die anschließende KI-Auswertung startet keine eigene Websuche; Bestände, Kurse und Anlageprofil werden erneut ausgewertet.</p>
-        {!result && positions.length > 0 && <section aria-label="Webrecherche je Asset" className="min-w-0 space-y-3 rounded-lg border border-white/10 p-3">
-          {positions.map(position => <div key={position.id} className="min-w-0">
-            <p className="m-0 break-words text-sm font-bold text-white">{position.name}</p>
-            <AssetResearchIndicator status={researchStatus.find(status => status.assetId === position.id)} now={now} />
-          </div>)}
+        {!result && positions.length > 0 && <section aria-label="Webrecherche je Asset" className="grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-2">
+          {positions.map(position => {
+            const asset = assets.find(item => item.ID === position.id);
+            return <article key={position.id} className="min-w-0 rounded-lg border border-white/10 p-4">
+              <p className="m-0 break-words text-sm font-bold text-white">{position.name}</p>
+              <section aria-label={`Noch kein Analyseergebnis für ${position.name}`} className="mt-3 rounded border border-white/10 bg-slate-950/25 p-3 text-xs text-gray-400">
+                Noch kein KI-Analyseergebnis vorhanden.
+              </section>
+              {asset && investorFacts.assets[asset.ID] && <div className="mt-3">
+                <AssetFactsEditor key={`${asset.ID}-${JSON.stringify(investorFacts.assets[asset.ID])}`} embedded busy={busy} asset={asset}
+                  facts={investorFacts.assets[asset.ID]} transactions={transactions} depotHistories={investorFacts.depotHistories}
+                  depotTaxContexts={investorFacts.depotTaxContexts} onSave={value => saveInvestorFacts({ ...investorFacts,
+                    assets: { ...investorFacts.assets, [asset.ID]: value } })} />
+              </div>}
+              <div className="mt-3"><AssetResearchIndicator status={researchStatus.find(status => status.assetId === position.id)} now={now} /></div>
+            </article>;
+          })}
         </section>}
         {!positions.length && <p className="text-xs text-gray-400">Es sind keine gehaltenen Assets vorhanden.</p>}
         {result && <section aria-label="Analyseergebnis" className="space-y-3 border-t border-white/10 pt-4">
@@ -742,8 +759,9 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
             <AnalysisMessages warnings={fundingCheck.warnings} />
           </section>}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-3">
-            {result.recommendations.slice().sort(compareRecommendations).map(rec => {
-              const assetName = assets.find(a => a.ID === rec.assetId)?.name || `Asset ${rec.assetId}`;
+            {heldRecommendations.slice().sort(compareRecommendations).map(rec => {
+              const asset = assets.find(a => a.ID === rec.assetId);
+              const assetName = asset?.name || `Asset ${rec.assetId}`;
               const position = positions.find(item => item.id === rec.assetId);
               const research = researchStatus.find(item => item.assetId === rec.assetId);
               const reusable = researchIsReusable(research, now);
@@ -763,6 +781,12 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                 <p className="m-0 text-xs font-bold text-indigo-200">{result.mode === 'ai' ? 'KI-Analyseergebnis' : 'Lokales Analyseergebnis'}</p>
                 <p className="mb-0 mt-1 whitespace-pre-wrap break-words text-sm text-gray-200">{rec.rationale}</p>
               </section>
+              {asset && investorFacts.assets[asset.ID] && <div className="mt-3">
+                <AssetFactsEditor key={`${asset.ID}-${JSON.stringify(investorFacts.assets[asset.ID])}`} embedded busy={busy} asset={asset}
+                  facts={investorFacts.assets[asset.ID]} transactions={transactions} depotHistories={investorFacts.depotHistories}
+                  depotTaxContexts={investorFacts.depotTaxContexts} onSave={value => saveInvestorFacts({ ...investorFacts,
+                    assets: { ...investorFacts.assets, [asset.ID]: value } })} />
+              </div>}
               {showGeneralProgress && <p role="status" data-testid={`asset-reload-status-${rec.assetId}`} className="my-2 flex min-w-0 items-center gap-2 break-words rounded border border-sky-400/25 bg-sky-500/10 px-2 py-1.5 text-xs text-sky-200">
                 <Spinner size={14} /> <span><span className="font-semibold">Aktueller Schritt für {assetName}:</span> {assetProgress.message}. Die bisherige KI-Begründung bleibt oben sichtbar.</span>
               </p>}

@@ -22,8 +22,9 @@ function CustodyFields({ value, onChange }: { value: CustodyFact; onChange: (v: 
   </div>;
 }
 
-function AssetFactsEditor({ asset, facts, transactions, depotHistories, depotTaxContexts, onSave }: {
+export function AssetFactsEditor({ asset, facts, transactions, depotHistories, depotTaxContexts, onSave, busy = false, embedded = false }: {
   asset: Asset; facts: AssetInvestorFacts; transactions: Transaction[]; depotHistories: InvestorFacts['depotHistories']; depotTaxContexts: InvestorFacts['depotTaxContexts']; onSave: (v: AssetInvestorFacts) => void;
+  busy?: boolean; embedded?: boolean;
 }) {
   const [draft, setDraft] = useState(facts);
   const [target, setTarget] = useState(facts.targetWeight ? String(facts.targetWeight.percent) : '');
@@ -48,15 +49,15 @@ function AssetFactsEditor({ asset, facts, transactions, depotHistories, depotTax
     if (!validAssetInvestorFacts(next)) { setError('Bitte Verwahranbieter und Gebühren prüfen. Für ein Zielgewicht sind Ziel, Unter- und Obergrenze zwischen 0 und 100 erforderlich: Untergrenze ≤ Ziel ≤ Obergrenze.'); return; }
     setError(''); onSave(next);
   }
-  return <details className={`rounded border p-3 ${missing.length ? 'border-amber-400/40 bg-amber-500/5' : 'border-white/10'}`} data-testid={`investor-facts-${asset.ID}`}>
+  return <details className={`rounded border p-3 text-xs text-gray-300 ${missing.length ? 'border-amber-400/40 bg-amber-500/5' : 'border-white/10'}`} data-testid={`investor-facts-${asset.ID}`}>
     <summary className="cursor-pointer font-bold text-white">
-      {asset.name || `Asset ${asset.ID}`} · {facts.custody.provider || 'Verwahrung unbekannt'}{' '}
+      {embedded ? `Dauerhafte Angaben zu ${asset.name || `Asset ${asset.ID}`}` : `${asset.name || `Asset ${asset.ID}`} · ${facts.custody.provider || 'Verwahrung unbekannt'}`}{' '}
       <span className={`inline-flex max-w-full items-center gap-1 rounded px-2 py-1 align-middle text-[11px] ${missing.length ? 'bg-amber-500/15 text-amber-200' : 'bg-emerald-500/10 text-emerald-200'}`}>
         <Icon icon={missing.length ? 'warning-sign' : 'tick'} size={12} aria-hidden="true" />
         <span className="min-w-0">{missing.length ? `${missing.length} ${missing.length === 1 ? 'Angabe' : 'Angaben'} offen` : 'Asset-Angaben erfasst'}</span>
       </span>
     </summary>
-    <div className="mt-3 space-y-3">
+    <fieldset disabled={busy} className="mt-3 space-y-3 border-0 p-0">
       {!!missing.length && <div className="rounded border border-amber-400/20 bg-amber-500/5 p-3 text-amber-200" aria-label={`Offene Angaben für ${asset.name || `Asset ${asset.ID}`}`}>
         <p className="m-0 font-bold">Noch offen</p>
         <ul className="mt-1 mb-0 list-disc pl-4">{missing.map(field => <li key={field}>{field}</li>)}</ul>
@@ -121,7 +122,7 @@ function AssetFactsEditor({ asset, facts, transactions, depotHistories, depotTax
       <Button small onClick={save}>Angaben für {asset.name || `Asset ${asset.ID}`} speichern</Button>
       {facts.confirmedAt && <p className="text-gray-400">Bestätigt am {new Date(facts.confirmedAt).toLocaleString('de-DE')}</p>}
       {!facts.confirmedAt && facts.custody.source === 'user-confirmed' && <p className="text-gray-400">Verwahranbieter gemäß deiner Angabe vorbelegt; weitere Angaben sind noch unbestätigt.</p>}
-    </div>
+    </fieldset>
   </details>;
 }
 
@@ -167,18 +168,6 @@ export default function InvestorFactsEditor({ facts, assets, transactions, onSav
     ...Object.values(facts.depotTaxContexts ?? {}).map(v => v.provider)]) {
     if (name.trim()) providers.set(depotHistoryKey(name), name.trim());
   }
-  const historyReviews = assets.flatMap(asset => {
-    const assetFacts = facts.assets[asset.ID];
-    if (!assetFacts) return [];
-    const history = resolveAcquisitionHistory(asset, transactions, assetFacts, facts.depotHistories);
-    const confirmedComplete = hasAssetHistoryOverride(assetFacts) ? assetFacts.historyCoverage === 'complete'
-      : facts.depotHistories?.[depotHistoryKey(assetFacts.custody.provider)]?.coverage === 'complete';
-    return confirmedComplete && history.coverage !== 'complete' ? [{ asset, history }] : [];
-  });
-  const assetsWithMissingFacts = assets.filter(asset => {
-    const assetFacts = facts.assets[asset.ID];
-    return assetFacts && missingAssetAnalysisFacts(asset, assetFacts, resolveAcquisitionHistory(asset, transactions, assetFacts, facts.depotHistories), facts.depotTaxContexts).length;
-  }).length;
   function save(next: InvestorFacts) {
     if (onSave(next)) { setError(''); setNotice('Angaben dauerhaft gespeichert. Sie werden bei der nächsten Analyse berücksichtigt.'); }
   }
@@ -191,11 +180,7 @@ export default function InvestorFactsEditor({ facts, assets, transactions, onSav
     save({ ...facts, taxResidencies });
   }
   return <details className="rounded-lg border border-white/10 p-4 text-xs text-gray-300" data-testid="durable-analysis-facts">
-    <summary className="cursor-pointer font-bold text-indigo-200">Dauerhafte Angaben für die Analyse{' '}
-      {!!assetsWithMissingFacts && <span className="inline-block max-w-full rounded bg-amber-500/15 px-2 py-1 align-middle text-[11px] text-amber-200">
-        {assetsWithMissingFacts} {assetsWithMissingFacts === 1 ? 'Asset mit offenen Angaben' : 'Assets mit offenen Angaben'}
-      </span>}
-    </summary>
+    <summary className="cursor-pointer font-bold text-indigo-200">Dauerhafte allgemeine Analyseangaben</summary>
     <fieldset disabled={busy} className="mt-3 space-y-4 border-0 p-0">
       <p>Die Angaben werden für diese FinPal-Datenbank gespeichert. Bekannte Fakten fließen automatisch in Gesamt- und Einzelanalysen ein.</p>
       <section aria-label="Steuerwohnsitz" className="space-y-2">
@@ -235,16 +220,7 @@ export default function InvestorFactsEditor({ facts, assets, transactions, onSav
         {[...providers].map(([key, provider]) => <DepotHistoryEditor key={`${key}-${JSON.stringify(facts.depotHistories?.[key])}`}
           provider={provider} confirmation={facts.depotHistories?.[key]} onSave={confirmation => save({ ...facts,
             depotHistories: { ...facts.depotHistories, [key]: confirmation } })} />)}
-        {!!historyReviews.length && <div className="text-amber-200" aria-label="Historienprüfung">
-          <p>Für diese Assets ist trotz gespeicherter Bestätigung eine erneute Prüfung nötig:</p>
-          <ul className="list-disc pl-4">{historyReviews.map(({ asset, history }) => <li key={asset.ID}>{asset.name || `Asset ${asset.ID}`}: {history.coverageIssues?.join(' ')}</li>)}</ul>
-        </div>}
         <p className="text-gray-400">Optional für normale Portfolioanalysen; wichtig für verlässliche steuerliche Aussagen. Neue Depots, unklare Depotzuordnungen, erkennbare Depotwechsel oder Mengenlücken werden gezielt zur Prüfung angezeigt.</p>
-      </section>
-      <section aria-label="Angaben je Asset" className="space-y-2">
-        <h6 className="m-0 font-bold text-white">Angaben je Asset</h6>
-        {assets.map(asset => facts.assets[asset.ID] && <AssetFactsEditor key={`${asset.ID}-${JSON.stringify(facts.assets[asset.ID])}`} asset={asset}
-          facts={facts.assets[asset.ID]} transactions={transactions} depotHistories={facts.depotHistories} depotTaxContexts={facts.depotTaxContexts} onSave={value => save({ ...facts, assets: { ...facts.assets, [asset.ID]: value } })} />)}
       </section>
       <p className="text-gray-400">Der Spread wird nicht als dauerhafte Tatsache gespeichert. Vor einer Order muss ein aktuelles handelbares Geld-/Brief-Angebot geprüft werden.</p>
       {(error || storageError) && <p role="alert" className="text-red-300">{error || storageError}</p>}

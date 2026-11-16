@@ -22,10 +22,13 @@ it('includes only held assets and keeps realized gains separate from their curre
     { ID: 1, name: 'Asset', type: 'Stock', symbol: 'A', isin: 'ISIN', current_shares: 2, price: 500, current_invest: 100, current_sum_in_out: 120, dividends_earned: 10 },
     { ID: 2, current_shares: 0 }, { ID: 3, is_watched: true },
     { ID: 4, name: 'Missing quote', current_shares: 1, price: NaN },
+    { ID: 5, name: 'Eigenheim', type: 'RealEstate', property_market_value: 500000,
+      property_ownership_share: 50, property_mortgage_balance: 100000 },
   ] as Asset[]);
-  expect(positions.map(p => p.id)).toEqual([1, 4]);
+  expect(positions.map(p => p.id)).toEqual([1, 4, 5]);
   expect(positions[0]).toMatchObject({ realizedGainLoss: 30, costBasis: 100, price: 500, currency: 'unknown' });
   expect(positions[1]).toMatchObject({ price: null, costBasis: null, realizedGainLoss: null });
+  expect(positions[2]).toMatchObject({ type: 'RealEstate', shares: 1, price: 150000, currency: 'EUR' });
 });
 
 it('uses confirmed bond nominal currency without inferring exposure from listing currency or ISIN', () => {

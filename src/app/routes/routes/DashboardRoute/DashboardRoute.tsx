@@ -10,6 +10,13 @@ export default function DashboardRoute() {
 	const assets = useAppSelector(state => state.assets);
 	const cash = useAppSelector(state => state.cash) || [];
 	const totalCash = useAppSelector(selectCashTotals).totalLiquidity;
+	const monthlyPassiveIncome = assets.reduce((total, asset) => {
+		if (asset.type === 'RealEstate') {
+			const ownershipShare = (asset.property_ownership_share ?? 100) / 100;
+			return total + ((asset.property_monthly_rent || 0) - (asset.property_monthly_costs || 0)) * ownershipShare;
+		}
+		return total + assetsSelector.get_estimated_dividends_per_year(asset) / 12;
+	}, 0);
 
 	// Asset Valuation Helper: Fallback to invested capital if no live price exists
 	const getAssetValue = (asset: any) => {
@@ -87,7 +94,7 @@ export default function DashboardRoute() {
 			</div>
 
 			{/* KPI Grid */}
-			<div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+			<div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
 				<Card className="glass-card flex flex-col justify-between">
 					<div className="flex justify-between items-start mb-4">
 						<H5 className="text-gray-400 uppercase text-xs font-bold tracking-widest">Total Net Worth</H5>
@@ -135,6 +142,21 @@ export default function DashboardRoute() {
 					</div>
 					<div className="mt-4 text-sm text-emerald-300 font-medium">
 						{(netWorth !== 0 ? (totalCash / netWorth) * 100 : 0).toFixed(1)}% of total portfolio
+					</div>
+				</Card>
+
+				<Card className="glass-card flex flex-col justify-between">
+					<div className="flex justify-between items-start mb-4">
+						<H5 className="text-gray-400 uppercase text-xs font-bold tracking-widest">Monatliches passives Einkommen</H5>
+						<div className="p-2 bg-emerald-500/10 rounded-lg">
+							<Icon icon="trending-up" className="text-emerald-500" />
+						</div>
+					</div>
+					<div className="text-3xl font-bold text-emerald-300 tracking-tight">
+						{new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' }).format(monthlyPassiveIncome)}
+					</div>
+					<div className="mt-4 text-sm text-gray-400 font-medium">
+						Dividenden + anteilige Nettomiete · Schätzung vor Steuern
 					</div>
 				</Card>
 			</div>

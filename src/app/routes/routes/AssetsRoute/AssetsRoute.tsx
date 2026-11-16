@@ -14,15 +14,15 @@ import { formatSyncTime } from '../../../utils/syncTimestamps';
 import { useMarketPriceUpdatedAt } from '../../../utils/useMarketPriceUpdatedAt';
 
 const assetTypes: { type: Asset['type']; label: string; icon?: IconName; symbol?: string }[] = [
-	{ type: 'Stock', label: 'Stocks', icon: 'chart' },
-	{ type: 'ETF', label: 'ETFs', icon: 'pie-chart' },
-	{ type: 'Fund', label: 'Funds', icon: 'briefcase' },
-	{ type: 'Bond', label: 'Bonds', icon: 'bank-account' },
-	{ type: 'Crypto', label: 'Crypto', symbol: '₿' },
-	{ type: 'Commodity', label: 'Commodities', icon: 'cube' },
-	{ type: 'RealEstate', label: 'Real Estate', icon: 'home' },
-	{ type: 'CashEquivalent', label: 'Cash Equivalents', icon: 'dollar' },
-	{ type: 'IPO', label: 'IPO-Zeichnungen', icon: 'time' },
+	{ type: 'Stock', label: 'Aktie', icon: 'chart' },
+	{ type: 'ETF', label: 'ETF', icon: 'pie-chart' },
+	{ type: 'Fund', label: 'Fonds', icon: 'briefcase' },
+	{ type: 'Bond', label: 'Anleihe', icon: 'bank-account' },
+	{ type: 'Crypto', label: 'Krypto', symbol: '₿' },
+	{ type: 'Commodity', label: 'Rohstoff', icon: 'cube' },
+	{ type: 'RealEstate', label: 'Immobilie', icon: 'home' },
+	{ type: 'CashEquivalent', label: 'Geldmarkt', icon: 'dollar' },
+	{ type: 'IPO', label: 'IPO', icon: 'time' },
 ];
 const euroFormatter = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
 export const ASSET_TYPE_FILTER_KEY = 'finpal.assets.selectedType.v1';

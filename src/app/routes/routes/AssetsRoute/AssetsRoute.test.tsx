@@ -108,7 +108,7 @@ describe('AssetsRoute component', () => {
 		localStorage.removeItem(MARKET_PRICE_UPDATED_AT_KEY);
 	});
 
-	it('groups current values by asset type with English labels', async () => {
+	it('groups current values by asset type with German labels', async () => {
 		const assets = [
 			{ ID: 1, type: 'Stock', current_shares: 2, price: 50 },
 			{ ID: 2, type: 'Stock', current_shares: 3, price: 25 },
@@ -128,11 +128,11 @@ describe('AssetsRoute component', () => {
 		});
 
 		const expected: [string, string, number, string | null][] = [
-			['Stock', 'Stocks', 175, 'chart'], ['ETF', 'ETFs', 80, 'pie-chart'], ['Bond', 'Bonds', 60, 'bank-account'],
-			['Fund', 'Funds', 10.9, 'briefcase'],
-			['Crypto', 'Crypto', 100, null], ['Commodity', 'Commodities', 30, 'cube'],
-			['RealEstate', 'Real Estate', 0, 'home'], ['CashEquivalent', 'Cash Equivalents', 5, 'dollar'],
-			['IPO', 'IPO-Zeichnungen', 201, 'time'],
+			['Stock', 'Aktie', 175, 'chart'], ['ETF', 'ETF', 80, 'pie-chart'], ['Bond', 'Anleihe', 60, 'bank-account'],
+			['Fund', 'Fonds', 10.9, 'briefcase'],
+			['Crypto', 'Krypto', 100, null], ['Commodity', 'Rohstoff', 30, 'cube'],
+			['RealEstate', 'Immobilie', 0, 'home'], ['CashEquivalent', 'Geldmarkt', 5, 'dollar'],
+			['IPO', 'IPO', 201, 'time'],
 		];
 		for (const [type, label, value, icon] of expected) {
 			const cardElement = screen.getByTestId(`asset-type-value-${type}`);

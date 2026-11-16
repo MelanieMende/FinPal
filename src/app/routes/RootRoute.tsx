@@ -28,6 +28,7 @@ import cash_sql, { migrateCashCreditSql, migrateCashInterestSql, migrateCashTaxR
 import { bondDetailsSql } from '../utils/bondHoldings';
 import { useEffect } from 'react';
 import CashRoute from './routes/CashRoute/CashRoute';
+import RealEstateRoute from './routes/RealEstateRoute/RealEstateRoute';
 import MarketPriceRefresh from '../components/MarketPriceRefresh/MarketPriceRefresh';
 
 export default function RootRoute() {
@@ -262,6 +263,8 @@ export function Content() {
 		mainContent = <DividendsRoute/>
 	else if(selectedTab == 'assetsTab')
 		mainContent = <AssetsRoute/>
+	else if(selectedTab == 'realEstateTab')
+		mainContent = <RealEstateRoute/>
 	else if(selectedTab == 'databaseTab')
 		mainContent = <DatabaseRoute/>
 	else if(selectedTab == 'cashTab')

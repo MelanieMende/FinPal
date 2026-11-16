@@ -7,7 +7,7 @@ import * as assetsSelector from '../../../../../store/assets/assets.selectors';
 import NewAssetButton from './components/NewAssetButton';
 import AssetListSumRow from './components/AssetListSumRow';
 
-export default function AnalysisRoute(props: { assets?: Asset[] }) {
+export default function AnalysisRoute(props: { assets?: Asset[]; newAssetType?: Asset['type']; newAssetLabel?: string }) {
 
 	const storedAssets = useAppSelector(state => state.assets)
 	const assets = props.assets ?? storedAssets
@@ -62,7 +62,7 @@ export default function AnalysisRoute(props: { assets?: Asset[] }) {
 				<AssetListSumRow>
 					<TableCell className="p-3 text-center">*</TableCell>
 					<TableCell className="p-3">Σ</TableCell>
-					<TableCell className="p-3"><NewAssetButton /></TableCell>
+					<TableCell className="p-3"><NewAssetButton type={props.newAssetType} text={props.newAssetLabel} /></TableCell>
           <TableCell className="p-3 text-center text-slate-500">—</TableCell>
 					<TableCell className="p-3 text-right">—</TableCell>
 					<TableCell className="p-3 text-right">—</TableCell>

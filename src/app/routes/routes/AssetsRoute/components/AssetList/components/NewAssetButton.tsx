@@ -1,19 +1,20 @@
-import { useAppDispatch, useAppSelector } from './../../../../../../hooks'
+import { useAppDispatch } from './../../../../../../hooks'
 
 import { Button, Intent } from '@blueprintjs/core';
 import * as assetCreationReducer from '../../../../../../store/assetCreation/assetCreation.reducer';
 import * as appStateReducer from '../../../../../../store/appState/appState.reducer';
 
-export default function AnalysisRoute() {
+export default function AnalysisRoute(props: { type?: Asset['type']; text?: string }) {
 
 	const dispatch = useAppDispatch();
 
 	return (
-    <Button id="newAssetButton" intent={Intent.PRIMARY} icon="plus" text="New Asset" fill onClick={(e) => openAssetOverlay()} />
+    <Button id="newAssetButton" intent={Intent.PRIMARY} icon="plus" text={props.text ?? 'New Asset'} fill onClick={() => openAssetOverlay()} />
 	);
 
-	function openAssetOverlay() {
-		dispatch(assetCreationReducer.reset())
+	async function openAssetOverlay() {
+		await dispatch(assetCreationReducer.reset())
+		if (props.type) dispatch(assetCreationReducer.setTypeInput(props.type))
 		dispatch(appStateReducer.setAssetOverlayType(appStateReducer.AssetOverlayType.NEW))
 		dispatch(appStateReducer.setShowAssetOverlay(true))
 	}

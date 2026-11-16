@@ -176,6 +176,27 @@ describe('AssetsRoute component', () => {
 		expect(screen.getByTestId('asset-row-2')).toBeInTheDocument();
 	});
 
+	it('opens the separate real estate tab from its card and omits properties from the holdings list', async () => {
+		window.API.saveSelectedTab = jest.fn().mockResolvedValue(undefined);
+		const { store } = render(<AssetsRoute />, { preloadedState: {
+			assets: [
+				{ ID: 1, type: 'Stock', name: 'Aktie', symbol: 'ABC', current_shares: 1, price: 20 },
+				{ ID: 2, type: 'RealEstate', name: 'Wohnung', property_market_value: 250000 },
+			] as Asset[],
+			transactions: [], dividends: [], cash: [],
+		} });
+
+		expect(screen.getByTestId('asset-row-1')).toBeInTheDocument();
+		expect(screen.queryByTestId('asset-row-2')).not.toBeInTheDocument();
+		const propertyCard = screen.getByTestId('asset-type-value-RealEstate');
+		expect(propertyCard).toHaveAttribute('role', 'link');
+		await act(async () => {
+			fireEvent.click(propertyCard);
+		});
+		expect(store.getState().appState.selectedTab).toBe('realEstateTab');
+		expect(window.API.saveSelectedTab).toHaveBeenCalledWith('realEstateTab');
+	});
+
 
 	it('restores the saved filter, rows and totals when the view is reopened', async () => {
 		const assets = [

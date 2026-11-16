@@ -24,17 +24,19 @@ const assetTypes: { type: Asset['type']; label: string; icon?: IconName; symbol?
 	{ type: 'CashEquivalent', label: 'Geldmarkt', icon: 'dollar' },
 	{ type: 'IPO', label: 'IPO', icon: 'time' },
 ];
+const filterableAssetTypes = assetTypes.filter(({ type }) => type !== 'RealEstate');
 const euroFormatter = new Intl.NumberFormat('de-DE', { style: 'currency', currency: 'EUR' });
 export const ASSET_TYPE_FILTER_KEY = 'finpal.assets.selectedType.v1';
 
 export default function AnalysisRoute() {
 	const dispatch = useAppDispatch();
 	const assets = useAppSelector(state => state.assets);
+	const selectedTab = useAppSelector(state => state.appState.selectedTab);
 	const totalLiquidity = useAppSelector(selectTotalLiquidity);
 	const totalWealth = assets.reduce((sum, asset) => sum + (assetsSelector.get_current_value(asset) || 0), 0) + totalLiquidity;
 	const [selectedType, setSelectedType] = useState<Asset['type'] | null>(() => {
 		const savedType = localStorage.getItem(ASSET_TYPE_FILTER_KEY);
-		return assetTypes.find(({ type }) => type === savedType)?.type ?? null;
+		return filterableAssetTypes.find(({ type }) => type === savedType)?.type ?? null;
 	});
 	useEffect(() => {
 		if (selectedType) {
@@ -44,9 +46,9 @@ export default function AnalysisRoute() {
 		}
 	}, [selectedType]);
 	const marketPriceUpdatedAt = useMarketPriceUpdatedAt();
-	const filteredAssets = selectedType
-		? assets.filter(asset => (asset.type || 'Stock') === selectedType)
-		: assets;
+	const filteredAssets = assets
+		.filter(asset => asset.type !== 'RealEstate')
+		.filter(asset => !selectedType || (asset.type || 'Stock') === selectedType);
 
 	const valuesByType = assetTypes.map(({ type, label, icon, symbol }) => ({
 		type,
@@ -78,21 +80,27 @@ export default function AnalysisRoute() {
 						</div>
 					</Card>
 					{valuesByType.map(({ type, label, icon, symbol, value }) => {
-						const isSelected = selectedType === type;
+						const isRealEstate = type === 'RealEstate';
+						const isSelected = isRealEstate ? selectedTab === 'realEstateTab' : selectedType === type;
 
 						return (
 						<Card
 						key={type}
 						data-testid={`asset-type-value-${type}`}
-						interactive
-						role="button"
+						interactive={!isRealEstate}
+						role={isRealEstate ? 'link' : 'button'}
 						tabIndex={0}
-						aria-pressed={isSelected}
-						onClick={() => setSelectedType(current => current === type ? null : type)}
+						aria-pressed={isRealEstate ? undefined : isSelected}
+						aria-current={isRealEstate && isSelected ? 'page' : undefined}
+						title={isRealEstate ? 'Immobilien öffnen' : undefined}
+						onClick={() => isRealEstate
+							? dispatch(changeSelectedTab('realEstateTab'))
+							: setSelectedType(current => current === type ? null : type)}
 						onKeyDown={(event) => {
 							if (event.key === 'Enter' || event.key === ' ') {
 								event.preventDefault();
-								setSelectedType(current => current === type ? null : type);
+								if (isRealEstate) dispatch(changeSelectedTab('realEstateTab'));
+								else setSelectedType(current => current === type ? null : type);
 							}
 						}}
 						className={`glass-card py-2 px-4 flex items-center gap-3 cursor-pointer transition-colors duration-200 ${

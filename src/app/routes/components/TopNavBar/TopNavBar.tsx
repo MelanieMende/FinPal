@@ -10,6 +10,7 @@ const sections = [
   { id: 'dashboardTab', label: 'Dashboard', icon: 'dashboard' },
   { id: 'analysisTab', label: 'Analyse', icon: 'search' },
   { id: 'assetsTab', label: 'Bestand', icon: 'timeline-line-chart' },
+  { id: 'realEstateTab', label: 'Immobilien', icon: 'home' },
   { id: 'transactionsTab', label: 'Transaktionen', icon: 'list' },
   { id: 'dividendsTab', label: 'Dividenden', icon: 'calendar' },
   { id: 'cashTab', label: 'Cash', icon: 'dollar' },

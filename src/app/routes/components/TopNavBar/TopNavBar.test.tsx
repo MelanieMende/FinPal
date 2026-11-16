@@ -53,6 +53,16 @@ describe('TopNavBar component', () => {
     expect(screen.queryByTestId('portfolio-analysis')).not.toBeInTheDocument();
   });
 
+  it('opens the dedicated Immobilien tab', async () => {
+    window.API.saveSelectedTab = jest.fn().mockResolvedValue(undefined);
+    const store = setupStore({ appState: { selectedTab: 'assetsTab' } });
+    await act(async () => { render(<><TopNavBar /><Content /></>, { store }); });
+    await act(async () => { fireEvent.click(screen.getByTestId('realEstateTab')); });
+    expect(store.getState().appState.selectedTab).toBe('realEstateTab');
+    expect(screen.getByTestId('RealEstateRoute')).toBeInTheDocument();
+    expect(screen.queryByTestId('AssetsRoute')).not.toBeInTheDocument();
+  });
+
 	it('renders', async() => {
     const {getAllById} = render(<TopNavBar />) 
 		await waitFor(() => {

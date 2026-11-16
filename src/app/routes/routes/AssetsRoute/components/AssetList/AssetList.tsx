@@ -7,10 +7,11 @@ import * as assetsSelector from '../../../../../store/assets/assets.selectors';
 import NewAssetButton from './components/NewAssetButton';
 import AssetListSumRow from './components/AssetListSumRow';
 
-export default function AnalysisRoute(props: { assets?: Asset[]; newAssetType?: Asset['type']; newAssetLabel?: string }) {
+export default function AnalysisRoute(props: { assets?: Asset[]; newAssetType?: Asset['type']; newAssetLabel?: string; variant?: 'realEstate' }) {
 
 	const storedAssets = useAppSelector(state => state.assets)
 	const assets = props.assets ?? storedAssets
+	const isRealEstateView = props.variant === 'realEstate'
 	const incompleteValuation = assets.some(asset => asset.current_shares > 0 && asset.quote?.valuationCurrency === 'unknown')
 
 	let sum_profit_lost = 0
@@ -18,10 +19,17 @@ export default function AnalysisRoute(props: { assets?: Asset[]; newAssetType?: 
 	let sum_current_invest = 0
 	let sum_current_value = 0
 	let sum_gain_loss = 0
+	let sum_property_purchase_price = 0
+	let sum_property_market_value = 0
+	let sum_property_monthly_rent = 0
 
 	assets.forEach(asset => {
-		const current_invest = asset.type === 'RealEstate' ? 0 : asset.current_invest || 0
-		const dividends_earned = asset.dividends_earned || 0
+		const current_invest = isRealEstateView
+			? asset.property_mortgage_balance || 0
+			: asset.type === 'RealEstate' ? 0 : asset.current_invest || 0
+		const dividends_earned = isRealEstateView
+			? asset.property_monthly_costs || 0
+			: asset.dividends_earned || 0
 		const current_value = assetsSelector.get_current_value(asset)
 
 		const current_profit_loss = assetsSelector.get_current_profit_loss(asset)
@@ -30,6 +38,9 @@ export default function AnalysisRoute(props: { assets?: Asset[]; newAssetType?: 
 		sum_current_invest += current_invest
 		sum_current_value += current_value
 		sum_gain_loss += assetsSelector.get_realized_gain_loss(asset)
+		sum_property_purchase_price += asset.property_purchase_price || 0
+		sum_property_market_value += asset.property_market_value || 0
+		sum_property_monthly_rent += asset.property_monthly_rent || 0
 	});
 	
 	const sum_profit_loss_percentage = sum_current_invest !== 0 ? -sum_profit_lost / sum_current_invest * 100 : 0
@@ -46,15 +57,15 @@ export default function AnalysisRoute(props: { assets?: Asset[]; newAssetType?: 
 					<th className="p-3 text-left w-12">ID</th>
 					<th className="p-3 text-left min-w-[150px] text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Name</th>
           <th className="p-3 text-center w-14 text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10" title="Empfehlung aus der letzten KI-Analyse">KI</th>
-					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Shares</th>
-					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Avg Price Paid</th>
-					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Current Price</th>
-					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 text-nowrap">Current Invest</th>
-					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Current Value</th>
-					<th className="p-3 text-center text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">Yield / Div</th>
-					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 text-nowrap">Ex / Pay Date</th>
-					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 text-nowrap">Dividends</th>
-					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 text-nowrap">Realized P/L + Div.     </th>
+					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">{isRealEstateView ? 'Haushaltsanteil' : 'Shares'}</th>
+					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">{isRealEstateView ? 'Kaufpreis' : 'Avg Price Paid'}</th>
+					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">{isRealEstateView ? 'Immobilienwert' : 'Current Price'}</th>
+					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 text-nowrap">{isRealEstateView ? 'Restschuld' : 'Current Invest'}</th>
+					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">{isRealEstateView ? 'Eigenkapital' : 'Current Value'}</th>
+					<th className="p-3 text-center text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10">{isRealEstateView ? 'Miete / Monat' : 'Yield / Div'}</th>
+					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 text-nowrap">{isRealEstateView ? 'Kaufdatum / Lage' : 'Ex / Pay Date'}</th>
+					<th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 text-nowrap">{isRealEstateView ? 'Laufende Kosten / Monat' : 'Dividends'}</th>
+					{!isRealEstateView && <th className="p-3 text-right text-[10px] uppercase font-bold text-gray-400 tracking-wider border-b border-white/10 text-nowrap">Realized P/L + Div.</th>}
 				</tr>
 			</thead>
       <tbody>
@@ -65,21 +76,21 @@ export default function AnalysisRoute(props: { assets?: Asset[]; newAssetType?: 
 					<TableCell className="p-3"><NewAssetButton type={props.newAssetType} text={props.newAssetLabel} /></TableCell>
           <TableCell className="p-3 text-center text-slate-500">—</TableCell>
 					<TableCell className="p-3 text-right">—</TableCell>
-					<TableCell className="p-3 text-right">—</TableCell>
-					<TableCell className="p-3 text-right">—</TableCell>
+					<TableCell className="p-3 text-right">{isRealEstateView ? euroFormatter.format(sum_property_purchase_price) : '—'}</TableCell>
+					<TableCell className="p-3 text-right">{isRealEstateView ? euroFormatter.format(sum_property_market_value) : '—'}</TableCell>
 					<TableCell className="p-3 text-right text-blue-300">{euroFormatter.format(sum_current_invest)}</TableCell>
 					<TableCell dataTestID="CurrentValueSum" className="p-3 text-right">
 						<div className="font-bold text-white">{euroFormatter.format(sum_current_value)}</div>
-						{incompleteValuation ? <div className="text-xs text-amber-300">Teilsumme · Gewinn/Verlust unvollständig</div> : <div id="TableCellSumProfitLoss" className={`mt-1 inline-flex rounded border px-2 py-0.5 text-s font-bold ${sum_profit_lost >= 0 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-red-500/15 text-red-400 border-red-500/30'}`}>
+						{incompleteValuation ? <div className="text-xs text-amber-300">Teilsumme · Gewinn/Verlust unvollständig</div> : !isRealEstateView && <div id="TableCellSumProfitLoss" className={`mt-1 inline-flex rounded border px-2 py-0.5 text-s font-bold ${sum_profit_lost >= 0 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-red-500/15 text-red-400 border-red-500/30'}`}>
 							{sum_profit_lost >= 0 ? '+' : ''}{euroFormatter.format(sum_profit_lost)} / {sum_profit_loss_percentage >= 0 ? '+' : ''}{sum_profit_loss_percentage.toFixed(2)}%
 						</div>}
 					</TableCell>
-					<TableCell className="p-3 text-center">—</TableCell>
+					<TableCell className="p-3 text-center">{isRealEstateView ? euroFormatter.format(sum_property_monthly_rent) : '—'}</TableCell>
 					<TableCell className="p-3 text-right">—</TableCell>
 					<TableCell className={`p-3 text-right ${sum_dividends === 0 ? 'text-slate-500' : 'text-emerald-400'}`}>{euroFormatter.format(sum_dividends)}</TableCell>
-					<TableCell dataTestID="GainLossSum" className={`p-3 text-right font-bold ${sum_gain_loss > 0 ? 'text-emerald-400' : sum_gain_loss < 0 ? 'text-red-400' : 'text-slate-500'}`}>
+					{!isRealEstateView && <TableCell dataTestID="GainLossSum" className={`p-3 text-right font-bold ${sum_gain_loss > 0 ? 'text-emerald-400' : sum_gain_loss < 0 ? 'text-red-400' : 'text-slate-500'}`}>
 						{sum_gain_loss > 0 ? '+' : ''}{euroFormatter.format(sum_gain_loss)}
-					</TableCell>
+					</TableCell>}
 				</AssetListSumRow>
         <AssetListRows assets={sorted_Assets}/>
       </tbody>
@@ -88,7 +99,7 @@ export default function AnalysisRoute(props: { assets?: Asset[]; newAssetType?: 
 
 	function AssetListRows(props:{assets:Asset[]}):JSX.Element {
 		return <>{
-			props.assets.map((asset, i) => (<AssetListItem key={"asset-" + asset.ID} i={i+1} asset={asset} />))
+			props.assets.map((asset, i) => (<AssetListItem key={"asset-" + asset.ID} i={i+1} asset={asset} hideRealizedGainLoss={isRealEstateView} />))
 		}</>
 	}
 }

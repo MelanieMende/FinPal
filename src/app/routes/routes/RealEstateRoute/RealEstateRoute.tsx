@@ -17,7 +17,7 @@ export default function RealEstateRoute() {
 			</div>
 			<Card className="glass-card p-0 overflow-hidden min-h-[500px]">
 				<div className="overflow-x-auto">
-					<AssetList assets={properties} newAssetType="RealEstate" newAssetLabel="Immobilie hinzufügen" />
+					<AssetList assets={properties} newAssetType="RealEstate" newAssetLabel="Immobilie hinzufügen" variant="realEstate" />
 				</div>
 			</Card>
 			<CreateAndEditAssetOverlay />

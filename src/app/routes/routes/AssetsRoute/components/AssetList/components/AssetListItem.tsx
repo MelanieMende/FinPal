@@ -9,7 +9,7 @@ import * as appStateReducer from '../../../../../../store/appState/appState.redu
 import * as assetCreationReducer from '../../../../../../store/assetCreation/assetCreation.reducer';
 import * as assetReducer from '../../../../../../store/assets/assets.reducer';
 
-export default function AssetListItem(props: {i: number, asset:Asset}) {
+export default function AssetListItem(props: {i: number, asset:Asset, hideRealizedGainLoss?: boolean}) {
 
   const dispatch = useAppDispatch();
 	const transactions = useAppSelector(state => state.transactions);
@@ -120,7 +120,6 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
       {/* Shares */}
 			<TableCell className="p-3 text-right">
 				<div data-testid={"current-shares-" + props.asset.ID} className={`font-semibold ${assetsSelector.get_current_shares_textColor(props.asset) === 'inherit' ? 'text-white' : assetsSelector.get_current_shares_textColor(props.asset)}`}>{isPendingIpo ? 'Zuteilung offen' : isRealEstate ? `${(props.asset.property_ownership_share ?? 100).toLocaleString('de-DE')} %` : shareFormatter.format(props.asset.current_shares || 0)}</div>
-				{isRealEstate && <div className="text-[10px] text-gray-500">Haushaltsanteil</div>}
 			</TableCell>
 
 			{/* Avg Price Paid */}
@@ -130,7 +129,6 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 						? props.asset.property_purchase_price == null ? '–' : euroFormatter.format(props.asset.property_purchase_price)
 						: euroFormatter.format(props.asset.avg_price_paid || 0)}
 				</div>
-				{isRealEstate && <div className="text-[10px] text-gray-500">Kaufpreis</div>}
 			</TableCell>
 
 			{/* Current Price */}
@@ -140,23 +138,20 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 						? euroFormatter.format(props.asset.property_market_value || 0)
 						: props.asset.quote?.valuationCurrency === 'unknown' ? 'Nicht bewertet' : euroFormatter.format(props.asset.price || 0)}
 				</div>
-				{isRealEstate && <div className="text-[10px] text-gray-500">Immobilienwert</div>}
 				{props.asset.quote?.error && <div className="text-xs text-amber-300">{props.asset.quote.error}</div>}
 			</TableCell>
 
 			{/* Current Invest */}
 			<TableCell className="p-3 text-right">
 				<div data-testid={"current-invest-" + props.asset.ID} className={`font-semibold ${assetsSelector.get_current_invest_textColor(props.asset) === 'inherit' ? 'text-blue-300' : assetsSelector.get_current_invest_textColor(props.asset)}`}>{isRealEstate ? euroFormatter.format(props.asset.property_mortgage_balance || 0) : euroFormatter.format(current_invest)}</div>
-				{isRealEstate && <div className="text-[10px] text-gray-500">Restschuld</div>}
 				{isPendingIpo && <div className="text-[10px] uppercase text-amber-300">Cash reserviert</div>}
 			</TableCell>
 
 			{/* Value */}
 			<TableCell className="p-3 text-right">
 				<div data-testid={"current-value-" + props.asset.ID} className={`font-bold ${assetsSelector.get_current_value_textColor(props.asset) === 'inherit' ? 'text-white' : assetsSelector.get_current_value_textColor(props.asset)}`}>{isPendingIpo ? euroFormatter.format(assetsSelector.get_current_value(props.asset) || 0) : !isRealEstate && props.asset.quote?.valuationCurrency === 'unknown' ? 'Nicht bewertet' : euroFormatter.format(assetsSelector.get_current_value(props.asset) || 0)}</div>
-				{isRealEstate && <div className="text-[10px] text-gray-500">Eigenkapital</div>}
 				{isPendingIpo && <div className="text-[10px] uppercase text-amber-300">Reservierter Anspruch</div>}
-				{(props.asset.current_shares || 0) !== 0 && props.asset.quote?.valuationCurrency !== 'unknown' && (
+				{!isRealEstate && (props.asset.current_shares || 0) !== 0 && props.asset.quote?.valuationCurrency !== 'unknown' && (
 					<div data-testid={"profit-loss-" + props.asset.ID} className={`mt-1 inline-flex rounded border px-2 py-0.5 text-s font-bold ${current_profit_loss >= 0 ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30' : 'bg-red-500/15 text-red-400 border-red-500/30'}`}>
 						{current_profit_loss >= 0 ? '+' : ''}{euroFormatter.format(current_profit_loss || 0)} / {current_profit_loss_percentage >= 0 ? '+' : ''}{(current_profit_loss_percentage || 0).toFixed(2)}%
 					</div>
@@ -166,14 +161,13 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 			{/* Yield / Div */}
 			<TableCell className="p-3 text-center">
 				<div className="text-xs font-bold text-indigo-400">{isRealEstate ? euroFormatter.format(props.asset.property_monthly_rent || 0) : dividendYieldFormatted}</div>
-				<div className="text-[10px] text-indigo-300/50 uppercase">{isRealEstate ? 'Miete / Monat' : 'Ext. Yield'}</div>
+				{!isRealEstate && <div className="text-[10px] text-indigo-300/50 uppercase">Ext. Yield</div>}
 			</TableCell>
 
 			{/* Dates */}
 			<TableCell className="p-3 text-right">
 				{isRealEstate ? <>
 					<div className="text-xs font-medium text-white">{propertyPurchaseDateFormatted}</div>
-					<div className="text-[10px] text-gray-500 uppercase">Kaufdatum</div>
 					<div className="text-xs font-medium text-gray-400">{props.asset.property_location || '–'}</div>
 				</> : <>
 					<div id={`AssetListItem_${props.i}_exDividendDate`} className="text-xs font-medium text-white">{exDividendDateFormatted}</div>
@@ -186,19 +180,18 @@ export default function AssetListItem(props: {i: number, asset:Asset}) {
 			{/* Total Earned */}
 			<TableCell className="p-3 text-right">
 				<div className={`font-bold ${(isRealEstate ? props.asset.property_monthly_costs || 0 : props.asset.dividends_earned || 0) === 0 ? 'text-slate-500' : 'text-emerald-400'}`}>{euroFormatter.format(isRealEstate ? props.asset.property_monthly_costs || 0 : props.asset.dividends_earned || 0)}</div>
-				{isRealEstate && <div className="text-[10px] text-gray-500">Kosten / Monat</div>}
 			</TableCell>
 
 			{/* Realized Gain / Loss including dividends */}
-			<TableCell className="p-3 text-right">
+			{!props.hideRealizedGainLoss && <TableCell className="p-3 text-right">
 				<div data-testid={"gain-loss-" + props.asset.ID} className={`font-bold ${realized_gain_loss > 0 ? 'text-emerald-400' : realized_gain_loss < 0 ? 'text-red-400' : 'text-slate-500'}`}>
 					{isRealEstate ? '–' : `${realized_gain_loss > 0 ? '+' : ''}${euroFormatter.format(realized_gain_loss)}`}
 				</div>
-			</TableCell>
+			</TableCell>}
     </tr>
 		{showTransactions && (
 			<tr data-testid={"asset-transactions-" + props.asset.ID} className="bg-slate-950/50 border-b border-blue-500/20">
-				<td colSpan={13} className="px-10 py-4">
+				<td colSpan={props.hideRealizedGainLoss ? 12 : 13} className="px-10 py-4">
 					{assetTransactions.length === 0 ? (
 						<div className="text-sm text-gray-500 italic">No transactions for this asset.</div>
 					) : (

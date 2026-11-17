@@ -64,6 +64,7 @@ export interface PrimaryRiskRecord {
   isin: string;
   fingerprint: string;
   documentsFingerprint?: string;
+  excerptVersion?: number;
   checkedAt: number;
   status: 'assessed' | 'unknown';
   checks: RiskCheck[];
@@ -207,9 +208,12 @@ function qualifySpaceXRisks(position: AnalysisPosition, check: RiskCheck, docume
     const nineMonths = margins.find(metric => metric.period === 'Neun Monate bis 2026-09-30');
     if (quarter && nineMonths && validSpaceXOperatingMarginEvidence(nineMonths.quote, document)) return { ...check, finding: 'risk', documentIndex,
       quote: nineMonths.quote,
-      reason: `Der SEC-10-Q belegt eine operative Marge von ${nineMonths.value.toFixed(1)} % in den ersten neun Monaten 2026 und ${quarter.value.toFixed(1)} % im Q3. Die niedrige kumulierte Marge bei deutlich verbessertem letzten Quartal ist ein periodischer Entscheidungsfaktor, kein Beleg für dauerhaft niedrige Margen.` };
+      reason: `Aus SEC-10-Q-Berichtswerten rechnerisch abgeleitete operative Marge: ${nineMonths.value.toFixed(1)} % in den ersten neun Monaten 2026 und ${quarter.value.toFixed(1)} % im Q3. Die niedrige kumulierte Marge bei deutlich verbessertem letzten Quartal ist ein periodischer Entscheidungsfaktor, kein Beleg für dauerhaft niedrige Margen.` };
   }
   if (check.flag === 'regulatory') {
+    const starlinkLicensing = /our plans for Starlink Mobile, including our ability to obtain and maintain required regulatory approvals, licenses, and spectrum authorizations/i.exec(document.excerpt)?.[0] ?? '';
+    if (validQuote(starlinkLicensing, document)) return { ...check, finding: 'risk', documentIndex, quote: starlinkLicensing,
+      reason: 'Der SEC-10-Q benennt erforderliche Genehmigungen, Lizenzen und Frequenzzulassungen für Starlink Mobile ausdrücklich als Voraussetzung. Das ist eine belegte regulatorische Exposition, aber kein Nachweis eines bereits eingetretenen Schadens.' };
     const quote = /Legal Proceedings\s+In the normal course of its business[\s\S]{0,260}?could have a material impact on our results of operations/i.exec(document.excerpt)?.[0] ?? '';
     if (validQuote(quote, document)) return { ...check, finding: 'risk', documentIndex, quote,
       reason: 'Der SEC-10-Q nennt Schiedsverfahren, Sammelklagen, Handelsstreitigkeiten sowie regulatorische und behördliche Verfahren, darunter bedeutende Sachverhalte mit potenziell wesentlicher Ergebniswirkung. Das belegt eine konkrete rechtlich-regulatorische Risikoexposition, nicht den sicheren Eintritt eines wesentlichen Schadens.' };
@@ -224,14 +228,14 @@ function qualifySpaceXRisks(position: AnalysisPosition, check: RiskCheck, docume
 }
 function spaceXMarginRows(document: RiskDocument): { revenue: string; operations: string; quote: string } | null {
   const rows = document.excerpt.split('\n').map(line => line.trim());
-  const revenue = rows.find(line => /Revenue\s+\$/.test(line) && /14,575/.test(line) && /27,083/.test(line));
-  const operations = rows.find(line => /Income \(loss\) from operations/.test(line) && /2,791/.test(line) && /705/.test(line));
+  const revenue = rows.find(line => /\bRevenue\b/i.test(line) && /\b14,575\b/.test(line) && /\b27,083\b/.test(line));
+  const operations = rows.find(line => /Income \(loss\) from operations/i.test(line) && /\b2,791\b/.test(line) && /\b705\b/.test(line));
   return revenue && operations ? { revenue, operations, quote: `${revenue}\n${operations}` } : null;
 }
 function spaceXMarginFromQuote(quote: string): number[] {
   const rows = quote.split('\n');
-  const revenueRow = rows.find(line => /Revenue\s+\$/.test(line) && /14,575/.test(line) && /27,083/.test(line));
-  const operationsRow = rows.find(line => /Income \(loss\) from operations/.test(line) && /2,791/.test(line) && /705/.test(line));
+  const revenueRow = rows.find(line => /\bRevenue\b/i.test(line) && /\b14,575\b/.test(line) && /\b27,083\b/.test(line));
+  const operationsRow = rows.find(line => /Income \(loss\) from operations/i.test(line) && /\b2,791\b/.test(line) && /\b705\b/.test(line));
   if (!revenueRow || !operationsRow) return [];
   const values = (line: string) => [...line.matchAll(/\(?\d[\d,]*\)?/g)].map(match =>
     Number(match[0].replace(/[(),]/g, '')) * (match[0].startsWith('(') ? -1 : 1));
@@ -256,14 +260,25 @@ function spaceXMetrics(position: AnalysisPosition, documents: RiskDocument[]): R
   if (!isSpaceX(position)) return [];
   const documentIndex = documents.findIndex(spaceXQuarter);
   const document = documents[documentIndex];
-  if (!document) return [];
+  if (!document) {
+    console.info('[primary-risk:spacex-assessment]', JSON.stringify({ step: 'margin-document-missing', documents: documents.length }));
+    return [];
+  }
   const result: RiskMetric[] = [];
   const marginRows = spaceXMarginRows(document);
+  console.info('[primary-risk:spacex-assessment]', JSON.stringify({ step: 'margin-rows',
+    excerptChars: document.excerpt.length, revenueFound: !!marginRows?.revenue, operationsFound: !!marginRows?.operations,
+    revenueValuesFound: !!marginRows && spaceXMarginFromQuote(marginRows.quote).length === 2,
+    excerptHasRevenueLabel: /\bRevenue\b/i.test(document.excerpt),
+    excerptHasOperationsLabel: /Income \(loss\) from operations/i.test(document.excerpt) }));
   const [quarterMarginValue, nineMonthMarginValue] = marginRows ? spaceXMarginFromQuote(marginRows.quote) : [];
   if (marginRows && Number.isFinite(quarterMarginValue) && validSpaceXOperatingMarginEvidence(marginRows.quote, document)) result.push({ name: 'operating-margin',
     value: Number(quarterMarginValue.toFixed(1)), unit: '%', period: 'Q3 2026', documentIndex, quote: marginRows.quote });
   if (marginRows && Number.isFinite(nineMonthMarginValue) && validSpaceXOperatingMarginEvidence(marginRows.quote, document)) result.push({ name: 'operating-margin',
     value: Number(nineMonthMarginValue.toFixed(1)), unit: '%', period: 'Neun Monate bis 2026-09-30', documentIndex, quote: marginRows.quote });
+  console.info('[primary-risk:spacex-assessment]', JSON.stringify({ step: 'margin-metrics', count: result.filter(metric => metric.name === 'operating-margin').length,
+    quarter: Number.isFinite(quarterMarginValue) ? Number(quarterMarginValue.toFixed(1)) : null,
+    nineMonths: Number.isFinite(nineMonthMarginValue) ? Number(nineMonthMarginValue.toFixed(1)) : null }));
   const income = /Net income \(loss\)[\s\u00a0\u00c2]+\$[\s\u00a0\u00c2]*4,404[\s\u00a0\u00c2]+\$[\s\u00a0\u00c2]*\([\s\u00a0\u00c2]*1,054[\s\u00a0\u00c2]*\)[\s\u00a0\u00c2]+\$[\s\u00a0\u00c2]*\([\s\u00a0\u00c2]*413[\s\u00a0\u00c2]*\)[\s\u00a0\u00c2]+\$[\s\u00a0\u00c2]*\([\s\u00a0\u00c2]*2,590[\s\u00a0\u00c2]*\)/i.exec(document.excerpt)?.[0] ?? '';
   if (validQuote(income, document)) result.push({ name: 'net-income', value: -413, unit: 'Mio. USD', period: 'Neun Monate bis 2026-09-30', documentIndex, quote: income });
   const cash = /Cash and cash equivalents[\s\u00a0\u00c2]+51,294[\s\u00a0\u00c2]+24,747/i.exec(document.excerpt)?.[0] ?? '';
@@ -615,7 +630,7 @@ export function riskFingerprint(position: AnalysisPosition, set: RiskDocumentSet
   return createHash('sha256').update(JSON.stringify({ policy: RISK_POLICY, isin: riskInstrumentId(position),
     type: position.type, ...(position.isin.trim().toUpperCase() === 'US5801351017' ? { mcdReviewVersion: 2 } : {}),
     ...(position.isin.trim().toUpperCase() === 'DE0008430026' ? { munichReviewVersion: 3 } : {}),
-    ...(position.isin.trim().toUpperCase() === 'US84615Q1031' ? { spaceXReviewVersion: 2 } : {}),
+    ...(position.isin.trim().toUpperCase() === 'US84615Q1031' ? { spaceXReviewVersion: 4 } : {}),
     ...(position.type === 'Crypto' ? { cryptoReviewVersion: 1 } : {}),
     ...(position.type === 'Crypto' && set.reviewContext ? { cryptoReviewContext: {
       custody: set.reviewContext.custody && { kind: set.reviewContext.custody.kind,
@@ -633,7 +648,7 @@ export function riskFingerprint(position: AnalysisPosition, set: RiskDocumentSet
     ...(position.type === 'Bond' && position.isin.trim().toUpperCase() === 'US912810SQ22'
       ? { treasuryContextVersion: 1, nominalCurrency: position.bondHolding?.source === 'user-confirmed' ? position.bondHolding.currency : null } : {}),
     documents: set.documents.map(doc => [doc.source.url, doc.hash,
-      isInsuranceStock(position) || position.isin.trim().toUpperCase() === 'LU3170240538' ? doc.excerptVersion ?? 0 : 0])
+      isInsuranceStock(position) || ['LU3170240538', 'US84615Q1031'].includes(position.isin.trim().toUpperCase()) ? doc.excerptVersion ?? 0 : 0])
       .sort((a, b) => String(a[0]).localeCompare(String(b[0]))) })).digest('hex');
 }
 export function primaryDocumentsFingerprint(set: RiskDocumentSet): string {
@@ -704,6 +719,7 @@ export function validateRiskAssessment(position: AnalysisPosition, set: RiskDocu
   if (!set.discoveryChecked && !isBitcoinResearchPosition(position))
     gaps.push('Neueste Primärberichte konnten nicht verlässlich abgeglichen werden.');
   return { key, isin: riskInstrumentId(position), fingerprint: riskFingerprint(position, set), documentsFingerprint: primaryDocumentsFingerprint(set),
+    ...(isSpaceX(position) ? { excerptVersion: set.documents.find(spaceXQuarter)?.excerptVersion } : {}),
     checkedAt: now, status: gaps.length ? 'unknown' : 'assessed', checks, metrics, gaps: [...new Set(gaps)],
     sources: set.documents.map(doc => doc.source) };
 }
@@ -857,6 +873,7 @@ export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessme
   if (visible.length < lines.length) visible.push(`Weitere ${lines.length - visible.length} Befunde im gespeicherten Prüfprotokoll.`);
   return { key: record.key, status: record.status,
     primaryDocumentsCheckedAt: new Date(record.checkedAt).toISOString(), primaryDocuments: record.sources,
+    ...(record.isin === 'US84615Q1031' && record.excerptVersion ? { primaryExcerptVersion: record.excerptVersion } : {}),
     ...(record.documentsFingerprint ? { primaryDocumentsFingerprint: record.documentsFingerprint, primaryDocumentsFingerprintVersion: 2 as const } : {}),
     ...(reviewedMunichUncertainty || reviewedMondelezUncertainty || reviewedMcdUncertainty || reviewedNovoUncertainty || reviewedLufthansaUncertainty || reviewedBitcoinUncertainty || reviewedApolloUncertainty
       ? { decisionReadiness: 'reviewed-uncertainty' as const } : {}),

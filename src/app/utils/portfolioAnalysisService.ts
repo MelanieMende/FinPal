@@ -736,6 +736,7 @@ export class PortfolioAnalysisService {
             rationale: 'Die Dokumente wurden geladen; eine inhaltliche Risikoprüfung steht noch aus.', sources: [] }),
           primaryDocumentsCheckedAt: new Date().toISOString(), primaryDocuments: set.documents.map(document => document.source),
           primaryDocumentsFingerprint: documentsFingerprint, primaryDocumentsFingerprintVersion: 2,
+          ...(position.isin.trim().toUpperCase() === 'US84615Q1031' ? { primaryExcerptVersion: set.documents.find(document => document.period === '2026-09-30')?.excerptVersion } : {}),
           ...(changed ? { primaryDocumentsChanged: true } : { primaryDocumentsChanged: undefined }),
         };
         const fundamentalRisks = [...(previous.report.fundamentalRisks ?? []).filter(item => item.key !== updatedRisk.key), updatedRisk];
@@ -991,7 +992,10 @@ export class PortfolioAnalysisService {
         });
         addRiskReviewContext(position, set, request.investorContext);
         let record = this.primaryRiskCache.get(position, set);
-        if (record) reusedRiskAssetIds.push(position.id);
+        if (record) {
+          reusedRiskAssetIds.push(position.id);
+          activeRiskStep = 'reuse'; notify(true);
+        }
         if (!record) {
           let assessment: unknown = null;
           if (set.documents.length && set.discoveryChecked) {
@@ -1126,6 +1130,7 @@ export class PortfolioAnalysisService {
                 activeRiskStep = step; notify(true);
               });
             let record = this.primaryRiskCache.get(position, set, candidateKey);
+            if (record) { activeRiskStep = 'reuse'; notify(true); }
             if (!record) {
               let assessment: unknown = null;
               if (set.documents.length && set.discoveryChecked && !set.gaps.length) {

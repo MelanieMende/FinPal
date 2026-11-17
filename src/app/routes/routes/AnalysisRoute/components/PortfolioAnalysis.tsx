@@ -58,7 +58,8 @@ function assetReloadStatus(progress: PortfolioAnalysisProgress | null, targetAss
       refreshingPrice: false, refreshingForecast: false, refreshingResearch: progress.activeAssetId === assetId || !researchReusable, refreshingRisk: false };
     case 'ai-research': return { message: 'Fehlende Quellen werden mit KI recherchiert', refreshingPrice: false, refreshingForecast: false, refreshingResearch: true, refreshingRisk: false };
     case 'risk-review': return { message: progress.activeAssetId === assetId
-      ? progress.activeRiskStep === 'assessment' ? 'Dokumenttext wird auf Gewinn, Marge, Liquidität, Fälligkeiten und weitere Risiken geprüft'
+      ? progress.activeRiskStep === 'reuse' ? 'Gespeicherte Risikoprüfung wird wiederverwendet'
+        : progress.activeRiskStep === 'assessment' ? 'Dokumenttext wird auf Gewinn, Marge, Liquidität, Fälligkeiten und weitere Risiken geprüft'
         : progress.activeRiskStep === 'sec-discovery' ? 'SEC-Einreichungen werden abgefragt'
           : progress.activeRiskStep === 'download' ? 'Primärbericht wird heruntergeladen'
             : progress.activeRiskStep === 'pdf-parse' ? 'PDF-Text wird extrahiert'
@@ -94,16 +95,16 @@ export function AssetResearchIndicator({ status, now }: { status?: AssetResearch
         : 'Status der gespeicherten Online-Recherche nicht verfügbar.'}
   </p>;
 }
-function PrimaryDocumentsIndicator({ risk, now, openSource, onReload, disabled, loading, forceReload }: { risk: FundamentalRiskAssessment; now: number; openSource: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void; onReload: () => void; disabled: boolean; loading: boolean; forceReload: boolean }) {
+function PrimaryDocumentsIndicator({ risk, now, openSource, onReload, disabled, loading, forceReload, excerptNeedsRefresh = false }: { risk: FundamentalRiskAssessment; now: number; openSource: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void; onReload: () => void; disabled: boolean; loading: boolean; forceReload: boolean; excerptNeedsRefresh?: boolean }) {
   const checkedAt = risk.primaryDocumentsCheckedAt ? Date.parse(risk.primaryDocumentsCheckedAt) : NaN;
   const current = Number.isFinite(checkedAt) && checkedAt <= now && now - checkedAt < 24 * 60 * 60 * 1000;
   const documents = (risk.primaryDocuments ?? []).filter(source => source && typeof source.url === 'string' && typeof source.title === 'string');
   return <section aria-label="Primärberichte" className="my-3 min-w-0 rounded border border-white/10 bg-slate-950/25 p-3">
     <div className="flex min-w-0 flex-wrap items-start gap-2">
     <details className="group min-w-0 flex-1">
-      <summary className={`flex min-w-0 cursor-pointer list-none items-center gap-2 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${current ? 'text-emerald-300' : 'text-amber-300'}`}>
-        <Icon icon={current ? 'tick-circle' : 'refresh'} size={14} aria-hidden="true" />
-        <span className="min-w-0 break-words">Primärberichte: {loading && forceReload ? 'werden neu geladen' : current ? 'geladen · aktuell' : 'nicht aktuell oder nicht verfügbar'}</span>
+      <summary className={`flex min-w-0 cursor-pointer list-none items-center gap-2 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${current && !excerptNeedsRefresh ? 'text-emerald-300' : 'text-amber-300'}`}>
+        <Icon icon={current && !excerptNeedsRefresh ? 'tick-circle' : 'refresh'} size={14} aria-hidden="true" />
+        <span className="min-w-0 break-words">Berichte laden: {loading && forceReload ? 'wird ausgeführt' : excerptNeedsRefresh ? 'neuer Auszug erforderlich' : current ? 'geladen · aktuell' : 'nicht aktuell oder nicht verfügbar'}</span>
         <Icon icon="chevron-right" size={12} aria-hidden="true" className="ml-auto shrink-0 text-gray-500 transition-transform group-open:rotate-90" />
       </summary>
       <div className="mt-2 min-w-0 space-y-2 border-t border-white/10 pt-2">
@@ -140,8 +141,8 @@ const riskLineLabels: Record<string, string> = {
   underwriting: 'Versicherungstechnik', solvency: 'Solvenz',
 };
 const metricPrefixes = ['Periodengewinn:', 'operative Marge:', 'Liquidität:', 'Fälligkeiten:', 'Combined Ratio:', 'Solvenzquote:', 'debt-maturities:'];
-export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, checkStatus }: { risk: FundamentalRiskAssessment;
-  openSource: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void; onRefreshRisk?: () => void; refreshDisabled?: boolean; checkStatus?: string }) {
+export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, checkStatus, reviewPending = false }: { risk: FundamentalRiskAssessment;
+  openSource: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void; onRefreshRisk?: () => void; refreshDisabled?: boolean; checkStatus?: string; reviewPending?: boolean }) {
   const material = new Set(risk.materialRisks.map(item => riskLineLabels[item] ?? item));
   const lines = risk.rationale.split('\n').map(line => line.trim()).filter(Boolean);
   const lineLabel = (line: string) => line.slice(0, line.indexOf(':'));
@@ -167,7 +168,7 @@ export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, c
     title: 'Geprüft · offene Punkte',
   } : hasMaterial ? {
     border: 'border-amber-400/30', background: 'bg-amber-500/5', text: 'text-amber-200', icon: 'warning-sign' as const,
-    title: 'Wesentliche Risiken · Entscheidungsfaktor',
+    title: 'Wesentliche Risiken',
   } : risk.decisionReadiness === 'reviewed-uncertainty' ? {
     border: 'border-amber-400/30', background: 'bg-amber-500/5', text: 'text-amber-200', icon: 'warning-sign' as const,
     title: 'Geprüft mit Restunsicherheit',
@@ -190,6 +191,9 @@ export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, c
     </div>
     {checkStatus && <div role="status" className="mx-3 mb-0 mt-2 flex items-center gap-2 rounded border border-sky-400/25 bg-sky-500/10 px-2.5 py-2 text-xs text-sky-200">
       <Spinner size={14} /> {checkStatus}
+    </div>}
+    {reviewPending && <div role="status" className="mx-3 mb-0 mt-2 rounded border border-amber-400/30 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-200">
+      Berichtsauszug neu geladen. Die SpaceX-Margenprüfung steht noch aus. Bitte hier „Risiken neu prüfen“ wählen.
     </div>}
     {!!open.length && <div className="mx-3 mb-0 mt-2 rounded border border-amber-400/25 bg-amber-950/15 p-2.5 text-xs text-gray-200" aria-label="Offene Prüfpunkte">
       <p className="m-0 font-bold text-amber-200">Offene Punkte</p>
@@ -681,11 +685,13 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
         <div>
           {analysisState.targetAssetId != null && <p className="mt-0 mb-1 text-sm font-bold text-indigo-200">Einzelanalyse: {assets.find(asset => asset.ID === analysisState.targetAssetId)?.name || `Asset ${analysisState.targetAssetId}`}</p>}
           {progress.stage === 'prices' && progress.activeAssetId != null && <p className="mt-0 mb-1 text-sm font-bold text-indigo-200">Kurs wird aktualisiert: {assets.find(asset => asset.ID === progress.activeAssetId)?.name || `Asset ${progress.activeAssetId}`}</p>}
-          {progress.activeCandidateName && <p className="mt-0 mb-1 text-sm font-bold text-indigo-200">Neue Kaufidee: {progress.activeCandidateName} · {progress.activeRiskStep === 'assessment' ? 'Dokumentinhalt wird geprüft' : progress.activeRiskStep === 'sec-discovery' ? 'SEC-Einreichungen werden abgefragt' : progress.activeRiskStep === 'pdf-parse' ? 'PDF-Text wird extrahiert' : progress.activeRiskStep === 'risk-excerpt' ? 'SEC-Bericht wird bereinigt' : progress.activeRiskStep === 'download' ? 'Primärbericht wird heruntergeladen' : 'Primärdokumente werden geladen'}</p>}
+          {progress.activeCandidateName && <p className="mt-0 mb-1 text-sm font-bold text-indigo-200">Neue Kaufidee: {progress.activeCandidateName} · {progress.activeRiskStep === 'reuse' ? 'Gespeicherte Risikoprüfung wird wiederverwendet' : progress.activeRiskStep === 'assessment' ? 'Dokumentinhalt wird geprüft' : progress.activeRiskStep === 'sec-discovery' ? 'SEC-Einreichungen werden abgefragt' : progress.activeRiskStep === 'pdf-parse' ? 'PDF-Text wird extrahiert' : progress.activeRiskStep === 'risk-excerpt' ? 'SEC-Bericht wird bereinigt' : progress.activeRiskStep === 'download' ? 'Primärbericht wird heruntergeladen' : 'Primärdokumente werden geladen'}</p>}
           {analysisState.targetAssetId != null && <p className="mt-0 mb-1 text-xs text-gray-400">Erfolgreiche Online-Suchdaten je Asset werden 24 Stunden wiederverwendet, auch aus einer Gesamtanalyse. Bestände, Kurse und Anlageprofil werden bei jeder Empfehlung neu ausgewertet.</p>}
-          <p role="status" className="m-0 text-sm text-indigo-200">{stageLabels[progress.stage]}{progress.researchTotal ? ` · ${progress.researchCompleted ?? 0}/${progress.researchTotal} ${progress.stage === 'prices' ? 'Kurse' : progress.stage === 'ai-research' ? 'Gruppen' : 'Assets'} abgeschlossen` : ''}</p>
+          <p role="status" className="m-0 text-sm text-indigo-200">{progress.stage === 'risk-review' && progress.activeRiskStep === 'reuse'
+            ? 'Gespeicherter Risikobefund wird wiederverwendet' : stageLabels[progress.stage]}{progress.researchTotal ? ` · ${progress.researchCompleted ?? 0}/${progress.researchTotal} ${progress.stage === 'prices' ? 'Kurse' : progress.stage === 'ai-research' ? 'Gruppen' : 'Assets'} abgeschlossen` : ''}</p>
           {progress.stage === 'risk-review' && progress.activeAssetId != null && <p className="mt-1 mb-0 text-xs text-sky-200">
-            Aktuell: {assets.find(asset => asset.ID === progress.activeAssetId)?.name || `Asset ${progress.activeAssetId}`} · {progress.activeRiskStep === 'assessment'
+            Aktuell: {assets.find(asset => asset.ID === progress.activeAssetId)?.name || `Asset ${progress.activeAssetId}`} · {progress.activeRiskStep === 'reuse'
+              ? 'Gespeicherte Risikoprüfung wird wiederverwendet' : progress.activeRiskStep === 'assessment'
               ? 'Berichte werden inhaltlich ausgewertet' : progress.activeRiskStep === 'sec-discovery' ? 'SEC-Einreichungen werden abgefragt'
                 : progress.activeRiskStep === 'pdf-parse' ? 'PDF-Text wird extrahiert'
                   : progress.activeRiskStep === 'download' ? 'Primärbericht wird heruntergeladen'
@@ -894,9 +900,13 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                 disabled={busy || !positions.some(position => position.id === rec.assetId)}
                 loading={assetProgress?.refreshingRisk === true && progress?.activeRiskStep === 'documents'
                   && progress?.documentsRefreshForced === true}
-                forceReload={progress?.documentsRefreshForced === true} />
+                forceReload={progress?.documentsRefreshForced === true}
+                excerptNeedsRefresh={assets.some(asset => asset.ID === rec.assetId && asset.isin?.trim().toUpperCase() === 'US84615Q1031')
+                  && risk.primaryExcerptVersion !== 5} />
               <RiskReview risk={risk} openSource={openSource}
                 checkStatus={assetProgress?.refreshingRisk ? assetProgress.message : undefined}
+                reviewPending={assets.some(asset => asset.ID === rec.assetId && asset.isin?.trim().toUpperCase() === 'US84615Q1031')
+                  && /operating-margin: Keine periodisierte Zahl/i.test(risk.rationale)}
                 onRefreshRisk={() => refreshRisk(rec.assetId)}
                 refreshDisabled={busy || !positions.some(position => position.id === rec.assetId)} />
               {assetProgress?.refreshingForecast

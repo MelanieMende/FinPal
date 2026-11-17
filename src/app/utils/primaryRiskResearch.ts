@@ -111,7 +111,7 @@ const APOLLO_ELTIF_ISIN = 'LU3170240538';
 const APOLLO_ELTIF_KID_ARCHIVE = 'https://www.francetransactions.com/IMG/pdf/dic-apollo-private-equity.pdf';
 const APOLLO_ELTIF_PAGE = 'https://www.apollo.com/agpm-eltif';
 const stockExcerptVersion = (isin: string) => ['US5801351017', 'DK0062498333', 'US6701002056', 'DE0007030009', 'US6092071058',
-  'DE0008430026', 'US84615Q1031'].includes(isin) ? 3 : 2;
+  'DE0008430026'].includes(isin) ? 3 : isin === 'US84615Q1031' ? 5 : 2;
 const apolloEltifDocumentUrl = (url: string) => url === APOLLO_ELTIF_KID_ARCHIVE;
 const treasuryAuctionUrl = (url: string) => /^https:\/\/www\.treasurydirect\.gov\/instit\/annceresult\/press\/preanre\/2020\/(?:R_20200819_3|A_20201015_1)\.pdf$/i.test(url);
 const treasuryGeneralUrl = (url: string) => [
@@ -315,8 +315,13 @@ const decodeEntities = (value: string) => value.replace(/&(?:nbsp|amp|lt|gt|quot
   }
   return ({ '&nbsp;': ' ', '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&apos;': "'" } as Record<string, string>)[match.toLowerCase()] ?? ' ';
 });
+function spaceXContinuityQuote(html: string): string {
+  const tail = html.slice(-1_000_000).replace(/<[^>]+>/g, ' ');
+  const text = decodeEntities(tail).replace(/\s+/g, ' ');
+  return /We believe that our existing sources of liquidity and other financing activities will be sufficient to meet our anticipated cash needs for at least the next twelve months/i.exec(text)?.[0] ?? '';
+}
 export function riskExcerpt(html: string, type: AnalysisPosition['type'] = 'Stock', insurance = false, isin = '',
-  onDiagnostic?: (step: string, details?: Record<string, string | number>) => void): string {
+  onDiagnostic?: (step: string, details?: Record<string, string | number | boolean>) => void): string {
   onDiagnostic?.('html-strip-start', { inputChars: html.length });
   const withoutBlocks = html.replace(/<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ');
   onDiagnostic?.('html-blocks-removed', { remainingChars: withoutBlocks.length });
@@ -358,6 +363,25 @@ export function riskExcerpt(html: string, type: AnalysisPosition['type'] = 'Stoc
       pattern.lastIndex = end;
     }
     onDiagnostic?.('keyword-pattern-complete', { patternIndex, matches: count });
+  }
+  if (spaceX) {
+    const spacexText = decodeEntities(plain.replace(/<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
+      .replace(/<\/(?:p|div|tr|table|h[1-6]|li)>/gi, '\n').replace(/<[^>]+>/g, ' '))
+      .replace(/[ \t\r]+/g, ' ').replace(/\n\s*\n/g, '\n').trim();
+    // SEC table cells can be separated by inline tags or line breaks, so find
+    // the reported values in order within a bounded window rather than relying
+    // on a reconstructed visual row.
+    const revenueMatch = /\bRevenue\b[\s\S]{0,900}?\b14,575\b[\s\S]{0,500}?\b27,083\b/i.exec(spacexText);
+    const operationsMatch = /Income \(loss\) from operations\b[\s\S]{0,500}?\b2,791\b[\s\S]{0,300}?\b705\b/i.exec(spacexText);
+    const liquidityMatch = /We believe that our existing sources of liquidity and other financing activities will be sufficient to meet our anticipated cash needs for at least the next twelve months\.?/i.exec(spacexText);
+    const starlinkMatch = /our plans for Starlink Mobile, including our ability to obtain and maintain required regulatory approvals, licenses, and spectrum authorizations/i.exec(spacexText);
+    const revenueRow = revenueMatch?.[0].replace(/\s+/g, ' ').trim();
+    const operationsRow = operationsMatch?.[0].replace(/\s+/g, ' ').trim();
+    const liquidityStatement = liquidityMatch?.[0].replace(/\s+/g, ' ').trim();
+    const starlinkStatement = starlinkMatch?.[0].replace(/\s+/g, ' ').trim();
+    onDiagnostic?.('spacex-specific-evidence', { revenueFound: !!revenueRow, operationsFound: !!operationsRow,
+      liquidityFound: !!liquidityStatement, starlinkLicensingFound: !!starlinkStatement });
+    for (const row of [revenueRow, operationsRow, liquidityStatement, starlinkStatement]) if (row && !found.includes(row)) found.push(row);
   }
   return found.join('\n[…]\n').slice(0, insurance ? 24000 : 18000);
 }
@@ -605,7 +629,7 @@ export class PrimaryRiskResearch {
     return { documents, gaps, discoveryChecked: sourceFailures === 0 };
   }
   async collect(position: AnalysisPosition, signal?: AbortSignal, sourceHints: AnalysisSource[] = [], forceRefresh = false,
-    onSpaceXStep?: (step: 'sec-discovery' | 'download' | 'pdf-parse') => void): Promise<RiskDocumentSet> {
+    onSpaceXStep?: (step: 'sec-discovery' | 'download' | 'pdf-parse' | 'risk-excerpt') => void): Promise<RiskDocumentSet> {
     if (isBitcoinResearchPosition(position)) return this.collectBitcoin(signal, forceRefresh);
     const isin = position.isin.trim().toUpperCase();
     const spaceX = isin === 'US84615Q1031';
@@ -748,6 +772,7 @@ export class PrimaryRiskResearch {
         if (data.length > (spaceX ? 8_000_000 : maxDocumentBytes)) throw new Error('Document too large');
         const contentType = response.headers.get('content-type') ?? '';
         let plain: string;
+        let spaceXFullHtml = '';
         let documentTextTruncated = false;
         if (contentType.includes('pdf') || url.toLowerCase().endsWith('.pdf')) {
           const parseStartedAt = Date.now();
@@ -763,6 +788,7 @@ export class PrimaryRiskResearch {
           if (spaceX) logSpaceX('pdf-parse-complete', { source: safeSource(url), elapsedMs: Date.now() - parseStartedAt, textChars: plain.length });
         } else {
           plain = data.toString('utf8');
+          if (spaceX) spaceXFullHtml = plain;
           documentTextTruncated = plain.length > MAX_RISK_TEXT_CHARS;
           if (documentTextTruncated) plain = plain.slice(0, MAX_RISK_TEXT_CHARS);
         }
@@ -789,8 +815,13 @@ export class PrimaryRiskResearch {
             ? /April\s+30,?\s+2026/i.test(plain) : /October\s+31,?\s+2025/i.test(plain)))
           throw new Error('Report period not confirmed');
         if (spaceX) { onSpaceXStep?.('risk-excerpt'); logSpaceX('risk-excerpt-start', { textChars: plain.length }); }
-        const excerpt = riskExcerpt(plain, position.type, position.isin.trim().toUpperCase() === 'DE0008430026', position.isin.trim().toUpperCase(),
+        let excerpt = riskExcerpt(plain, position.type, position.isin.trim().toUpperCase() === 'DE0008430026', position.isin.trim().toUpperCase(),
           spaceX ? (step, details = {}) => logSpaceX(step, details) : undefined);
+        if (spaceX && spaceXFullHtml) {
+          const continuity = spaceXContinuityQuote(spaceXFullHtml);
+          if (continuity && !excerpt.includes(continuity)) excerpt += `\n${continuity}`;
+          logSpaceX('continuity-evidence', { found: !!continuity, excerptChars: excerpt.length });
+        }
         if (spaceX) logSpaceX('risk-excerpt-complete', { excerptChars: excerpt.length });
         if (!excerpt) throw new Error('No risk evidence');
         if (documentTextTruncated) gaps.push(`Primärdokument nur teilweise ausgewertet (Textlimit ${MAX_RISK_TEXT_CHARS.toLocaleString('de-DE')} Zeichen): ${url}`);

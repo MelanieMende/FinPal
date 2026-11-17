@@ -637,8 +637,11 @@ it('keeps asset recommendation cards visible during a full rerun and labels the 
   expect(screen.getByTestId('asset-research-loading-2')).toHaveTextContent('Onlinequellen werden gesucht');
   act(() => progressCallback({ stage: 'risk-review', activeAssetId: 1, activeRiskStep: 'assessment',
     completedRiskAssetIds: [], reusedRiskAssetIds: [], researchCompleted: 0, researchTotal: 1, lastActivityAt: Date.now() }));
-  expect(screen.getByTestId('asset-risk-loading-1')).toHaveTextContent('Dokumenttext wird auf Gewinn, Marge, Liquidität, Fälligkeiten');
-  expect(screen.getByRole('status')).toHaveTextContent('0/1 Assets abgeschlossen');
+  expect(screen.getByText(/Berichte werden inhaltlich ausgewertet/)).toBeInTheDocument();
+  expect(screen.getByText(/0\/1 Assets abgeschlossen/)).toBeInTheDocument();
+  act(() => progressCallback({ stage: 'risk-review', activeAssetId: 1, activeRiskStep: 'reuse',
+    completedRiskAssetIds: [], reusedRiskAssetIds: [1], researchCompleted: 0, researchTotal: 1, lastActivityAt: Date.now() }));
+  expect(screen.getByText(/Gespeicherter Risikobefund wird wiederverwendet/)).toBeInTheDocument();
   act(() => progressCallback({ stage: 'risk-review', completedRiskAssetIds: [1], reusedRiskAssetIds: [1],
     researchCompleted: 1, researchTotal: 1, lastActivityAt: Date.now() }));
   expect(screen.getByTestId('asset-reload-status-1')).toHaveTextContent('Gespeicherte Risikoprüfung wird wiederverwendet');

@@ -73,6 +73,7 @@ export function AssetOptimizationDetails({ plan, allocationKey, assetType, onOpe
           {forecast.model?.kind === 'etf-history-v1' && <p className="m-0 text-sky-200">Lokales ETF-Historienmodell: {forecast.model.observations} bereinigte Tageskurse über {forecast.model.historyYears.toFixed(2)} Jahre · 2.000 Bootstrap-Pfade · 252 Handelstage · 20-Tage-Blöcke. Historische Szenarien, keine kalibrierten Zukunftswahrscheinlichkeiten. Ausschüttungen nicht zusätzlich addieren.</p>}
           {forecast.scenarioReturns && <p className="m-0">Historisches Bootstrap-Szenarioband: P10 {percent(forecast.scenarioReturns.p10)} · Median {percent(forecast.scenarioReturns.median)} · P90 {percent(forecast.scenarioReturns.p90)}</p>}
           <p className="m-0">Annualisierte historische {forecast.model?.kind === 'bond-curve-v1' ? 'Modellvolatilität in EUR' : 'Volatilität'}: {percent(forecast.annualVolatilityPercent)} · Kurswährung {forecast.currency} · Stand {forecast.volatilityAsOf.slice(0, 10)} · Fenster {forecast.volatilityLookbackDays} Tage</p>
+          {forecast.volatilityHistory?.kind === 'short-listing' && <p className="m-0 text-amber-200">Vorläufige Risikoeingabe: {forecast.volatilityHistory.observations} Tageskurse seit dem Börsenstart. Das kurze Fenster erhöht die Unsicherheit der annualisierten Volatilität.</p>}
         </div>
       </details>
       <details className="rounded border border-white/10 px-2.5 py-2"><summary className="cursor-pointer font-semibold text-gray-300">Quellen und Prognoseannahmen</summary>

@@ -12,6 +12,7 @@ export interface FundamentalRiskAssessment {
   primaryDocuments?: AnalysisSource[];
   primaryDocumentsFingerprint?: string;
   primaryDocumentsFingerprintVersion?: 2;
+  primaryExcerptVersion?: number;
   primaryDocumentsChanged?: boolean;
   decisionReadiness?: 'reviewed-uncertainty';
   materialRisks: string[];
@@ -118,6 +119,7 @@ export function readFundamentalRisks(value: unknown, sources: AnalysisSource[]):
     ...(typeof v.primaryDocumentsFingerprint === 'string' && /^[a-f0-9]{64}$/i.test(v.primaryDocumentsFingerprint)
       ? { primaryDocumentsFingerprint: v.primaryDocumentsFingerprint } : {}),
     ...(v.primaryDocumentsFingerprintVersion === 2 ? { primaryDocumentsFingerprintVersion: 2 as const } : {}),
+    ...(Number.isInteger(v.primaryExcerptVersion) && v.primaryExcerptVersion >= 1 ? { primaryExcerptVersion: v.primaryExcerptVersion } : {}),
     ...(v.primaryDocumentsChanged === true ? { primaryDocumentsChanged: true } : {}),
     ...(Array.isArray(v.primaryDocuments) ? { primaryDocuments: v.primaryDocuments.flatMap((document: unknown) => {
       if (!document || typeof document !== 'object') return [];

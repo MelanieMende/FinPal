@@ -186,10 +186,11 @@ it('reuses a persisted primary-document risk review without another AI risk requ
   expect(riskCalls).toHaveLength(1);
   expect(onlineProvider).toHaveBeenCalledTimes(1);
   expect(progress.mock.calls.some(([value]) => value.stage === 'risk-review' && value.reusedRiskAssetIds?.includes(1))).toBe(true);
+  expect(progress.mock.calls.some(([value]) => value.activeRiskStep === 'reuse')).toBe(true);
   expect(second.getLastResult()?.report.fundamentalRisks?.[0].status).toBe('unknown');
   const documentCalls = mockedFetch.mock.calls.filter(([url]) => url.includes('/Archives/')).length;
   const refreshed = await second.refreshPrimaryRisk(stockRequest.positions[0]);
-  expect(mockedFetch.mock.calls.filter(([url]) => url.includes('/Archives/')).length).toBeGreaterThan(documentCalls);
+  expect(mockedFetch.mock.calls.filter(([url]) => url.includes('/Archives/'))).toHaveLength(documentCalls);
   expect(mockedFetch.mock.calls.filter(([url, options]) => !url.includes('/submissions/') && !url.includes('/Archives/') &&
     JSON.parse(String(options?.body)).text?.format?.name === 'primary_risk_assessment')).toHaveLength(2);
   expect(second.getLastResult()?.report.fundamentalRisks).toEqual(refreshed.fundamentalRisks);

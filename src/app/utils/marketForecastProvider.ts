@@ -40,8 +40,8 @@ const validConsensus = (value: ConsensusCache | undefined, now: number) => !!val
   && positive(value.referencePrice) && /^[A-Z]{3}$/.test(value.currency) && Number.isFinite(value.referenceTime) && value.referenceTime <= now
   && Number.isFinite(value.fetchedAt) && value.fetchedAt <= now && now - value.fetchedAt <= MARKET_FORECAST_FALLBACK_MAX_AGE_MS
   && Number.isFinite(Date.parse(value.targetDate));
-const validVolatility = (value: VolatilityCache | undefined, now: number) => !!value && positive(value.annualVolatilityPercent)
-  && Number.isInteger(value.volatilityLookbackDays) && value.volatilityLookbackDays >= 180 && Number.isFinite(Date.parse(value.volatilityAsOf))
+const validVolatility = (value: VolatilityCache | undefined, now: number, minimumDays = 180) => !!value && positive(value.annualVolatilityPercent)
+  && Number.isInteger(value.volatilityLookbackDays) && value.volatilityLookbackDays >= minimumDays && Number.isFinite(Date.parse(value.volatilityAsOf))
   && Number.isFinite(value.fetchedAt) && value.fetchedAt <= now && now - value.fetchedAt <= MARKET_FORECAST_FALLBACK_MAX_AGE_MS
   && Number.isFinite(value.refreshAfter);
 const validCrypto = (value: CryptoModelCache | undefined, now: number) => !!value && positive(value.targetPrice)
@@ -84,17 +84,17 @@ class MarketForecastCache {
   }
 }
 
-export function annualizedHistoricalVolatility(rows: YahooHistoryRow[]) {
+export function annualizedHistoricalVolatility(rows: YahooHistoryRow[], minimumObservations = 181, minimumDays = 180) {
   const prices = rows.map(row => ({ time: instant(row.date), price: positive(row.adjClose) ? row.adjClose : row.close }))
     .filter(row => Number.isFinite(row.time) && positive(row.price)).sort((a, b) => a.time - b.time).slice(-253);
-  if (prices.length < 181) return null;
+  if (prices.length < minimumObservations) return null;
   const returns = prices.slice(1).map((row, index) => Math.log(row.price / prices[index].price));
   const mean = returns.reduce((sum, value) => sum + value, 0) / returns.length;
   const variance = returns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / (returns.length - 1);
   const annualVolatilityPercent = Math.sqrt(variance) * Math.sqrt(252) * 100;
   const lastPrice = prices[prices.length - 1];
   const volatilityLookbackDays = Math.floor((lastPrice.time - prices[0].time) / day);
-  if (!positive(annualVolatilityPercent) || volatilityLookbackDays < 180) return null;
+  if (!positive(annualVolatilityPercent) || volatilityLookbackDays < minimumDays) return null;
   return { annualVolatilityPercent, volatilityAsOf: new Date(lastPrice.time).toISOString(), volatilityLookbackDays,
     observations: prices.length, returnObservations: returns.length };
 }
@@ -329,10 +329,11 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
       };
     }
     if (position.type !== 'Stock' || !symbol) return null;
+    const shortSpaceXHistory = position.isin.trim().toUpperCase() === 'US84615Q1031';
     const fetchedAt = now();
     const cached = cache.get(symbol);
     let consensus = validConsensus(cached.consensus, fetchedAt) ? cached.consensus : undefined;
-    let volatility = validVolatility(cached.volatility, fetchedAt) ? cached.volatility : undefined;
+    let volatility = validVolatility(cached.volatility, fetchedAt, shortSpaceXHistory ? 90 : 180) ? cached.volatility : undefined;
     let refreshed = false;
     let fallback = false;
 
@@ -365,7 +366,7 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
           ? chart.quotes.filter(quote => instant(quote.date) < regularStart) : chart.quotes;
         const calculated = annualizedHistoricalVolatility(completedQuotes.map(quote => ({
           date: quote.date, close: quote.close ?? NaN, adjClose: quote.adjclose ?? undefined,
-        })));
+        })), shortSpaceXHistory ? 61 : 181, shortSpaceXHistory ? 90 : 180);
         if (!calculated) throw new Error('Incomplete price history');
         const historyCurrency = chart.meta?.currency ?? consensus?.currency;
         const riskHistory = historyCurrency === consensus?.currency ? await euroRiskHistory(client, symbol, completedQuotes, historyCurrency, fetchedAt).catch((): ReturnForecast['riskHistory'] => undefined) : undefined;
@@ -374,7 +375,7 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
       } catch { fallback = true; }
     }
 
-    if (!validConsensus(consensus, fetchedAt) || !validVolatility(volatility, fetchedAt)) return null;
+    if (!validConsensus(consensus, fetchedAt) || !validVolatility(volatility, fetchedAt, shortSpaceXHistory ? 90 : 180)) return null;
     if (refreshed) {
       try { cache.set(symbol, { consensus, volatility, evidenceVersion: 2 }); }
       catch { /* A cache write failure must not discard valid data fetched for this analysis. */ }
@@ -390,10 +391,12 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
       targetDate: consensus.targetDate, horizonMonths: 12, targetPrice: consensus.targetPrice, currency: consensus.currency,
       referencePrice: consensus.referencePrice, referencePriceAsOf: new Date(consensus.referenceTime).toISOString(),
       annualVolatilityPercent: volatility.annualVolatilityPercent, volatilityAsOf: volatility.volatilityAsOf,
+      ...(shortSpaceXHistory && volatility.volatilityLookbackDays < 180 ? { volatilityHistory: { kind: 'short-listing' as const,
+        isin: 'US84615Q1031' as const, observations: volatility.observations } } : {}),
       uncertainty: { method: 'analyst-consensus', analystCount: consensus.analystCount, targetLowPrice: consensus.targetLowPrice, targetHighPrice: consensus.targetHighPrice },
       riskHistory: volatility.riskHistory,
       volatilityLookbackDays: volatility.volatilityLookbackDays, dataStatus, dataAgeHours: ageHours,
-      assumptions: `Yahoo Finance targetMeanPrice consensus snapshot from ${consensus.analystCount} analyst opinions. Historical volatility calculated locally from ${volatility.returnObservations} daily logarithmic returns of adjusted closing prices and annualized with sqrt(252); observation window ${volatility.volatilityLookbackDays} calendar days. ${statusText}`,
+      assumptions: `Yahoo Finance targetMeanPrice consensus snapshot from ${consensus.analystCount} analyst opinions. Historical volatility calculated locally from ${volatility.returnObservations} daily logarithmic returns of adjusted closing prices and annualized with sqrt(252); observation window ${volatility.volatilityLookbackDays} calendar days.${shortSpaceXHistory && volatility.volatilityLookbackDays < 180 ? ' Short listing history: provisional volatility based on available SPCX trading days; uncertainty is higher than with a full observation window.' : ''} ${statusText}`,
       forecastSources: [{ title: `Yahoo Finance analyst consensus for ${symbol}`, url: `https://finance.yahoo.com/quote/${encoded}/analysis/` }],
       volatilitySources: [{ title: `Yahoo Finance adjusted price history for ${symbol}`, url: `https://finance.yahoo.com/quote/${encoded}/history/` }],
     };

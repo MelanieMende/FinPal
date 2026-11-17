@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="2280" viewBox="0 0 1200 2280" role="img" aria-labelledby="title description">
   <title id="title">FinPal Analyseablauf</title>
-  <desc id="description">Flussdiagramm vom Laden der Finanzdaten über Recherche, Risikoprüfung mit aktuell bestätigten Verwahr-, Produkt- und Steuerangaben und Portfoliomodell bis zur validierten Empfehlung. Bei einer einzelnen erneuten Risikoprüfung werden Primärberichtsauszüge wiederverwendet, solange der Prüfstatus aktuell ist; nur „Berichte neu laden“ ruft sie ausdrücklich erneut ab. Der optionale Trade-Republic-Dokumentensync behält nur erkannte Krypto-Vertrags-PDFs dauerhaft; andere Timeline-PDFs werden nach der temporären Prüfung entfernt. Eine ausdrücklich nutzerbestätigte Angabe zu direkt gehaltenen Kryptowerten kann zusammen mit bestätigter Trade-Republic-Verwahrung die angegebene Halteform zuordnen, ersetzt aber keine Produktverifizierung oder passenden Vertragsunterlagen. Bei Bitcoin werden MiCAR-Diensterahmen, Steuerquellen, Anbieterstatus und exakt passende Produktvertragsunterlagen getrennt bewertet. Bestätigt der Nutzer, dass bei Trade Republic keine BTC-Produktunterlagen verfügbar sind, gilt dies höchstens drei Monate als geprüfte Restunsicherheit; danach ist eine erneute Bestätigung erforderlich. Eine Anbieterzulassung oder Steuerregel belegt keine Produktbilligung. Die Bitcoin-Mining-Pool-Verteilung wird als aktuelle 7-Tage-Blockstichprobe geprüft; sie belegt keine tatsächliche Hashing-Kontrolle. Belegte Risiken sind Entscheidungsfaktoren und keine automatischen Blocker. Das Ergebnis enthält für jedes aktuell gehaltene Asset eine eigene Karte; dessen dauerhafte Einzelangaben stehen direkt unter dem KI-Ergebnis.</desc>
+  <desc id="description">Flussdiagramm vom Laden der Finanzdaten über Recherche, Risikoprüfung mit aktuell bestätigten Verwahr-, Produkt- und Steuerangaben und Portfoliomodell bis zur validierten Empfehlung. In der Gesamtanalyse wird der gespeicherte Risikobefund für aktuelle, unveränderte Primärberichte und unveränderte Prüflogik wiederverwendet; nur neue oder geänderte Belege beziehungsweise eine geänderte Prüflogik lösen eine erneute inhaltliche KI-Prüfung aus. Der optionale Trade-Republic-Dokumentensync behält nur erkannte Krypto-Vertrags-PDFs dauerhaft; andere Timeline-PDFs werden nach der temporären Prüfung entfernt. Eine ausdrücklich nutzerbestätigte Angabe zu direkt gehaltenen Kryptowerten kann zusammen mit bestätigter Trade-Republic-Verwahrung die angegebene Halteform zuordnen, ersetzt aber keine Produktverifizierung oder passenden Vertragsunterlagen. Bei Bitcoin werden MiCAR-Diensterahmen, Steuerquellen, Anbieterstatus und exakt passende Produktvertragsunterlagen getrennt bewertet. Bestätigt der Nutzer, dass bei Trade Republic keine BTC-Produktunterlagen verfügbar sind, gilt dies höchstens drei Monate als geprüfte Restunsicherheit; danach ist eine erneute Bestätigung erforderlich. Eine Anbieterzulassung oder Steuerregel belegt keine Produktbilligung. Die Bitcoin-Mining-Pool-Verteilung wird als aktuelle 7-Tage-Blockstichprobe geprüft; sie belegt keine tatsächliche Hashing-Kontrolle. Belegte Risiken sind Entscheidungsfaktoren und keine automatischen Blocker. Das Ergebnis enthält für jedes aktuell gehaltene Asset eine eigene Karte; dessen dauerhafte Einzelangaben stehen direkt unter dem KI-Ergebnis.</desc>
   <defs>
     <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto" markerUnits="strokeWidth">
       <path d="M0,0 L0,6 L9,3 z" fill="#64748b"/>
@@ -60,31 +60,36 @@
   <text x="620" y="530" class="edge-label">Ja</text>
   <path d="M960 606 V640 H300 V760 H410" class="edge"/>
   <polygon points="600,690 790,760 600,830 410,760" class="decision"/>
-  <text x="600" y="751" text-anchor="middle" class="node-title">Primärberichte aktuell?</text>
-  <text x="600" y="776" text-anchor="middle" class="node-text">Gültigkeit und Dokumentstand vergleichen</text>
+  <text x="600" y="751" text-anchor="middle" class="node-title">Berichte und Befund aktuell?</text>
+  <text x="600" y="776" text-anchor="middle" class="node-text">Dokumentstand und Prüffingerprint vergleichen</text>
 
-  <path d="M600 830 V980" class="edge"/>
-  <text x="620" y="870" class="edge-label">Ja</text>
+  <path d="M600 830 H220 V860" class="edge"/>
+  <text x="490" y="850" class="edge-label">Ja</text>
+  <rect x="50" y="862" width="340" height="82" rx="14" class="positive"/>
+  <text x="220" y="896" text-anchor="middle" class="node-title">Gespeicherten Risikobefund nutzen</text>
+  <text x="220" y="921" text-anchor="middle" class="node-text">Keine erneute KI-Auswertung nötig</text>
+  <path d="M220 944 V1100 H600 V1140" class="edge"/>
+
   <path d="M790 760 H960 V860" class="edge"/>
   <text x="850" y="747" class="edge-label">Nein</text>
   <rect x="780" y="862" width="360" height="82" rx="14" class="research"/>
   <text x="960" y="896" text-anchor="middle" class="node-title">Primärberichte neu laden</text>
   <text x="960" y="921" text-anchor="middle" class="node-text">Wenn abgelaufen oder geändert</text>
-  <path d="M960 944 V960 H700 V980" class="edge"/>
+  <path d="M960 944 V980" class="edge"/>
 
-  <rect x="390" y="982" width="420" height="80" rx="14" class="research"/>
-  <rect x="724" y="986" width="72" height="20" rx="10" class="ai-badge"/>
-  <text x="760" y="1000" text-anchor="middle" class="ai-badge-text">KI</text>
-  <text x="600" y="1028" text-anchor="middle" class="node-title">Primärbelege inhaltlich auswerten</text>
-  <text x="600" y="1051" text-anchor="middle" class="node-text">Belegte Risiken und offene Punkte einordnen</text>
+  <rect x="750" y="982" width="420" height="80" rx="14" class="research"/>
+  <rect x="1084" y="986" width="72" height="20" rx="10" class="ai-badge"/>
+  <text x="1120" y="1000" text-anchor="middle" class="ai-badge-text">KI</text>
+  <text x="960" y="1028" text-anchor="middle" class="node-title">Primärbelege inhaltlich auswerten</text>
+  <text x="960" y="1051" text-anchor="middle" class="node-text">Belegte Risiken und offene Punkte einordnen</text>
 
-  <path d="M600 1062 V1118" class="edge"/>
+  <path d="M960 1062 V1100 H600 V1140" class="edge"/>
   <text x="60" y="1124" class="section">3 · RISIKOPRÜFUNG</text>
   <rect x="390" y="1140" width="420" height="86" rx="14" class="risk"/>
   <rect x="724" y="1146" width="72" height="20" rx="10" class="ai-badge"/>
   <text x="760" y="1160" text-anchor="middle" class="ai-badge-text">KI</text>
   <text x="600" y="1180" text-anchor="middle" class="node-title">Risikobefund erstellen oder aktualisieren</text>
-  <text x="600" y="1203" text-anchor="middle" class="node-text">SEC-Berichte, Kennzahlen und Anlegerangaben einbeziehen</text>
+  <text x="600" y="1203" text-anchor="middle" class="node-text">SEC-Berichte: Margen, Liquidität und bedingte Risiken prüfen</text>
   <text x="600" y="1222" text-anchor="middle" class="small">Fehlende TR-BTC-Unterlagen: Nutzerbestätigung höchstens 3 Monate gültig</text>
 
   <path d="M600 1226 V1262" class="edge"/>
@@ -124,7 +129,7 @@
   <rect x="724" y="1628" width="72" height="20" rx="10" class="ai-badge"/>
   <text x="760" y="1642" text-anchor="middle" class="ai-badge-text">KI</text>
   <text x="600" y="1668" text-anchor="middle" class="node-title">Forecasts laden und Modell berechnen</text>
-  <text x="600" y="1691" text-anchor="middle" class="node-text">Forecasts und Risikohistorien je Asset parallel · danach Allokation,</text>
+  <text x="600" y="1691" text-anchor="middle" class="node-text">Forecasts und belegte Risikohistorien je Asset · kurze Historien markieren,</text>
   <text x="600" y="1710" text-anchor="middle" class="node-text">Gebühren, Cashreserve, Finanzierung und Stressszenarien prüfen</text>
 
   <path d="M600 1716 V1740" class="edge"/>

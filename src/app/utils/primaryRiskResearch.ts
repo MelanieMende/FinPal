@@ -480,13 +480,13 @@ export class PrimaryRiskResearch {
       fs.renameSync(temporary, this.file);
     } finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
   }
-  reuseCached(position: Pick<AnalysisPosition, 'isin' | 'type'>, sources: AnalysisSource[]): RiskDocumentSet | null {
+  reuseCached(position: Pick<AnalysisPosition, 'isin' | 'type' | 'symbol'>, sources: AnalysisSource[]): RiskDocumentSet | null {
     if (!sources.length) return null;
     const isin = position.isin.trim().toUpperCase();
     const documents: RiskDocument[] = [];
     for (const source of sources) {
       const document = this.cache.get(source.url);
-      if (!document || (position.type !== 'Stock' && !(position.type === 'Crypto' && isin === 'BTC') && document.identity !== isin)
+      if (!document || (position.type !== 'Stock' && !(position.type === 'Crypto' && isBitcoinResearchPosition(position)) && document.identity !== isin)
         || (position.type === 'Stock' && document.excerptVersion !== stockExcerptVersion(isin))
         || (isin === 'IE00B3WJKG14' && document.excerptVersion !== 3)
         || (isin === 'IE00B8GKDB10' && document.excerptVersion !== 2)
@@ -495,7 +495,7 @@ export class PrimaryRiskResearch {
     }
     return { documents, gaps: [], discoveryChecked: true };
   }
-  cachedStatus(position: Pick<AnalysisPosition, 'isin' | 'type'>, sources: AnalysisSource[]): { loadedAt: string | null; needsRefresh: boolean } {
+  cachedStatus(position: Pick<AnalysisPosition, 'isin' | 'type' | 'symbol'>, sources: AnalysisSource[]): { loadedAt: string | null; needsRefresh: boolean } {
     const set = this.reuseCached(position, sources);
     const loadedAt = set?.documents.length ? Math.min(...set.documents.map(document => document.fetchedAt)) : NaN;
     return { loadedAt: Number.isFinite(loadedAt) ? new Date(loadedAt).toISOString() : null,

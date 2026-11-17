@@ -143,18 +143,24 @@ const riskLineLabels: Record<string, string> = {
   underwriting: 'Versicherungstechnik', solvency: 'Solvenz',
 };
 const metricPrefixes = ['Periodengewinn:', 'operative Marge:', 'Liquidität:', 'Fälligkeiten:', 'Combined Ratio:', 'Solvenzquote:', 'debt-maturities:'];
-export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, checkStatus, reviewPending = false }: { risk: FundamentalRiskAssessment;
-  openSource: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void; onRefreshRisk?: () => void; refreshDisabled?: boolean; checkStatus?: string; reviewPending?: boolean }) {
+export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, checkStatus, reviewPending = false, primaryDocumentsStep }: { risk: FundamentalRiskAssessment;
+  openSource: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void; onRefreshRisk?: () => void; refreshDisabled?: boolean; checkStatus?: string; reviewPending?: boolean;
+  primaryDocumentsStep?: React.ReactNode }) {
   const material = new Set(risk.materialRisks.map(item => riskLineLabels[item] ?? item));
+  const structural = new Set(risk.structuralRisks?.map(item => riskLineLabels[item] ?? item) ?? []);
   const lines = risk.rationale.split('\n').map(line => line.trim()).filter(Boolean);
   const lineLabel = (line: string) => line.slice(0, line.indexOf(':'));
+  const isStructuralFinding = (line: string) => structural.has(lineLabel(line))
+    || (risk.structuralRisks?.includes('structure') === true && /(?:Produkt)?struktur|Gegenparteien/i.test(lineLabel(line)));
   const materialFindings = lines.filter(line => material.has(lineLabel(line)));
   const metrics = lines.filter(line => metricPrefixes.some(prefix => line.startsWith(prefix)));
   const reviewedResidual = lines.filter(line => line.toLocaleLowerCase('de-DE').includes(': geprüfte restunsicherheit')
     || (risk.decisionReadiness === 'reviewed-uncertainty' && lineLabel(line) === 'Regulatorische Risiken' && /: offen\b/i.test(line))
     || (risk.decisionReadiness === 'reviewed-uncertainty' && lineLabel(line) === 'Fortführung'
       && /Verfügbare Primärberichte geprüft: Eine konkrete unternehmensbezogene Aussage zu wesentlichen Fortführungsunsicherheiten fehlt/i.test(line)));
+  const explicitFinding = (line: string) => /:\s*(?:Risiko belegt|kein wesentliches Risiko belegt)\s*\(/i.test(line);
   const open = lines.filter(line => !materialFindings.includes(line) && !metrics.includes(line) && !reviewedResidual.includes(line)
+    && !isStructuralFinding(line) && !explicitFinding(line)
     && (/: offen\b/i.test(line) || /keine .*textstelle|nicht (?:belegt|gefunden|verfügbar)|fehlt|ungeklärt/i.test(line)));
   const verified = lines.filter(line => !materialFindings.includes(line) && !metrics.includes(line)
     && !reviewedResidual.includes(line) && !open.includes(line));
@@ -191,6 +197,7 @@ export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, c
           aria-label={`Unternehmens- und Produktrisiken für Asset ${risk.key} neu prüfen`}>Risiken neu prüfen</Button>}
       </div>
     </div>
+    {primaryDocumentsStep}
     {checkStatus && <div role="status" className="mx-3 mb-0 mt-2 flex items-center gap-2 rounded border border-sky-400/25 bg-sky-500/10 px-2.5 py-2 text-xs text-sky-200">
       <Spinner size={14} /> {checkStatus}
     </div>}
@@ -917,14 +924,14 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                   </Button>
                 </div>
               </section>
-              <PrimaryDocumentsIndicator risk={risk} now={now} status={primaryDocumentStatus.find(item => item.assetId === rec.assetId)} openSource={openSource} onReload={() => refreshRisk(rec.assetId, true)}
-                disabled={busy || !positions.some(position => position.id === rec.assetId)}
-                loading={assetProgress?.refreshingRisk === true && progress?.activeRiskStep === 'documents'
-                  && progress?.documentsRefreshForced === true}
-                forceReload={progress?.documentsRefreshForced === true}
-                excerptNeedsRefresh={assets.some(asset => asset.ID === rec.assetId && asset.isin?.trim().toUpperCase() === 'US84615Q1031')
-                  && risk.primaryExcerptVersion !== 5} />
               <RiskReview risk={risk} openSource={openSource}
+                primaryDocumentsStep={<PrimaryDocumentsIndicator risk={risk} now={now} status={primaryDocumentStatus.find(item => item.assetId === rec.assetId)} openSource={openSource} onReload={() => refreshRisk(rec.assetId, true)}
+                  disabled={busy || !positions.some(position => position.id === rec.assetId)}
+                  loading={assetProgress?.refreshingRisk === true && progress?.activeRiskStep === 'documents'
+                    && progress?.documentsRefreshForced === true}
+                  forceReload={progress?.documentsRefreshForced === true}
+                  excerptNeedsRefresh={assets.some(asset => asset.ID === rec.assetId && asset.isin?.trim().toUpperCase() === 'US84615Q1031')
+                    && risk.primaryExcerptVersion !== 5} />}
                 checkStatus={assetProgress?.refreshingRisk ? assetProgress.message : undefined}
                 reviewPending={assets.some(asset => asset.ID === rec.assetId && asset.isin?.trim().toUpperCase() === 'US84615Q1031')
                   && /operating-margin: Keine periodisierte Zahl/i.test(risk.rationale)}

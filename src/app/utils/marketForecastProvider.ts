@@ -25,7 +25,7 @@ export type MarketForecastProvider = (position: AnalysisPosition, options?: Mark
 type ConsensusCache = { targetPrice: number; targetLowPrice?: number; targetHighPrice?: number; analystCount: number; referencePrice: number; currency: string; referenceTime: number; fetchedAt: number; targetDate: string };
 type VolatilityCache = NonNullable<ReturnType<typeof annualizedHistoricalVolatility>> & { fetchedAt: number; refreshAfter: number; riskHistory?: ReturnForecast['riskHistory'] };
 type CryptoModelCache = NonNullable<ReturnType<typeof cryptoHistoricalForecast>> & { currency: string; fetchedAt: number; refreshAfter: number; targetDate: string; riskHistory?: ReturnForecast['riskHistory'] };
-type CacheEntry = { consensus?: ConsensusCache; volatility?: VolatilityCache; crypto?: CryptoModelCache; etf?: ReturnForecast; bond?: ReturnForecast; evidenceVersion?: 2 };
+type CacheEntry = { consensus?: ConsensusCache; volatility?: VolatilityCache; crypto?: CryptoModelCache; etf?: ReturnForecast; bond?: ReturnForecast; evidenceVersion?: 3 };
 type ProviderConfig = { cacheFile?: string; now?: () => number; requestFetch?: typeof fetch };
 
 const day = 86400000;
@@ -293,7 +293,7 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
       const fetchedAt = now(), cached = cache.get(symbol);
       let model = validCrypto(cached.crypto, fetchedAt) ? cached.crypto : undefined;
       let refreshed = false, fallback = false;
-      if (options.forceRefresh || !model || fetchedAt >= model.refreshAfter || cached.evidenceVersion !== 2) {
+      if (options.forceRefresh || !model || fetchedAt >= model.refreshAfter || cached.evidenceVersion !== 3) {
         try {
           const chart = await client.chart(symbol, { period1: new Date(fetchedAt - 5 * 365 * day), period2: new Date(fetchedAt), interval: '1d', events: 'history', return: 'array' });
           const currentUtcDay = Date.UTC(new Date(fetchedAt).getUTCFullYear(), new Date(fetchedAt).getUTCMonth(), new Date(fetchedAt).getUTCDate());
@@ -310,7 +310,7 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
       }
       if (!validCrypto(model, fetchedAt)) return null;
       if (refreshed) {
-        try { cache.set(symbol, { ...cached, crypto: model, evidenceVersion: 2 }); }
+        try { cache.set(symbol, { ...cached, crypto: model, evidenceVersion: 3 }); }
         catch { /* A cache write failure must not discard a valid model. */ }
       }
       const ageHours = (fetchedAt - model.fetchedAt) / 3600000;
@@ -337,7 +337,7 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
     let refreshed = false;
     let fallback = false;
 
-    const consensusDue = options.forceRefresh || !consensus || fetchedAt - consensus.fetchedAt >= MARKET_FORECAST_CONSENSUS_TTL_MS || cached.evidenceVersion !== 2;
+    const consensusDue = options.forceRefresh || !consensus || fetchedAt - consensus.fetchedAt >= MARKET_FORECAST_CONSENSUS_TTL_MS || cached.evidenceVersion !== 3;
     if (consensusDue) {
       try {
         const summary = await client.quoteSummary(symbol, { modules: ['financialData', 'price'] });
@@ -356,7 +356,7 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
       } catch { fallback = true; }
     }
 
-    const volatilityDue = options.forceRefresh || !volatility || fetchedAt >= volatility.refreshAfter || cached.evidenceVersion !== 2;
+    const volatilityDue = options.forceRefresh || !volatility || fetchedAt >= volatility.refreshAfter || cached.evidenceVersion !== 3;
     if (volatilityDue) {
       try {
         const chart = await client.chart(symbol, { period1: new Date(fetchedAt - 400 * day), period2: new Date(fetchedAt), interval: '1d', events: 'history', return: 'array' });
@@ -377,7 +377,7 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
 
     if (!validConsensus(consensus, fetchedAt) || !validVolatility(volatility, fetchedAt, shortSpaceXHistory ? 90 : 180)) return null;
     if (refreshed) {
-      try { cache.set(symbol, { consensus, volatility, evidenceVersion: 2 }); }
+      try { cache.set(symbol, { consensus, volatility, evidenceVersion: 3 }); }
       catch { /* A cache write failure must not discard valid data fetched for this analysis. */ }
     }
     const ageHours = Math.max(fetchedAt - consensus.fetchedAt, fetchedAt - volatility.fetchedAt) / 3600000;

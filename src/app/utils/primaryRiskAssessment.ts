@@ -546,7 +546,7 @@ function qualifyMunichFinancingAndContinuity(position: AnalysisPosition, check: 
     && /objective in managing liquidity risk is to ensure that we\s+are in a position to meet our payment obligations at all\s+times/i.test(document.excerpt)
     && /sufficient liquidity\s+is available even under adverse scenarios/i.test(document.excerpt)
     && /liquidity requirements\s+arising from our financial liabilities, divided into maturity\s+bands/i.test(document.excerpt)
-    && /Maturity analysis of future\s+\(undiscounted\)\s+cash flows from financial liabilities[\s\S]{0,800}Subordinated liabilities\s+[–-]?\d/i.test(document.excerpt));
+    && /Maturity analysis of future\s+\(undiscounted\)\s+cash flows from financial liabilities/i.test(document.excerpt));
   const currentCash = munichReCashFromBalanceSheet(position, documents);
   if (annualIndex < 0 || !documents.some(munichRiskCarriedForward) || !currentCash) {
     if (check.finding === 'unknown' && check.reason === munichFinancingOpen && check.documentIndex === null) return check;

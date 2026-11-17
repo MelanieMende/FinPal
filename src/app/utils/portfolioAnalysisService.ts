@@ -790,6 +790,7 @@ export class PortfolioAnalysisService {
       const record = validateRiskAssessment(position, set, assessment);
       this.primaryRiskCache.set(record);
       const updatedRisk = riskForModel(record);
+      if (updatedRisk.key !== String(asset.id)) throw new Error('Die Risikoprüfung lieferte eine abweichende Asset-Zuordnung. Der gespeicherte Befund wurde nicht geändert.');
       const oldRisk = previous.report.fundamentalRisks?.find(item => item.key === updatedRisk.key);
       const changed = !oldRisk || oldRisk.status !== updatedRisk.status
         || oldRisk.decisionReadiness !== updatedRisk.decisionReadiness

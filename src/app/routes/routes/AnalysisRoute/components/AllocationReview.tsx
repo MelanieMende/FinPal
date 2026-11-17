@@ -32,29 +32,50 @@ export function AssetOptimizationDetails({ plan, allocationKey, assetType, onOpe
         : position.action === 'Prüfen' ? assetType === 'Bond' ? 'Unverändert: Anleiheprognose fehlt' : 'Unverändert: Prognosedaten fehlen' : 'Aus Kurserwartung und Risiko optimiert'
         : 'Aus Anlageprofil abgeleitet';
 
-  return <section aria-label={`Prognose und Zielgewichtung ${position.name}`} className="my-3 min-w-0 space-y-2 rounded border border-sky-400/20 bg-sky-500/5 p-3 text-xs text-gray-300">
+  return <section aria-label={`Prognose und Zielgewichtung ${position.name}`} className="my-3 min-w-0 space-y-3 rounded-lg border border-sky-400/25 bg-sky-950/25 p-3 text-xs text-gray-300 sm:p-4">
     <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
-      <p className="m-0 font-bold text-sky-200">{forecast ? 'Prognose und Zielgewichtung' : 'Zielgewichtung'}</p>
-      <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-        <p className="m-0 text-sky-200">{sourceLabel}</p>
-        {onRefreshForecast && <Button small icon="refresh" disabled={refreshDisabled} onClick={onRefreshForecast}>Forecast neu laden</Button>}
+      <div className="min-w-0">
+        <p className="m-0 font-bold text-sm text-sky-100">{forecast ? 'Prognose und Zielgewichtung' : 'Zielgewichtung'}</p>
+        <span className={`mt-1 inline-flex max-w-full rounded-full px-2 py-1 ${robust?.decisionStatus === 'review-required' || position.action === 'Prüfen'
+          ? 'bg-amber-500/10 text-amber-200' : 'bg-sky-400/10 text-sky-200'}`}>{sourceLabel}</span>
       </div>
+      {onRefreshForecast && <Button small icon="refresh" disabled={refreshDisabled} onClick={onRefreshForecast}>Forecast neu laden</Button>}
     </div>
-    {forecast && <div className="min-w-0 space-y-1 break-words">
-      <p className="m-0">{forecast.publisher} · Datenstand {forecast.publishedAt.slice(0, 10)} · Zieltermin {forecast.targetDate.slice(0, 10)}</p>
-      {forecast.dataStatus && <p className={`m-0 ${forecast.dataStatus === 'stale-fallback' ? 'text-amber-300' : 'text-gray-400'}`}>
-        {forecast.dataStatus === 'live' ? 'Datenquelle: aktuell abgerufen' : forecast.dataStatus === 'fresh-cache'
-          ? `Datenquelle: gültiger lokaler Cache · ${forecast.dataAgeHours?.toFixed(1) ?? '0,0'} Stunden alt`
-          : `Datenquelle: letzter gültiger Cache nach Abruffehler · ${forecast.dataAgeHours?.toFixed(1) ?? '0,0'} Stunden alt`}
+    {forecast && <div className="min-w-0 space-y-3 break-words">
+      <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-white/10 pt-2">
+        <p className="m-0">{forecast.publisher} · Stand {forecast.publishedAt.slice(0, 10)} · Zieltermin {forecast.targetDate.slice(0, 10)}</p>
+        {forecast.dataStatus && <span className={`rounded-full px-2 py-1 ${forecast.dataStatus === 'stale-fallback' ? 'bg-amber-500/10 text-amber-200' : 'bg-emerald-500/10 text-emerald-200'}`}>
+          {forecast.dataStatus === 'live' ? 'Aktuell abgerufen' : forecast.dataStatus === 'fresh-cache'
+            ? `Cache · ${forecast.dataAgeHours?.toFixed(1) ?? '0,0'} Std.`
+            : `Letzter Cache · ${forecast.dataAgeHours?.toFixed(1) ?? '0,0'} Std. · Abruf fehlgeschlagen`}
+        </span>}
+      </div>
+      <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
+        <div className="min-w-0 rounded border border-sky-300/15 bg-slate-950/25 p-3">
+          <p className="m-0 text-gray-400">{forecast.model?.kind === 'bond-curve-v1' ? 'Modellierter Clean-Price nach 12 Monaten' : forecast.model?.kind === 'etf-history-v1' ? 'Modell-Referenzwert (kein veröffentlichtes Kursziel)' : 'Analysten-Kursziel'}</p>
+          <p className="m-0 mt-1 text-lg font-bold text-white">{new Intl.NumberFormat('de-DE', { maximumFractionDigits: 4 }).format(forecast.targetPrice)} {forecast.model?.kind === 'bond-curve-v1' ? '% vom Nennwert' : forecast.currency}</p>
+        </div>
+        <div className="min-w-0 rounded border border-sky-300/15 bg-slate-950/25 p-3">
+          <p className="m-0 text-gray-400">Im Zielgewichtungsmodell angesetzte Rendite</p>
+          <p className="m-0 mt-1 text-lg font-bold text-white">{percent(input?.expectedReturnPercent ?? null)}</p>
+          <p className="m-0 mt-1 text-gray-400">{forecast.model?.kind === 'bond-curve-v1'
+            ? 'Gesamtrendite einschließlich Kupon' : robust ? 'Bereinigte Modellrendite, keine sichere Prognose' : 'Erwartete Kursrendite, keine sichere Prognose'}</p>
+        </div>
+      </div>
+      {forecast.uncertainty?.method === 'analyst-consensus' && <p className="m-0 rounded border border-amber-300/20 bg-amber-500/5 p-2 text-amber-100">
+        {forecast.uncertainty.analystCount ?? 'Unbekannt'} Analysten · Kurszielspanne {forecast.uncertainty.targetLowPrice?.toLocaleString('de-DE', { maximumFractionDigits: 2 }) ?? 'Unbekannt'}–{forecast.uncertainty.targetHighPrice?.toLocaleString('de-DE', { maximumFractionDigits: 2 }) ?? 'Unbekannt'} {forecast.currency}. Wenige Einschätzungen oder eine breite Spanne machen das Signal unsicherer.
       </p>}
-      <p className="m-0">{forecast.model?.kind === 'bond-curve-v1' ? 'Modell-Clean-Price nach 12 Monaten (% vom Nennwert)' : forecast.model?.kind === 'etf-history-v1' ? 'Modell-Referenzwert (kein veröffentlichtes Kursziel)' : 'Kursziel'}: {new Intl.NumberFormat('de-DE', { maximumFractionDigits: 4 }).format(forecast.targetPrice)} {forecast.model?.kind === 'bond-curve-v1' ? '%' : forecast.currency} · {forecast.model?.kind === 'bond-curve-v1' ? robust ? 'Bereinigte Gesamtrendite inkl. Kupon' : 'Erwartete Gesamtrendite inkl. Kupon' : robust ? 'Bereinigte Modellrendite' : 'Erwartete Kursrendite'}: {percent(input?.expectedReturnPercent ?? null)}</p>
+      {forecast.dataStatus === 'stale-fallback' && <p className="m-0 text-amber-200">Der aktuelle Abruf ist fehlgeschlagen. Angezeigt wird der letzte gültige Forecast.</p>}
       {forecast.model?.kind === 'bond-curve-v1' && <p className="m-0 text-sky-200">Lokales Anleihe-Zinskurvenmodell: Kupon {percent(forecast.model.couponPercent)} · Fälligkeit {forecast.model.maturityDate} · aktueller Dirty-Price {new Intl.NumberFormat('de-DE', { maximumFractionDigits: 4 }).format(forecast.model.referenceDirty)} % vom Nennwert. Modellierte EUR-Risikoreihe und Zins-/Währungsszenarien; keine ausführbare Kursprognose.</p>}
-      {forecast.model?.kind === 'etf-history-v1' && <p className="m-0 text-sky-200">Lokales ETF-Historienmodell: {forecast.model.observations} bereinigte Tageskurse über {forecast.model.historyYears.toFixed(2)} Jahre · 2.000 Bootstrap-Pfade · 252 Handelstage · 20-Tage-Blöcke. Historische Szenarien, keine kalibrierten Zukunftswahrscheinlichkeiten. Ausschüttungen nicht zusätzlich addieren.</p>}
-      {estimate && <p className="m-0">Rohsignal: {percent(estimate.rawReturnPercent)} · Nach Grundgewichtung: {percent(estimate.adjustedReturnPercent)}{estimate.effectiveReturnPercent !== undefined ? ` · Konfidenzgewichtet: ${percent(estimate.effectiveReturnPercent)}` : ''} · Unsicherheitsproxy: {percent(estimate.uncertaintyPercent)} (keine Wahrscheinlichkeit).</p>}
-      {forecast.uncertainty?.method === 'analyst-consensus' && <p className="m-0">Analystenabdeckung: {forecast.uncertainty.analystCount ?? 'Unbekannt'} · Kurszielspanne: {forecast.uncertainty.targetLowPrice ?? 'Unbekannt'} bis {forecast.uncertainty.targetHighPrice ?? 'Unbekannt'} {forecast.currency}. Wenige Analysten oder breite Spannen schwächen das Signal.</p>}
-      {forecast.scenarioReturns && <p className="m-0">Historisches Bootstrap-Szenarioband: P10 {percent(forecast.scenarioReturns.p10)} · Median {percent(forecast.scenarioReturns.median)} · P90 {percent(forecast.scenarioReturns.p90)}</p>}
-      <p className="m-0">Annualisierte historische {forecast.model?.kind === 'bond-curve-v1' ? 'Modellvolatilität in EUR' : 'Volatilität'}: {percent(forecast.annualVolatilityPercent)} · Kurswährung {forecast.currency} · Stand {forecast.volatilityAsOf.slice(0, 10)} · Fenster {forecast.volatilityLookbackDays} Tage</p>
-      <details><summary className="cursor-pointer text-gray-400">Quellen und Prognoseannahmen</summary>
+      <details className="rounded border border-white/10 px-2.5 py-2"><summary className="cursor-pointer font-semibold text-gray-300">Signal, Unsicherheit und historische Daten</summary>
+        <div className="mt-2 min-w-0 space-y-2 break-words">
+          {estimate && <p className="m-0">Rohsignal: {percent(estimate.rawReturnPercent)} · Nach Grundgewichtung: {percent(estimate.adjustedReturnPercent)}{estimate.effectiveReturnPercent !== undefined ? ` · Konfidenzgewichtet: ${percent(estimate.effectiveReturnPercent)}` : ''} · Unsicherheitsproxy: {percent(estimate.uncertaintyPercent)} (keine Wahrscheinlichkeit).</p>}
+          {forecast.model?.kind === 'etf-history-v1' && <p className="m-0 text-sky-200">Lokales ETF-Historienmodell: {forecast.model.observations} bereinigte Tageskurse über {forecast.model.historyYears.toFixed(2)} Jahre · 2.000 Bootstrap-Pfade · 252 Handelstage · 20-Tage-Blöcke. Historische Szenarien, keine kalibrierten Zukunftswahrscheinlichkeiten. Ausschüttungen nicht zusätzlich addieren.</p>}
+          {forecast.scenarioReturns && <p className="m-0">Historisches Bootstrap-Szenarioband: P10 {percent(forecast.scenarioReturns.p10)} · Median {percent(forecast.scenarioReturns.median)} · P90 {percent(forecast.scenarioReturns.p90)}</p>}
+          <p className="m-0">Annualisierte historische {forecast.model?.kind === 'bond-curve-v1' ? 'Modellvolatilität in EUR' : 'Volatilität'}: {percent(forecast.annualVolatilityPercent)} · Kurswährung {forecast.currency} · Stand {forecast.volatilityAsOf.slice(0, 10)} · Fenster {forecast.volatilityLookbackDays} Tage</p>
+        </div>
+      </details>
+      <details className="rounded border border-white/10 px-2.5 py-2"><summary className="cursor-pointer font-semibold text-gray-300">Quellen und Prognoseannahmen</summary>
         <div className="mt-2 min-w-0 space-y-1 break-words">
           <p className="m-0">{forecast.assumptions}</p>
           {[['Kursprognose', forecast.forecastSources], ['Risikodaten', forecast.volatilitySources]].map(([label, sources]) => <p key={label as string} className="m-0 break-all">
@@ -73,15 +94,21 @@ export function AssetOptimizationDetails({ plan, allocationKey, assetType, onOpe
       : assetType === 'ETF'
       ? 'ETF-Historienmodell nicht vollständig verfügbar: Bestätigte Historienkennung, mindestens fünf Jahre bereinigte Handelstagskurse mit passender Währung und EUR-Risikodaten erforderlich. Keine Ersatzprognose geschätzt.'
       : 'Keine vollständige belegte 12-Monats-Prognose und Volatilität vorhanden.'}</p>}
-    <dl className="m-0 grid grid-cols-2 gap-2 sm:grid-cols-4">
-      <div className="min-w-0"><dt>Vorher</dt><dd className="m-0 break-words">{percent(position.currentWeightPercent)}</dd></div>
-      <div className="min-w-0"><dt>{robust?.decisionStatus === 'review-required' ? 'Szenarioziel' : 'Ziel'}</dt><dd className="m-0 break-words">{percent(position.targetWeight?.percent ?? null)}</dd></div>
-      <div className="min-w-0"><dt>Bandbreite</dt><dd className="m-0 break-words">{position.targetWeight ? `${percent(position.targetWeight.minPercent)} – ${percent(position.targetWeight.maxPercent)}` : 'Ungeklärt'}</dd></div>
-      <div className="min-w-0"><dt>Danach</dt><dd className="m-0 break-words">{percent(position.projectedWeightPercent)}</dd></div>
-    </dl>
-    <p className="m-0 font-bold text-white">Modellaktion: {position.action}{position.amountEUR !== null ? ` · ${euros(position.amountEUR)}` : ''}</p>
-    {robust?.decisionStatus === 'review-required' && scenarioTrade && <p className="m-0 text-amber-200">Entscheidung offen · Reines Modellszenario: {scenarioTrade.action} {euros(scenarioTrade.amountEUR)}. Dieser Betrag ist keine Handlungsempfehlung und nicht zur Finanzierung freigegeben.</p>}
-    <p className="m-0 break-words">{position.reason}</p>
+    <div className="space-y-1.5">
+      <p className="m-0 font-semibold text-gray-200">Zielgewicht im Portfolio</p>
+      <dl className="m-0 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="min-w-0 rounded bg-slate-950/25 p-2"><dt className="text-gray-400">Aktuell</dt><dd className="m-0 mt-0.5 break-words font-semibold text-white">{percent(position.currentWeightPercent)}</dd></div>
+        <div className="min-w-0 rounded bg-slate-950/25 p-2"><dt className="text-gray-400">{robust?.decisionStatus === 'review-required' ? 'Szenarioziel' : 'Ziel'}</dt><dd className="m-0 mt-0.5 break-words font-semibold text-white">{percent(position.targetWeight?.percent ?? null)}</dd></div>
+        <div className="min-w-0 rounded bg-slate-950/25 p-2"><dt className="text-gray-400">Zielband</dt><dd className="m-0 mt-0.5 break-words font-semibold text-white">{position.targetWeight ? `${percent(position.targetWeight.minPercent)} – ${percent(position.targetWeight.maxPercent)}` : 'Ungeklärt'}</dd></div>
+        <div className="min-w-0 rounded bg-slate-950/25 p-2"><dt className="text-gray-400">Nach Umsetzung</dt><dd className="m-0 mt-0.5 break-words font-semibold text-white">{percent(position.projectedWeightPercent)}</dd></div>
+      </dl>
+    </div>
+    <div className={`min-w-0 space-y-1.5 rounded border p-3 ${robust?.decisionStatus === 'review-required' || position.action === 'Prüfen'
+      ? 'border-amber-300/25 bg-amber-500/5' : 'border-white/10 bg-slate-950/20'}`}>
+      <p className="m-0 font-bold text-white">Modellaktion: {position.action}{position.amountEUR !== null ? ` · ${euros(position.amountEUR)}` : ''}</p>
+      {robust?.decisionStatus === 'review-required' && scenarioTrade && <p className="m-0 text-amber-200">Entscheidung offen · Reines Modellszenario: {scenarioTrade.action} {euros(scenarioTrade.amountEUR)}. Dieser Betrag ist keine Handlungsempfehlung und nicht zur Finanzierung freigegeben.</p>}
+      <p className="m-0 break-words"><span className="font-semibold text-gray-200">Begründung: </span>{position.reason}</p>
+    </div>
   </section>;
 }
 

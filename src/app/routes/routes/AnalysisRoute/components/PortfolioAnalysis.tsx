@@ -49,7 +49,9 @@ function assetReloadStatus(progress: PortfolioAnalysisProgress | null, targetAss
   assetId: number, researchReusable: boolean): AssetReloadStatus | null {
   if (!progress || (targetAssetId != null && targetAssetId !== assetId)) return null;
   switch (progress.stage) {
-    case 'prices': return { message: 'Aktueller Kurs wird neu geladen', refreshingPrice: true, refreshingForecast: false, refreshingResearch: false, refreshingRisk: false };
+    case 'prices': return progress.activeAssetId === assetId
+      ? { message: 'Aktueller Kurs wird neu geladen', refreshingPrice: true, refreshingForecast: false, refreshingResearch: false, refreshingRisk: false }
+      : null;
     case 'forecast': return { message: 'Forecast und Zielgewichtung werden neu berechnet', refreshingPrice: false, refreshingForecast: true, refreshingResearch: false, refreshingRisk: false };
     case 'research': return { message: progress.activeAssetId === assetId ? 'Onlinequellen werden gesucht'
       : researchReusable ? 'Gespeicherte Online-Recherche wird wiederverwendet' : 'Online-Suche steht noch aus',
@@ -57,7 +59,11 @@ function assetReloadStatus(progress: PortfolioAnalysisProgress | null, targetAss
     case 'ai-research': return { message: 'Fehlende Quellen werden mit KI recherchiert', refreshingPrice: false, refreshingForecast: false, refreshingResearch: true, refreshingRisk: false };
     case 'risk-review': return { message: progress.activeAssetId === assetId
       ? progress.activeRiskStep === 'assessment' ? 'Dokumenttext wird auf Gewinn, Marge, Liquidität, Fälligkeiten und weitere Risiken geprüft'
-        : progress.documentsRefreshForced ? 'Aktuelle Primärberichte werden neu geladen' : 'Gültige Primärberichte werden wiederverwendet oder auf Aktualität geprüft'
+        : progress.activeRiskStep === 'sec-discovery' ? 'SEC-Einreichungen werden abgefragt'
+          : progress.activeRiskStep === 'download' ? 'Primärbericht wird heruntergeladen'
+            : progress.activeRiskStep === 'pdf-parse' ? 'PDF-Text wird extrahiert'
+              : progress.activeRiskStep === 'risk-excerpt' ? 'SEC-Bericht wird bereinigt und nach Risikohinweisen durchsucht'
+              : progress.documentsRefreshForced ? 'Aktuelle Primärberichte werden neu geladen' : 'Gültige Primärberichte werden wiederverwendet oder auf Aktualität geprüft'
       : progress.reusedRiskAssetIds?.includes(assetId) ? 'Gespeicherte Risikoprüfung wird wiederverwendet'
         : progress.completedRiskAssetIds?.includes(assetId) ? 'Prüfung abgeschlossen; Befund oder Datenlücke gespeichert' : 'Risikoprüfung steht noch aus',
       refreshingPrice: false, refreshingForecast: false, refreshingResearch: false,
@@ -182,9 +188,9 @@ export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, c
           aria-label={`Unternehmens- und Produktrisiken für Asset ${risk.key} neu prüfen`}>Risiken neu prüfen</Button>}
       </div>
     </div>
-    {checkStatus && <p role="status" className="mx-3 mb-0 mt-2 flex items-center gap-2 rounded border border-sky-400/25 bg-sky-500/10 px-2.5 py-2 text-xs text-sky-200">
+    {checkStatus && <div role="status" className="mx-3 mb-0 mt-2 flex items-center gap-2 rounded border border-sky-400/25 bg-sky-500/10 px-2.5 py-2 text-xs text-sky-200">
       <Spinner size={14} /> {checkStatus}
-    </p>}
+    </div>}
     {!!open.length && <div className="mx-3 mb-0 mt-2 rounded border border-amber-400/25 bg-amber-950/15 p-2.5 text-xs text-gray-200" aria-label="Offene Prüfpunkte">
       <p className="m-0 font-bold text-amber-200">Offene Punkte</p>
       <ul className="mb-0 mt-1.5 space-y-1 pl-4">{open.map(line => <li key={line} className="break-words">{line}</li>)}</ul>
@@ -674,9 +680,17 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
         <Spinner size={20} />
         <div>
           {analysisState.targetAssetId != null && <p className="mt-0 mb-1 text-sm font-bold text-indigo-200">Einzelanalyse: {assets.find(asset => asset.ID === analysisState.targetAssetId)?.name || `Asset ${analysisState.targetAssetId}`}</p>}
-          {progress.activeCandidateName && <p className="mt-0 mb-1 text-sm font-bold text-indigo-200">Neue Kaufidee: {progress.activeCandidateName} · {progress.activeRiskStep === 'assessment' ? 'Dokumentinhalt wird geprüft' : 'Primärdokumente werden geladen'}</p>}
+          {progress.stage === 'prices' && progress.activeAssetId != null && <p className="mt-0 mb-1 text-sm font-bold text-indigo-200">Kurs wird aktualisiert: {assets.find(asset => asset.ID === progress.activeAssetId)?.name || `Asset ${progress.activeAssetId}`}</p>}
+          {progress.activeCandidateName && <p className="mt-0 mb-1 text-sm font-bold text-indigo-200">Neue Kaufidee: {progress.activeCandidateName} · {progress.activeRiskStep === 'assessment' ? 'Dokumentinhalt wird geprüft' : progress.activeRiskStep === 'sec-discovery' ? 'SEC-Einreichungen werden abgefragt' : progress.activeRiskStep === 'pdf-parse' ? 'PDF-Text wird extrahiert' : progress.activeRiskStep === 'risk-excerpt' ? 'SEC-Bericht wird bereinigt' : progress.activeRiskStep === 'download' ? 'Primärbericht wird heruntergeladen' : 'Primärdokumente werden geladen'}</p>}
           {analysisState.targetAssetId != null && <p className="mt-0 mb-1 text-xs text-gray-400">Erfolgreiche Online-Suchdaten je Asset werden 24 Stunden wiederverwendet, auch aus einer Gesamtanalyse. Bestände, Kurse und Anlageprofil werden bei jeder Empfehlung neu ausgewertet.</p>}
-          <p role="status" className="m-0 text-sm text-indigo-200">{stageLabels[progress.stage]}{(progress.stage === 'research' || progress.stage === 'ai-research' || progress.stage === 'risk-review') && progress.researchTotal ? ` · ${progress.researchCompleted ?? 0}/${progress.researchTotal} ${progress.stage === 'ai-research' ? 'Gruppen' : 'Assets'} abgeschlossen` : ''}</p>
+          <p role="status" className="m-0 text-sm text-indigo-200">{stageLabels[progress.stage]}{progress.researchTotal ? ` · ${progress.researchCompleted ?? 0}/${progress.researchTotal} ${progress.stage === 'prices' ? 'Kurse' : progress.stage === 'ai-research' ? 'Gruppen' : 'Assets'} abgeschlossen` : ''}</p>
+          {progress.stage === 'risk-review' && progress.activeAssetId != null && <p className="mt-1 mb-0 text-xs text-sky-200">
+            Aktuell: {assets.find(asset => asset.ID === progress.activeAssetId)?.name || `Asset ${progress.activeAssetId}`} · {progress.activeRiskStep === 'assessment'
+              ? 'Berichte werden inhaltlich ausgewertet' : progress.activeRiskStep === 'sec-discovery' ? 'SEC-Einreichungen werden abgefragt'
+                : progress.activeRiskStep === 'pdf-parse' ? 'PDF-Text wird extrahiert'
+                  : progress.activeRiskStep === 'download' ? 'Primärbericht wird heruntergeladen'
+                    : progress.activeRiskStep === 'risk-excerpt' ? 'SEC-Bericht wird bereinigt und durchsucht' : 'Primärberichte werden abgeglichen'}
+          </p>}
           <p className="mt-1 mb-0 text-xs text-gray-300">Laufzeit: {duration(Math.max(0, Math.floor((now - startedAt) / 1000)))} · Letzte Rückmeldung vor {Math.max(0, Math.floor((now - progress.lastActivityAt) / 1000))} s</p>
           <p className="mt-1 mb-0 text-xs text-gray-400">Online-Suche und Analyse können mehrere Minuten dauern. Zeitlimit: {ANALYSIS_TIMEOUT_MS / 60000} Minuten. Suchdaten werden 24 Stunden wiederverwendet. Die inhaltliche Prüfung neuer Primärberichte und die Portfolio-Auswertung verbrauchen KI-Kontingent; gespeicherte Prüfungen unveränderter Berichte nicht.</p>
         </div>

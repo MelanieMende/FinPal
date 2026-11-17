@@ -1,4 +1,4 @@
-import { createAsyncThunk, createSlice, type Dispatch } from '@reduxjs/toolkit'
+import { createAction, createAsyncThunk, createSlice, type Dispatch } from '@reduxjs/toolkit'
 import { quoteTime, restoreQuote, saveQuote, clearCachedQuote, type QuoteMetadata, type EuroExchangeRates } from '../../utils/quoteMetadata';
 import type { TradeRepublicQuote } from '../../utils/tradeRepublicSync';
 import { brokerProduct } from '../../utils/instrumentClassification';
@@ -14,7 +14,9 @@ export interface LoadPricesOptions {
 	assetIDs?: number[];
 	preferTradeRepublicPrice?: boolean;
 	includeDividends?: boolean;
+	analysisPriceRefresh?: boolean;
 }
+export const analysisPriceRefreshProgress = createAction<{ assetId?: number; completed: number; total: number; at: number }>('assets/analysisPriceRefreshProgress');
 
 export const loadAssets = createAsyncThunk<void, { assetIDs?: number[] } | void>(
   'assets/loadAssets',
@@ -135,7 +137,9 @@ export const loadPricesAndDividends = createAsyncThunk(
 			console.error('Failed to load cached Trade Republic quotes:', error)
 		}
 
-		for(const asset of assetsToRefresh) {
+		for(const [assetIndex, asset] of assetsToRefresh.entries()) {
+			if (props?.analysisPriceRefresh) thunkAPI.dispatch(analysisPriceRefreshProgress({ assetId: asset.ID,
+				completed: assetIndex, total: assetsToRefresh.length, at: Date.now() }))
 			
 			console.log(asset.name, '-', asset.symbol)
 
@@ -291,6 +295,8 @@ export const loadPricesAndDividends = createAsyncThunk(
 
 			await refreshAssetDividends(asset, thunkAPI.dispatch, getFX)
 		}
+		if (props?.analysisPriceRefresh) thunkAPI.dispatch(analysisPriceRefreshProgress({ completed: assetsToRefresh.length,
+			total: assetsToRefresh.length, at: Date.now() }))
   }
 )
 
@@ -372,8 +378,13 @@ export const setIsWatched = createAsyncThunk(
 )
 
 async function callYahooFinanceAPI(asset:Asset) {
-	var result = await window.API.sendToYahooFinanceAPI({symbol:getYahooFinanceSymbol(asset), isin:asset.isin, type:asset.type})
-	return result
+	let timer: ReturnType<typeof setTimeout> | undefined
+	try {
+		return await Promise.race([
+			window.API.sendToYahooFinanceAPI({symbol:getYahooFinanceSymbol(asset), isin:asset.isin, type:asset.type}),
+			new Promise<never>((_resolve, reject) => { timer = setTimeout(() => reject(new Error('Kursabruf nach 15 Sekunden abgebrochen.')), 15000) }),
+		])
+	} finally { if (timer) clearTimeout(timer) }
 }
 
 export function getYahooFinanceSymbol(asset: Pick<Asset, 'symbol' | 'type'>) {

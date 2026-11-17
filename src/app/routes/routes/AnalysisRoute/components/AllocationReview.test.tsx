@@ -36,7 +36,7 @@ it('separates an unapproved scenario from actionable amounts and shows measured 
   expect(cashComparison.getByText(/Frei nach geschützter Reserve:/)).toHaveTextContent('1.000,00 €');
   expect(screen.getByText(/gemessene EUR-Kovarianzen aus 365/)).toBeInTheDocument();
   expect(screen.getByText(/Rohsignal:.*Nach Grundgewichtung:.*Konfidenzgewichtet:.*Unsicherheitsproxy:/)).toBeInTheDocument();
-  expect(screen.getByText(/Analystenabdeckung: 20/)).toBeInTheDocument();
+  expect(screen.getByText(/20 Analysten · Kurszielspanne/)).toBeInTheDocument();
   expect(screen.getByText(/Reines Modellszenario: Kaufen/)).toBeInTheDocument();
   expect(screen.getByText('Szenarioziel')).toBeInTheDocument();
   expect(screen.getByText(/Kursziel verfehlt: Synthetic Stock: Modellnutzen/)).toBeInTheDocument();

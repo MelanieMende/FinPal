@@ -1,5 +1,5 @@
 import { createAsyncThunk, createSlice, type PayloadAction, type ThunkDispatch, type UnknownAction } from '@reduxjs/toolkit';
-import { loadPricesAndDividends } from '../assets/assets.reducer';
+import { analysisPriceRefreshProgress, loadPricesAndDividends } from '../assets/assets.reducer';
 import { buildAnalysisPositions } from '../../utils/portfolioAnalysis';
 import { MARKET_PRICE_UPDATED_AT_KEY } from '../../utils/syncTimestamps';
 import { resolveAcquisitionHistory, resolveTaxContext } from '../../utils/investorFacts';
@@ -43,7 +43,7 @@ export const analyzePortfolio = createAsyncThunk<
     });
     await dispatch(loadPricesAndDividends({
       assetIDs: request.positions.map(position => position.id),
-      preferTradeRepublicPrice: false, includeDividends: false,
+      preferTradeRepublicPrice: false, includeDividends: false, analysisPriceRefresh: true,
     })).unwrap();
     const refreshedRequest = { ...request,
       positions: buildAnalysisPositions(getState().assets),
@@ -179,6 +179,11 @@ const slice = createSlice({
     },
   },
   extraReducers: builder => builder
+    .addCase(analysisPriceRefreshProgress, (state, action) => {
+      if (state.progress?.stage !== 'prices') return;
+      state.progress = { ...state.progress, activeAssetId: action.payload.assetId,
+        researchCompleted: action.payload.completed, researchTotal: action.payload.total, lastActivityAt: action.payload.at };
+    })
     .addCase(restorePortfolioAnalysis.fulfilled, (state, action) => {
       if (state.restoreBlocked || !action.payload) return;
       state.result = action.payload.report; state.lastResult = action.payload.report;

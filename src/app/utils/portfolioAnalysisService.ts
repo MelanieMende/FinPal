@@ -720,7 +720,8 @@ export class PortfolioAnalysisService {
     });
     try {
       progress(reusedDocuments ? 'assessment' : 'documents');
-      const set = reusedDocuments ?? await this.primaryRiskResearch.collect(position, controller.signal, previous.report.sources, documentsOnly);
+      const set = reusedDocuments ?? await this.primaryRiskResearch.collect(position, controller.signal, previous.report.sources, documentsOnly,
+        step => progress(step));
       addRiskReviewContext(position, set, request.investorContext);
       if (documentsOnly) {
         const documentsFingerprint = primaryDocumentsFingerprint(set);
@@ -985,7 +986,9 @@ export class PortfolioAnalysisService {
         activeRiskStep = 'documents';
         notify(true);
         const sourceHints = this.researchCache.findForSecurity(securities[positionIndex], true)?.sources ?? [];
-        const set = await this.primaryRiskResearch.collect(position, controller.signal, sourceHints);
+        const set = await this.primaryRiskResearch.collect(position, controller.signal, sourceHints, false, step => {
+          activeRiskStep = step; notify(true);
+        });
         addRiskReviewContext(position, set, request.investorContext);
         let record = this.primaryRiskCache.get(position, set);
         if (record) reusedRiskAssetIds.push(position.id);
@@ -1119,7 +1122,9 @@ export class PortfolioAnalysisService {
             const position = { id: 0, name: candidate.name, isin: candidate.isin, symbol: candidate.symbol, type: candidate.type } as import('./portfolioAnalysis').AnalysisPosition;
             activeCandidateName = candidate.name; activeRiskStep = 'documents'; notify(true);
             const set = await this.primaryRiskResearch.collect(position, controller.signal,
-              candidate.sourceIndexes.map(index => sources[index]).filter((source): source is AnalysisSource => !!source));
+              candidate.sourceIndexes.map(index => sources[index]).filter((source): source is AnalysisSource => !!source), false, step => {
+                activeRiskStep = step; notify(true);
+              });
             let record = this.primaryRiskCache.get(position, set, candidateKey);
             if (!record) {
               let assessment: unknown = null;

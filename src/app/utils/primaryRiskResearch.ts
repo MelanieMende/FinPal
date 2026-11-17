@@ -30,7 +30,36 @@ export interface RiskDocumentSet {
 
 const DAY = 24 * 60 * 60 * 1000;
 const MAX_BYTES = 16_000_000;
+// Risk-document extraction runs in Electron's main process. Keep large SEC HTML
+// filings from monopolizing the event loop while regexes scan the full document.
+const MAX_RISK_TEXT_CHARS = 1_500_000;
 const MAX_DOCUMENTS = 4;
+function logSpaceX(step: string, details: Record<string, string | number | boolean | null> = {}) {
+  console.info('[primary-risk:spacex]', JSON.stringify({ step, at: new Date().toISOString(), ...details }));
+}
+function safeSource(url: string): string {
+  try { const parsed = new URL(url); return `${parsed.host}${parsed.pathname}`; }
+  catch { return 'invalid-source'; }
+}
+async function readResponseBuffer(response: Response, maxBytes: number): Promise<Buffer> {
+  if (!response.body) throw new Error('Document response has no body');
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel();
+        throw new Error('Document too large');
+      }
+      chunks.push(value);
+    }
+  } finally { reader.releaseLock(); }
+  return Buffer.concat(chunks.map(chunk => Buffer.from(chunk)), total);
+}
 function loadPdfParser(): typeof import('pdf-parse') {
   // Keep the PDF.js dependency unloaded for sources that are not PDFs.
   // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -286,10 +315,17 @@ const decodeEntities = (value: string) => value.replace(/&(?:nbsp|amp|lt|gt|quot
   }
   return ({ '&nbsp;': ' ', '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&apos;': "'" } as Record<string, string>)[match.toLowerCase()] ?? ' ';
 });
-export function riskExcerpt(html: string, type: AnalysisPosition['type'] = 'Stock', insurance = false, isin = ''): string {
-  const plain = decodeEntities(html.replace(/<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<\/(?:p|div|tr|table|h[1-6]|li)>/gi, '\n').replace(/<[^>]+>/g, ' '))
-    .replace(/[ \t\r]+/g, ' ').replace(/\n\s*\n/g, '\n').trim();
+export function riskExcerpt(html: string, type: AnalysisPosition['type'] = 'Stock', insurance = false, isin = '',
+  onDiagnostic?: (step: string, details?: Record<string, string | number>) => void): string {
+  onDiagnostic?.('html-strip-start', { inputChars: html.length });
+  const withoutBlocks = html.replace(/<(script|style|noscript)\b[^>]*>[\s\S]*?<\/\1>/gi, ' ');
+  onDiagnostic?.('html-blocks-removed', { remainingChars: withoutBlocks.length });
+  const withoutTags = withoutBlocks.replace(/<\/(?:p|div|tr|table|h[1-6]|li)>/gi, '\n').replace(/<[^>]+>/g, ' ');
+  onDiagnostic?.('html-tags-removed', { remainingChars: withoutTags.length });
+  const decoded = decodeEntities(withoutTags);
+  onDiagnostic?.('html-entities-decoded', { remainingChars: decoded.length });
+  const plain = decoded.replace(/[ \t\r]+/g, ' ').replace(/\n\s*\n/g, '\n').trim();
+  onDiagnostic?.('html-normalized', { textChars: plain.length });
   const found: string[] = [];
   const qdve = type === 'ETF' && isin === 'IE00B3WJKG14';
   const vgwd = type === 'ETF' && isin === 'IE00B8GKDB10';
@@ -298,25 +334,30 @@ export function riskExcerpt(html: string, type: AnalysisPosition['type'] = 'Stoc
   const mondelez = type === 'Stock' && isin === 'US6092071058';
   const treasuryBond = type === 'Bond' && isin === TREASURY_BOND_ISIN;
   const apolloEltif = type === 'Fund' && isin === APOLLO_ELTIF_ISIN;
-  for (const pattern of insurance ? insuranceKeywords : type === 'Stock'
+  const patterns = insurance ? insuranceKeywords : type === 'Stock'
     ? rheinmetall ? [...rheinmetallKeywords, ...keywordGroups]
       : mondelez ? [...mondelezKeywords, ...keywordGroups] : spaceX ? [...spaceXKeywords, ...keywordGroups] : keywordGroups
     : type === 'Crypto' ? [...bitcoinKeywords, ...productKeywords]
       : qdve ? [...qdveKeywords, ...productKeywords] : vgwd ? [...vgwdKeywords, ...productKeywords]
       : treasuryBond ? [...treasuryBondKeywords, ...productKeywords]
-        : apolloEltif ? [...apolloEltifKeywords, ...productKeywords] : productKeywords) {
+        : apolloEltif ? [...apolloEltifKeywords, ...productKeywords] : productKeywords;
+  for (const [patternIndex, pattern] of patterns.entries()) {
+    onDiagnostic?.('keyword-pattern-start', { patternIndex, pattern: pattern.source.slice(0, 120) });
     pattern.lastIndex = 0;
     let match: RegExpExecArray | null;
     let count = 0;
     while ((match = pattern.exec(plain)) && count < (qdve || vgwd || rheinmetall || treasuryBond ? 1 : type === 'Stock' ? 5 : 4)) {
+      count++;
       const start = Math.max(0, match.index - 160);
       const end = Math.min(plain.length, match.index + 430);
       const fragment = plain.slice(start, end).trim();
-      if (found.some(item => item === fragment)) continue;
-      found.push(fragment);
-      count++;
+      if (!found.some(item => item === fragment)) found.push(fragment);
+      // Non-global expressions return the same match on every exec() call.
+      // Stop after their first match to avoid a synchronous main-process loop.
+      if (!pattern.global) break;
       pattern.lastIndex = end;
     }
+    onDiagnostic?.('keyword-pattern-complete', { patternIndex, matches: count });
   }
   return found.join('\n[…]\n').slice(0, insurance ? 24000 : 18000);
 }
@@ -563,8 +604,26 @@ export class PrimaryRiskResearch {
     // Undated protocol documentation is not a financial report or current market telemetry.
     return { documents, gaps, discoveryChecked: sourceFailures === 0 };
   }
-  async collect(position: AnalysisPosition, signal?: AbortSignal, sourceHints: AnalysisSource[] = [], forceRefresh = false): Promise<RiskDocumentSet> {
+  async collect(position: AnalysisPosition, signal?: AbortSignal, sourceHints: AnalysisSource[] = [], forceRefresh = false,
+    onSpaceXStep?: (step: 'sec-discovery' | 'download' | 'pdf-parse') => void): Promise<RiskDocumentSet> {
     if (isBitcoinResearchPosition(position)) return this.collectBitcoin(signal, forceRefresh);
+    const isin = position.isin.trim().toUpperCase();
+    const spaceX = isin === 'US84615Q1031';
+    const startedAt = Date.now();
+    if (spaceX) logSpaceX('collect-start', { forceRefresh, aborted: !!signal?.aborted });
+    // A current cached SEC filing is already the reviewed primary report. Reuse it
+    // before resolving the SEC submissions directory, which otherwise adds an
+    // unnecessary network dependency to every portfolio analysis.
+    if (!forceRefresh && isin === 'US84615Q1031') {
+      const cached = [...this.cache.values()].filter(document => document.source.url.startsWith('https://www.sec.gov/Archives/edgar/data/1181412/')
+        && document.excerptVersion === stockExcerptVersion(isin) && this.now() - document.fetchedAt < DAY
+        && document.fetchedAt <= this.now());
+      if (cached.length) {
+        const latest = cached.sort((a, b) => b.fetchedAt - a.fetchedAt)[0];
+        if (spaceX) logSpaceX('cache-hit', { elapsedMs: Date.now() - startedAt, source: safeSource(latest.source.url) });
+        return { documents: [latest], gaps: [], discoveryChecked: true };
+      }
+    }
     const curated = new Set(knownResearchSources(position).map(value => new URL(value).toString()));
     const issuerHost = ISSUER_HOST_BY_ISIN[position.isin.trim().toUpperCase()];
     const cik = await this.resolveCik(position, signal);
@@ -619,12 +678,16 @@ export class PrimaryRiskResearch {
         if (cik === '0000353278' && filings) filings = filings.filter(filing =>
           /\/caq[1-4]20\d{2}\.htm$/i.test(filing.url) || /\/nvo-20\d{6}\.htm$/i.test(filing.url));
         if (forceRefresh || !filings?.length || this.now() - this.submissions.get(cik)!.fetchedAt >= DAY) {
+          const requestStartedAt = Date.now();
+          if (spaceX) onSpaceXStep?.('sec-discovery');
+          if (spaceX) logSpaceX('submissions-request-start', { source: `data.sec.gov/submissions/CIK${cik}.json`, cached: false });
           const response = await this.requestFetch(`https://data.sec.gov/submissions/CIK${cik}.json`, {
             headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' },
             signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000),
           });
           if (!response.ok) throw new Error(`HTTP ${response.status}`);
           filings = secUrls(cik, await response.json());
+          if (spaceX) logSpaceX('submissions-request-complete', { elapsedMs: Date.now() - requestStartedAt, status: response.status, filings: filings.length });
           this.submissions.set(cik, { filings, fetchedAt: this.now() });
           try { this.save(); } catch { /* This run can still use the retrieved directory. */ }
         }
@@ -632,8 +695,10 @@ export class PrimaryRiskResearch {
         filings.forEach(filing => filingDetails.set(filing.url, { title: filing.title, period: filing.period }));
         candidates.unshift(...filings.map(filing => filing.url));
         discoveryChecked = true;
-      } catch {
+      } catch (error) {
         if (signal?.aborted) throw signal.reason;
+        if (spaceX) logSpaceX('submissions-failed', { elapsedMs: Date.now() - startedAt,
+          errorName: error instanceof Error ? error.name : 'unknown', httpStatus: error instanceof Error ? Number(error.message.match(/^HTTP (\d+)$/)?.[1] ?? 0) || null : null });
         gaps.push('Aktuelle SEC-Einreichungen konnten nicht abgeglichen werden.');
       }
     } else gaps.push('Für dieses Instrument ist noch keine verlässlich zugeordnete Primärquellenkennung hinterlegt.');
@@ -645,38 +710,64 @@ export class PrimaryRiskResearch {
         && item.endsWith('/R_20200819_3.pdf') && !forceRefresh
         && this.cache.has(TREASURY_OFFERING_2020)
         && this.now() - this.cache.get(TREASURY_OFFERING_2020)!.fetchedAt < DAY))
-      .slice(0, position.type === 'Bond' && position.isin.trim().toUpperCase() === TREASURY_BOND_ISIN ? 5 : MAX_DOCUMENTS)) {
+      .slice(0, position.isin.trim().toUpperCase() === 'US84615Q1031' ? 1
+        : position.type === 'Bond' && position.isin.trim().toUpperCase() === TREASURY_BOND_ISIN ? 5 : MAX_DOCUMENTS)) {
       const stored = this.cache.get(url);
       if (!forceRefresh && stored && this.now() - stored.fetchedAt < DAY &&
         (position.type !== 'Stock' || stored.excerptVersion === stockExcerptVersion(position.isin.trim().toUpperCase())) &&
         (position.isin.trim().toUpperCase() !== 'IE00B3WJKG14' || stored.excerptVersion === 3) &&
         (position.isin.trim().toUpperCase() !== 'IE00B8GKDB10' || stored.excerptVersion === 2) &&
         (position.isin.trim().toUpperCase() !== APOLLO_ELTIF_ISIN || stored.excerptVersion === 3) &&
-        (position.type === 'Stock' || stored.identity === position.isin.trim().toUpperCase())) { documents.push(stored); continue; }
+        (position.type === 'Stock' || stored.identity === position.isin.trim().toUpperCase())) {
+          documents.push(stored);
+          if (spaceX) logSpaceX('document-cache-hit', { source: safeSource(url) });
+          continue;
+        }
       try {
         const annualRheinmetall = position.isin.trim().toUpperCase() === 'DE0007030009' && url === RHEINMETALL_ANNUAL_2025;
         const documentTimeout = annualRheinmetall ? 30000 : 12000;
         const maxDocumentBytes = annualRheinmetall ? 40_000_000 : MAX_BYTES;
+        const spaceX = position.isin.trim().toUpperCase() === 'US84615Q1031';
+        const requestStartedAt = Date.now();
+        if (spaceX) onSpaceXStep?.('download');
+        if (spaceX) logSpaceX('document-request-start', { source: safeSource(url) });
         const response = await this.requestFetch(url, { headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' },
-          signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(documentTimeout)]) : AbortSignal.timeout(documentTimeout) });
+          signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(spaceX ? 8000 : documentTimeout)]) : AbortSignal.timeout(spaceX ? 8000 : documentTimeout) });
+        if (spaceX) logSpaceX('document-response', { source: safeSource(url), elapsedMs: Date.now() - requestStartedAt,
+          status: response.status, contentLength: response.headers.get('content-length') ?? null,
+          contentType: response.headers.get('content-type')?.split(';')[0] ?? null });
         const finalUrl = response.url || url;
         if (!response.ok || !(allowedDocumentUrl(finalUrl, curated, issuerHost, cik)
           || (position.type !== 'Stock' && officialProductHost(new URL(finalUrl).hostname))
           || (position.isin.trim().toUpperCase() === APOLLO_ELTIF_ISIN && apolloEltifDocumentUrl(finalUrl)))) throw new Error('Document unavailable');
         const length = Number(response.headers.get('content-length'));
-        if (length > maxDocumentBytes) throw new Error('Document too large');
-        const data = Buffer.from(await response.arrayBuffer());
-        if (data.length > maxDocumentBytes) throw new Error('Document too large');
+        if (length > (spaceX ? 8_000_000 : maxDocumentBytes)) throw new Error('Document too large');
+        const downloadStartedAt = Date.now();
+        const data = await readResponseBuffer(response, spaceX ? 8_000_000 : maxDocumentBytes);
+        if (spaceX) logSpaceX('document-download-complete', { source: safeSource(url), elapsedMs: Date.now() - downloadStartedAt, bytes: data.length });
+        if (data.length > (spaceX ? 8_000_000 : maxDocumentBytes)) throw new Error('Document too large');
         const contentType = response.headers.get('content-type') ?? '';
         let plain: string;
+        let documentTextTruncated = false;
         if (contentType.includes('pdf') || url.toLowerCase().endsWith('.pdf')) {
+          const parseStartedAt = Date.now();
+          if (spaceX) onSpaceXStep?.('pdf-parse');
+          if (spaceX) logSpaceX('pdf-parse-start', { source: safeSource(url), bytes: data.length, pagesRequested: 12 });
           const { PDFParse } = loadPdfParser();
           const parser = new PDFParse({ data });
           try {
-            // Avoid parsing an entire long report on Electron's main process.
-            plain = (await parser.getText({ first: 1, last: 40 })).text;
+            // Keep PDF extraction bounded on Electron's main process. SEC filings
+            // can be very large and only the latest SpaceX filing is required here.
+            plain = (await parser.getText({ first: 1, last: spaceX ? 12 : 40 })).text;
           } finally { await parser.destroy(); }
-        } else plain = data.toString('utf8');
+          if (spaceX) logSpaceX('pdf-parse-complete', { source: safeSource(url), elapsedMs: Date.now() - parseStartedAt, textChars: plain.length });
+        } else {
+          plain = data.toString('utf8');
+          documentTextTruncated = plain.length > MAX_RISK_TEXT_CHARS;
+          if (documentTextTruncated) plain = plain.slice(0, MAX_RISK_TEXT_CHARS);
+        }
+        documentTextTruncated ||= plain.length > MAX_RISK_TEXT_CHARS;
+        if (documentTextTruncated) plain = plain.slice(0, MAX_RISK_TEXT_CHARS);
         const treasuryGeneral = position.type === 'Bond' && position.isin.trim().toUpperCase() === TREASURY_BOND_ISIN
           && treasuryGeneralUrl(url) && documents.some(document => treasuryAuctionUrl(document.source.url));
         if (treasuryGeneral && !/Treasury marketable securit(?:y|ies)|Treasury Bonds/i.test(plain)) throw new Error('Treasury context not confirmed');
@@ -697,8 +788,12 @@ export class PrimaryRiskResearch {
           && !(KNOWN_STOCK_REPORT_PERIOD(position.isin.trim().toUpperCase(), url) === '2026-04-30'
             ? /April\s+30,?\s+2026/i.test(plain) : /October\s+31,?\s+2025/i.test(plain)))
           throw new Error('Report period not confirmed');
-        const excerpt = riskExcerpt(plain, position.type, position.isin.trim().toUpperCase() === 'DE0008430026', position.isin.trim().toUpperCase());
+        if (spaceX) { onSpaceXStep?.('risk-excerpt'); logSpaceX('risk-excerpt-start', { textChars: plain.length }); }
+        const excerpt = riskExcerpt(plain, position.type, position.isin.trim().toUpperCase() === 'DE0008430026', position.isin.trim().toUpperCase(),
+          spaceX ? (step, details = {}) => logSpaceX(step, details) : undefined);
+        if (spaceX) logSpaceX('risk-excerpt-complete', { excerptChars: excerpt.length });
         if (!excerpt) throw new Error('No risk evidence');
+        if (documentTextTruncated) gaps.push(`Primärdokument nur teilweise ausgewertet (Textlimit ${MAX_RISK_TEXT_CHARS.toLocaleString('de-DE')} Zeichen): ${url}`);
         if (position.type !== 'Stock' && !treasuryGeneral && !apolloCompanion && !excerpt.toUpperCase().includes(position.isin.trim().toUpperCase())
           && !(position.type === 'Bond' && excerpt.includes(position.isin.trim().slice(2, -1))))
           throw new Error('Instrument identity absent from risk excerpt');
@@ -726,8 +821,11 @@ export class PrimaryRiskResearch {
         this.cache.set(url, document);
         documents.push(document);
         try { this.save(); } catch { /* Keep the successful fetch for this run. */ }
-      } catch {
+      } catch (error) {
         if (signal?.aborted) throw signal.reason;
+        if (spaceX) logSpaceX('document-failed', { source: safeSource(url), elapsedMs: Date.now() - startedAt,
+          errorName: error instanceof Error ? error.name : 'unknown', httpStatus: error instanceof Error ? Number(error.message.match(/^HTTP (\d+)$/)?.[1] ?? 0) || null : null,
+          timedOut: error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name) });
         if (stored && (position.type === 'Stock' || stored.identity === position.isin.trim().toUpperCase())) documents.push(stored);
         gaps.push(`Primärdokument konnte nicht aktuell geladen werden: ${url}`);
       }
@@ -751,6 +849,8 @@ export class PrimaryRiskResearch {
         && documents.some(document => treasuryAuctionUrl(document.source.url))))
       gaps.push('Kein datiertes aktuelles Primärdokument zur exakten Instrumentkennung gefunden.');
     if (!documents.length) gaps.push('Kein lesbares aktuelles Primärdokument für die Risikoprüfung verfügbar.');
+    if (spaceX) logSpaceX('collect-complete', { elapsedMs: Date.now() - startedAt, documents: documents.length,
+      gaps: gaps.length, discoveryChecked, aborted: !!signal?.aborted });
     return { documents, discoveryChecked, gaps };
   }
 }

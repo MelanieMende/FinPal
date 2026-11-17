@@ -508,12 +508,24 @@ function qualifyBitcoinCheck(position: AnalysisPosition, check: RiskCheck, set: 
   }
   return check;
 }
+function qualifyLufthansaContinuity(position: AnalysisPosition, check: RiskCheck, documents: RiskDocument[]): RiskCheck {
+  if (position.type !== 'Stock' || position.isin.trim().toUpperCase() !== 'DE0008232125'
+    || check.flag !== 'going-concern') return check;
+  const documentIndex = documents.findIndex(document => document.period === '2026-09-30'
+    && /^https:\/\/investor-relations\.lufthansagroup\.com\/fileadmin\/downloads\/en\/financial-reports\/interims-reports\/L[HG]-QR-2026-3-e\.pdf$/i.test(document.source.url));
+  const document = documents[documentIndex];
+  const quote = /Taking into account the corporate planning and the resulting liquidity planning, the further potential funding measures and the uncertainties about the future course of business, the Company[’']s Executive Board considers the Group[’']s liquidity to be secure for the next 18 months\.\s*The consolidated financial statements were therefore prepared on a going concern basis\./i.exec(document?.excerpt ?? '')?.[0] ?? '';
+  if (!validQuote(quote, document)) return check;
+  return { ...check, finding: 'no-risk', documentIndex, quote,
+    reason: 'Stand 30.09.2026: Der Vorstand beurteilt die Liquidität unter Einbezug der Unternehmens- und Liquiditätsplanung, möglicher Finanzierungsmaßnahmen und bestehender Unsicherheiten für die nächsten 18 Monate als gesichert. Der Konzernabschluss wurde auf Going-Concern-Basis erstellt; dies ist keine Garantie über diesen Zeitraum hinaus.' };
+}
 function qualifyCheck(position: AnalysisPosition, check: RiskCheck, documents: RiskDocument[], set?: RiskDocumentSet): RiskCheck {
   let qualified = qualifyMunichFinancingAndContinuity(position, check, documents);
   qualified = qualifyMunichLegalRisk(position, qualified, documents);
   qualified = qualifyMondelezLegalRisk(position, qualified, documents);
   qualified = qualifyMcdRegulatoryRisk(position, qualified, documents);
   qualified = qualifyMcdContinuity(position, qualified, documents);
+  qualified = qualifyLufthansaContinuity(position, qualified, documents);
   qualified = qualifyNovoFinancing(position, qualified, documents);
   qualified = qualifySpaceXRisks(position, qualified, documents);
   qualified = qualifyQdveProductRisks(position, qualified, documents);
@@ -649,7 +661,7 @@ export function riskFingerprint(position: AnalysisPosition, set: RiskDocumentSet
     ...(position.type === 'Bond' && position.isin.trim().toUpperCase() === 'US912810SQ22'
       ? { treasuryContextVersion: 1, nominalCurrency: position.bondHolding?.source === 'user-confirmed' ? position.bondHolding.currency : null } : {}),
     documents: set.documents.map(doc => [doc.source.url, doc.hash,
-      isInsuranceStock(position) || ['LU3170240538', 'US84615Q1031'].includes(position.isin.trim().toUpperCase()) ? doc.excerptVersion ?? 0 : 0])
+      isInsuranceStock(position) || ['DE0008232125', 'LU3170240538', 'US84615Q1031'].includes(position.isin.trim().toUpperCase()) ? doc.excerptVersion ?? 0 : 0])
       .sort((a, b) => String(a[0]).localeCompare(String(b[0]))) })).digest('hex');
 }
 export function primaryDocumentsFingerprint(set: RiskDocumentSet): string {
@@ -814,7 +826,7 @@ export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessme
     && record.gaps.some(gap => gap.startsWith('regulatory:'))
     && record.gaps.every(gap => /^(?:going-concern|regulatory|debt-maturities):/.test(gap))
     && ['net-income', 'operating-margin', 'cash'].every(name => record.metrics.some(metric => metric.name === name))
-    && record.sources.some(source => /\/LH-QR-20\d{2}-[1-3]-e\.pdf$/i.test(source.url))
+    && record.sources.some(source => /\/L[HG]-QR-20\d{2}-[1-3]-e\.pdf$/i.test(source.url))
     && record.sources.some(source => /\/LH-AR-20\d{2}-e\.pdf$/i.test(source.url));
   const reviewedBitcoinMiCarSource = record.sources.some(source => source.url === bitcoinMiCarSource.url)
     || record.gaps.some(gap => gap.startsWith('EU-') && gap.includes(bitcoinMiCarSource.url) && gap.includes('konnte nicht aktuell geladen oder validiert werden'));

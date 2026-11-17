@@ -108,6 +108,7 @@ const APOLLO_ELTIF_ISIN = 'LU3170240538';
 const APOLLO_ELTIF_KID_ARCHIVE = 'https://www.francetransactions.com/IMG/pdf/dic-apollo-private-equity.pdf';
 const APOLLO_ELTIF_PAGE = 'https://www.apollo.com/agpm-eltif';
 const stockExcerptVersion = (isin: string) => isin === 'DE0008430026' ? 4
+  : isin === 'DE0008232125' ? 3
   : ['US5801351017', 'DK0062498333', 'US6701002056', 'DE0007030009', 'US6092071058'].includes(isin) ? 3
     : isin === 'US84615Q1031' ? 5 : 2;
 const apolloEltifDocumentUrl = (url: string) => url === APOLLO_ELTIF_KID_ARCHIVE;
@@ -123,11 +124,16 @@ const munichHalfYearRiskUpdateReport = (url: string) => url.includes('/2026-half
 const munichRiskExcerptReport = (url: string) => munichAnnualLegalReport(url) || munichHalfYearRiskUpdateReport(url);
 const LUFTHANSA_REPORT_INDEX = 'https://investor-relations.lufthansagroup.com/en/financial-reports-publications/financial-reports.html';
 const lufthansaReportPeriod = (url: string): string | null => {
-  const interim = /\/LH-QR-(20\d{2})-([1-3])-e\.pdf$/i.exec(url);
+  const interim = /\/L[HG]-QR-(20\d{2})-([1-3])-e\.pdf$/i.exec(url);
   if (interim) return `${interim[1]}-${['03-31', '06-30', '09-30'][Number(interim[2]) - 1]}`;
   const annual = /\/LH-AR-(20\d{2})-e\.pdf$/i.exec(url);
   return annual ? `${annual[1]}-12-31` : null;
 };
+const lufthansaReportLinks = (html: string, baseUrl: string, now: number): string[] => [...html.matchAll(/href=["']([^"']+\/L[HG]-(?:QR-20\d{2}-[1-3]|AR-20\d{2})-e\.pdf(?:\?[^"']*)?)["']/gi)]
+  .map(match => new URL(decodeEntities(match[1]), baseUrl).toString().split('?')[0])
+  .filter(url => new URL(url).hostname === 'investor-relations.lufthansagroup.com'
+    && new URL(url).pathname.startsWith('/fileadmin/downloads/en/financial-reports/')
+    && !!lufthansaReportPeriod(url) && Date.parse(lufthansaReportPeriod(url)!) <= now);
 const SEC_CIK_BY_ISIN: Record<string, string> = {
   US0530151036: '0000008670',
   US5801351017: '0000063908',
@@ -319,6 +325,14 @@ function spaceXContinuityQuote(html: string): string {
   const text = decodeEntities(tail).replace(/\s+/g, ' ');
   return /We believe that our existing sources of liquidity and other financing activities will be sufficient to meet our anticipated cash needs for at least the next twelve months/i.exec(text)?.[0] ?? '';
 }
+function lufthansaGoingConcernExcerpt(text: string): string {
+  const conclusion = /Taking into account the corporate planning and the resulting liquidity planning, the further potential funding measures and the uncertainties about the future course of business, the Company[’']s Executive Board considers the Group[’']s liquidity to be secure for the next 18 months\.\s*The consolidated financial statements were therefore prepared on a going concern basis\./i.exec(text);
+  if (!conclusion) return '';
+  const heading = /Matters of significance for the interim financial statements and going concern status/i.exec(text);
+  const start = heading && heading.index <= conclusion.index && conclusion.index - heading.index <= 6000
+    ? heading.index : Math.max(0, conclusion.index - 1200);
+  return text.slice(start, conclusion.index + conclusion[0].length).replace(/\s+/g, ' ').trim();
+}
 export function riskExcerpt(html: string, type: AnalysisPosition['type'] = 'Stock', insurance = false, isin = '',
   onDiagnostic?: (step: string, details?: Record<string, string | number | boolean>) => void): string {
   onDiagnostic?.('html-strip-start', { inputChars: html.length });
@@ -334,6 +348,7 @@ export function riskExcerpt(html: string, type: AnalysisPosition['type'] = 'Stoc
   const qdve = type === 'ETF' && isin === 'IE00B3WJKG14';
   const vgwd = type === 'ETF' && isin === 'IE00B8GKDB10';
   const spaceX = type === 'Stock' && isin === 'US84615Q1031';
+  const lufthansa = type === 'Stock' && isin === 'DE0008232125';
   const rheinmetall = type === 'Stock' && isin === 'DE0007030009';
   const mondelez = type === 'Stock' && isin === 'US6092071058';
   const treasuryBond = type === 'Bond' && isin === TREASURY_BOND_ISIN;
@@ -345,6 +360,10 @@ export function riskExcerpt(html: string, type: AnalysisPosition['type'] = 'Stoc
       : qdve ? [...qdveKeywords, ...productKeywords] : vgwd ? [...vgwdKeywords, ...productKeywords]
       : treasuryBond ? [...treasuryBondKeywords, ...productKeywords]
         : apolloEltif ? [...apolloEltifKeywords, ...productKeywords] : productKeywords;
+  if (lufthansa) {
+    const excerpt = lufthansaGoingConcernExcerpt(plain);
+    if (excerpt) found.push(excerpt);
+  }
   for (const [patternIndex, pattern] of patterns.entries()) {
     onDiagnostic?.('keyword-pattern-start', { patternIndex, pattern: pattern.source.slice(0, 120) });
     pattern.lastIndex = 0;
@@ -448,6 +467,7 @@ export class PrimaryRiskResearch {
   private readonly cache = new Map<string, RiskDocument>();
   private readonly submissions = new Map<string, { fetchedAt: number; filings: ReturnType<typeof secUrls> }>();
   private readonly cikCache = new Map<string, { fetchedAt: number; cik: string | null }>();
+  private lufthansaReportIndexCache?: { fetchedAt: number; latestPeriod: string | null; verified: boolean };
   private tickerDirectory?: Promise<Array<{ cik_str: number; ticker: string; title: string }>>;
   constructor(private readonly file: string, private readonly requestFetch: typeof fetch = fetch, private readonly now = Date.now,
     private readonly tradeRepublicContractDocuments?: TradeRepublicContractDocumentStore) {
@@ -500,6 +520,40 @@ export class PrimaryRiskResearch {
     const loadedAt = set?.documents.length ? Math.min(...set.documents.map(document => document.fetchedAt)) : NaN;
     return { loadedAt: Number.isFinite(loadedAt) ? new Date(loadedAt).toISOString() : null,
       needsRefresh: !Number.isFinite(loadedAt) || loadedAt > this.now() || this.now() - loadedAt >= DAY };
+  }
+  async lufthansaReportFreshness(position: Pick<AnalysisPosition, 'isin'>, sources: AnalysisSource[]): Promise<{ newerReportAvailable: boolean; verified: boolean }> {
+    if (position.isin.trim().toUpperCase() !== 'DE0008232125') return { newerReportAvailable: false, verified: true };
+    if (!sources.length) return { newerReportAvailable: false, verified: false };
+    let latestPeriod: string | null;
+    const cached = this.lufthansaReportIndexCache;
+    if (cached && this.now() >= cached.fetchedAt && this.now() - cached.fetchedAt < DAY) {
+      if (!cached.verified) return { newerReportAvailable: false, verified: false };
+      latestPeriod = cached.latestPeriod;
+    }
+    else {
+      try {
+        const response = await this.requestFetch(LUFTHANSA_REPORT_INDEX, { headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' },
+          signal: AbortSignal.timeout(10000) });
+        if (!response.ok || Number(response.headers.get('content-length')) > 2_000_000) {
+          this.lufthansaReportIndexCache = { fetchedAt: this.now(), latestPeriod: null, verified: false };
+          return { newerReportAvailable: false, verified: false };
+        }
+        const html = await response.text();
+        if (html.length > 2_000_000) {
+          this.lufthansaReportIndexCache = { fetchedAt: this.now(), latestPeriod: null, verified: false };
+          return { newerReportAvailable: false, verified: false };
+        }
+        const links = lufthansaReportLinks(html, LUFTHANSA_REPORT_INDEX, this.now());
+        latestPeriod = links.map(lufthansaReportPeriod).filter((period): period is string => !!period).sort().at(-1) ?? null;
+        this.lufthansaReportIndexCache = { fetchedAt: this.now(), latestPeriod, verified: !!latestPeriod };
+        if (!latestPeriod) return { newerReportAvailable: false, verified: false };
+      } catch {
+        this.lufthansaReportIndexCache = { fetchedAt: this.now(), latestPeriod: null, verified: false };
+        return { newerReportAvailable: false, verified: false };
+      }
+    }
+    const loadedPeriod = sources.map(source => lufthansaReportPeriod(source.url)).filter((period): period is string => !!period).sort().at(-1);
+    return { newerReportAvailable: !loadedPeriod || !!latestPeriod && latestPeriod > loadedPeriod, verified: true };
   }
   private async resolveCik(position: AnalysisPosition, signal?: AbortSignal): Promise<string | null> {
     const known = SEC_CIK_BY_ISIN[position.isin.trim().toUpperCase()];
@@ -668,14 +722,10 @@ export class PrimaryRiskResearch {
         if (!response.ok || Number(response.headers.get('content-length')) > 2_000_000) throw new Error('Report index unavailable');
         const html = await response.text();
         if (html.length > 2_000_000) throw new Error('Report index too large');
-        const discovered = [...html.matchAll(/href=["']([^"']+\/LH-(?:QR-20\d{2}-[1-3]|AR-20\d{2})-e\.pdf(?:\?[^"']*)?)["']/gi)]
-          .map(match => new URL(decodeEntities(match[1]), LUFTHANSA_REPORT_INDEX).toString().split('?')[0])
-          .filter(url => new URL(url).hostname === 'investor-relations.lufthansagroup.com'
-            && new URL(url).pathname.startsWith('/fileadmin/downloads/en/financial-reports/')
-            && !!lufthansaReportPeriod(url) && Date.parse(lufthansaReportPeriod(url)!) <= this.now());
+        const discovered = lufthansaReportLinks(html, LUFTHANSA_REPORT_INDEX, this.now());
         const newest = (pattern: RegExp) => discovered.filter(url => pattern.test(url))
           .sort((a, b) => lufthansaReportPeriod(b)!.localeCompare(lufthansaReportPeriod(a)!))[0];
-        for (const url of [newest(/\/LH-AR-/), newest(/\/LH-QR-/)].filter((value): value is string => !!value)) {
+        for (const url of [newest(/\/LH-AR-/), newest(/\/L[HG]-QR-/)].filter((value): value is string => !!value)) {
           curated.add(url);
           candidates.unshift(url);
         }

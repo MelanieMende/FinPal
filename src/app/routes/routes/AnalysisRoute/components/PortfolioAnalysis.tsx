@@ -100,18 +100,34 @@ export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onRel
   const loadedAt = status?.loadedAt ? Date.parse(status.loadedAt) : NaN;
   const current = !!status && !status.needsRefresh && Number.isFinite(loadedAt) && loadedAt <= now
     && now - loadedAt < 24 * 60 * 60 * 1000;
+  const newReportAwaitingReview = risk.primaryDocumentsChanged === true;
+  const reportVersionAvailable = status?.newerReportAvailable === true;
+  const publicationCheckUnverified = status?.publicationCheckVerified === false;
   const documents = (risk.primaryDocuments ?? []).filter(source => source && typeof source.url === 'string' && typeof source.title === 'string');
   return <section aria-label="Primärberichte" className="my-3 min-w-0 rounded border border-white/10 bg-slate-950/25 p-3">
     <div className="flex min-w-0 flex-wrap items-start gap-2">
     <details className="group min-w-0 flex-1">
-      <summary className={`flex min-w-0 cursor-pointer list-none items-center gap-2 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${current && !excerptNeedsRefresh ? 'text-emerald-300' : 'text-amber-300'}`}>
-        <Icon icon={current && !excerptNeedsRefresh ? 'tick-circle' : 'refresh'} size={14} aria-hidden="true" />
-        <span className="min-w-0 break-words">Berichte laden: {loading && forceReload ? 'wird ausgeführt' : excerptNeedsRefresh ? 'neuer Auszug erforderlich' : current ? 'geladen · aktuell' : 'Aktualitätsprüfung fällig · neu laden'}</span>
+      <summary className={`flex min-w-0 cursor-pointer list-none items-center gap-2 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${current && !excerptNeedsRefresh && !newReportAwaitingReview ? 'text-emerald-300' : 'text-amber-300'}`}>
+        <Icon icon={current && !excerptNeedsRefresh && !newReportAwaitingReview ? 'tick-circle' : 'refresh'} size={14} aria-hidden="true" />
+        <span className="min-w-0 break-words">Berichte laden: {loading && forceReload ? 'wird ausgeführt'
+          : excerptNeedsRefresh ? 'neuer Auszug erforderlich'
+            : reportVersionAvailable ? 'neuere Berichtsversion verfügbar · neu laden'
+              : newReportAwaitingReview ? 'Berichte geladen · Risikoprüfung ausstehend'
+                : publicationCheckUnverified ? 'Berichtsstand nicht abgeglichen · neu laden'
+                  : current ? 'geladen · aktuell' : 'Aktualitätsprüfung fällig · neu laden'}</span>
         <Icon icon="chevron-right" size={12} aria-hidden="true" className="ml-auto shrink-0 text-gray-500 transition-transform group-open:rotate-90" />
       </summary>
       <div className="mt-2 min-w-0 space-y-2 border-t border-white/10 pt-2">
-        {Number.isFinite(checkedAt)
-          ? <p className="m-0 text-xs text-gray-400">Risiken zuletzt geprüft: {formatSyncTime(new Date(checkedAt).toISOString())}. Berichtsauszüge {Number.isFinite(loadedAt) ? `zuletzt geladen: ${formatSyncTime(new Date(loadedAt).toISOString())}` : 'ohne gültigen Ladezeitpunkt'}. Nach 24 Stunden ist eine neue Aktualitätsprüfung fällig.</p>
+        {newReportAwaitingReview
+          ? <p className="m-0 text-xs text-amber-200">Eine neue Berichtsversion wurde geladen. Die inhaltliche Risikoprüfung steht noch aus; bitte „Risiken neu prüfen“ wählen.</p>
+          : reportVersionAvailable
+            ? <p className="m-0 text-xs text-amber-200">Eine neuere Berichtsversion ist verfügbar. Bitte die Berichte neu laden und danach die Risiken erneut prüfen.</p>
+            : publicationCheckUnverified
+              ? <p className="m-0 text-xs text-amber-200">Der aktuelle Berichtsstand konnte nicht mit der Emittentenübersicht abgeglichen werden. Bitte die Berichte erneut laden.</p>
+          : Number.isFinite(checkedAt) && !Number.isFinite(loadedAt)
+          ? <p className="m-0 text-xs text-amber-200">Kein gültiger Ladezeitpunkt der Berichtsauszüge. Bitte die Berichte neu laden; eine 24-Stunden-Prüffrist lässt sich nicht bestimmen.</p>
+          : Number.isFinite(checkedAt)
+          ? <p className="m-0 text-xs text-gray-400">Risiken zuletzt geprüft: {formatSyncTime(new Date(checkedAt).toISOString())}. Berichtsauszüge zuletzt geladen: {formatSyncTime(new Date(loadedAt).toISOString())}. Nach 24 Stunden ist eine neue Aktualitätsprüfung fällig.</p>
           : <p className="m-0 text-xs text-gray-400">Für diese Analyse ist kein Prüfzeitpunkt der Primärberichte gespeichert.</p>}
         {documents.length
           ? <div className="flex flex-wrap gap-2" aria-label="Geladene Primärberichte">
@@ -156,8 +172,7 @@ export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, c
   const metrics = lines.filter(line => metricPrefixes.some(prefix => line.startsWith(prefix)));
   const reviewedResidual = lines.filter(line => line.toLocaleLowerCase('de-DE').includes(': geprüfte restunsicherheit')
     || (risk.decisionReadiness === 'reviewed-uncertainty' && lineLabel(line) === 'Regulatorische Risiken' && /: offen\b/i.test(line))
-    || (risk.decisionReadiness === 'reviewed-uncertainty' && lineLabel(line) === 'Fortführung'
-      && /Verfügbare Primärberichte geprüft: Eine konkrete unternehmensbezogene Aussage zu wesentlichen Fortführungsunsicherheiten fehlt/i.test(line)));
+    || (risk.decisionReadiness === 'reviewed-uncertainty' && lineLabel(line) === 'Fortführung' && /: offen\b/i.test(line)));
   const explicitFinding = (line: string) => /:\s*(?:Risiko belegt|kein wesentliches Risiko belegt)\s*\(/i.test(line);
   const open = lines.filter(line => !materialFindings.includes(line) && !metrics.includes(line) && !reviewedResidual.includes(line)
     && !isStructuralFinding(line) && !explicitFinding(line)

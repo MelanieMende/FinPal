@@ -356,19 +356,22 @@ export class PortfolioAnalysisService {
         expiresAt: cached ? new Date(cached.fetchedAt + RESEARCH_CACHE_TTL_MS).toISOString() : null };
     });
   }
-  getPrimaryDocumentStatus(assets: ResearchAsset[]): PrimaryDocumentStatus[] {
+  async getPrimaryDocumentStatus(assets: ResearchAsset[]): Promise<PrimaryDocumentStatus[]> {
     if (!Array.isArray(assets) || assets.length > 100 || assets.some(asset => !asset || !Number.isInteger(asset.id)
       || ![asset.name, asset.isin, asset.symbol, asset.type].every(value => typeof value === 'string' && value.length <= 300)))
       throw new Error('Die Asset-Kennungen sind ungültig.');
     const saved = this.getLastResult();
     const savedRequest = saved ? JSON.parse(fs.readFileSync(this.resultFile, 'utf8')).request as PortfolioAnalysisRequest : null;
-    return assets.map(asset => {
+    return Promise.all(assets.map(async asset => {
       const position = savedRequest?.positions.find(item => item.id === asset.id && item.type === asset.type
         && item.isin.trim().toUpperCase() === asset.isin.trim().toUpperCase());
       const risk = saved?.report.fundamentalRisks?.find(item => item.key === String(asset.id));
-      return { assetId: asset.id, ...this.primaryRiskResearch.cachedStatus(asset,
-        position ? risk?.primaryDocuments ?? [] : []) };
-    });
+      const sources = position ? risk?.primaryDocuments ?? [] : [];
+      const status = this.primaryRiskResearch.cachedStatus(asset, sources);
+      const publication = await this.primaryRiskResearch.lufthansaReportFreshness(asset, sources);
+      return { assetId: asset.id, ...status, ...publication,
+        needsRefresh: status.needsRefresh || publication.newerReportAvailable || !publication.verified };
+    }));
   }
   constructor(dataPath: string, private readonly requestFetch: typeof fetch = fetch, private readonly chatGptAuth?: ChatGptAuth,
     private readonly marketForecastProvider?: MarketForecastProvider,
@@ -717,7 +720,10 @@ export class PortfolioAnalysisService {
       throw new Error('Das Asset wurde seit der gespeicherten Analyse geändert. Bitte die Portfolioanalyse neu starten.');
     const request = currentInvestorContext ? { ...savedRequest, investorContext: currentInvestorContext } : savedRequest;
     const oldRisk = previous.report.fundamentalRisks?.find(item => item.key === String(asset.id));
-    const documentsCurrent = !this.primaryRiskResearch.cachedStatus(position, oldRisk?.primaryDocuments ?? []).needsRefresh;
+    const oldSources = oldRisk?.primaryDocuments ?? [];
+    const publication = await this.primaryRiskResearch.lufthansaReportFreshness(position, oldSources);
+    const documentsCurrent = !this.primaryRiskResearch.cachedStatus(position, oldSources).needsRefresh
+      && !publication.newerReportAvailable && publication.verified;
     const reusedDocuments = !documentsOnly && documentsCurrent
       ? this.primaryRiskResearch.reuseCached(position, oldRisk?.primaryDocuments ?? []) : null;
     if (!documentsOnly && documentsCurrent && !reusedDocuments)

@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="2280" viewBox="0 0 1200 2280" role="img" aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="2390" viewBox="0 0 1200 2390" role="img" aria-labelledby="title description">
   <title id="title">FinPal Analyseablauf</title>
   <desc id="description">Flussdiagramm vom Laden der Finanzdaten über Recherche, Risikoprüfung mit aktuell bestätigten Verwahr-, Produkt- und Steuerangaben und Portfoliomodell bis zur validierten Empfehlung. Geladene Primärberichte werden vollständig nach relevanten Belegen durchsucht; nur kompakte, relevante Auszüge gehen in die inhaltliche Bewertung ein. In der Gesamtanalyse wird der gespeicherte Risikobefund für aktuelle, unveränderte Primärberichte und unveränderte Prüflogik wiederverwendet und direkt an die Forecasts übergeben; nur neue oder geänderte Belege beziehungsweise eine geänderte Prüflogik lösen eine erneute inhaltliche KI-Prüfung aus. Der optionale Trade-Republic-Dokumentensync behält nur erkannte Krypto-Vertrags-PDFs dauerhaft; andere Timeline-PDFs werden nach der temporären Prüfung entfernt. Eine ausdrücklich nutzerbestätigte Angabe zu direkt gehaltenen Kryptowerten kann zusammen mit bestätigter Trade-Republic-Verwahrung die angegebene Halteform zuordnen, ersetzt aber keine Produktverifizierung oder passenden Vertragsunterlagen. Bei Bitcoin werden MiCAR-Diensterahmen, Steuerquellen, Anbieterstatus und exakt passende Produktvertragsunterlagen getrennt bewertet. Bestätigt der Nutzer, dass bei Trade Republic keine BTC-Produktunterlagen verfügbar sind, gilt dies höchstens drei Monate als geprüfte Restunsicherheit; danach ist eine erneute Bestätigung erforderlich. Eine Anbieterzulassung oder Steuerregel belegt keine Produktbilligung. Die Bitcoin-Mining-Pool-Verteilung wird als aktuelle 7-Tage-Blockstichprobe geprüft; sie belegt keine tatsächliche Hashing-Kontrolle. Belegte Risiken sind Entscheidungsfaktoren und keine automatischen Blocker. Das Ergebnis enthält für jedes aktuell gehaltene Asset eine eigene Karte; dessen dauerhafte Einzelangaben stehen direkt unter dem KI-Ergebnis.</desc>
   <defs>
@@ -28,7 +28,7 @@
     </style>
   </defs>
 
-  <rect width="1200" height="2280" rx="24" fill="#ffffff"/>
+  <rect width="1200" height="2390" rx="24" fill="#ffffff"/>
   <text x="600" y="54" text-anchor="middle" class="title">FinPal Analyseablauf</text>
   <text x="600" y="86" text-anchor="middle" class="subtitle">Von aktuellen Finanzdaten zur fachlich begründeten und validierten Handlungsempfehlung</text>
   <rect x="900" y="112" width="240" height="24" rx="12" class="ai-badge"/>
@@ -65,31 +65,37 @@
   <text x="600" y="753" text-anchor="middle" class="node-title">Aktualitätsprüfung notwendig?</text>
   <text x="600" y="780" text-anchor="middle" class="node-text">Letzte Prüfung älter als 24 Stunden</text>
 
-  <path d="M600 840 H220 V860" class="edge"/>
+  <path d="M600 840 V965" class="edge"/>
   <text x="490" y="850" class="edge-label">Nein</text>
-  <rect x="50" y="862" width="340" height="82" rx="14" class="positive"/>
-  <text x="220" y="896" text-anchor="middle" class="node-title">Geladene Berichte verwenden</text>
-  <text x="220" y="921" text-anchor="middle" class="node-text">Gespeicherten Befund nutzen, wenn unverändert</text>
-  <path d="M220 944 H20 V1580 H220" class="edge"/>
+  <rect x="50" y="979" width="340" height="82" rx="14" class="positive"/>
+  <text x="220" y="1013" text-anchor="middle" class="node-title">Geladene Berichte verwenden</text>
+  <text x="220" y="1038" text-anchor="middle" class="node-text">Gespeicherten Befund nutzen, wenn unverändert</text>
+  <path d="M220 1061 H20 V1690 H220" class="edge"/>
 
   <path d="M790 760 H960 V860" class="edge"/>
   <text x="850" y="747" class="edge-label">Ja</text>
   <rect x="780" y="862" width="360" height="82" rx="14" class="research"/>
   <text x="960" y="896" text-anchor="middle" class="node-title">Aktualität neu prüfen</text>
-  <text x="960" y="921" text-anchor="middle" class="node-text">Quellenstand abgleichen</text>
-  <path d="M780 902 H392" class="edge"/>
-  <text x="565" y="891" class="edge-label">Unverändert</text>
-  <path d="M960 944 V980" class="edge"/>
-  <text x="980" y="968" class="edge-label">Neu oder geändert</text>
+  <text x="960" y="921" text-anchor="middle" class="node-text">Veröffentlichungsstand abgleichen</text>
+  <path d="M960 944 V1020 H755" class="edge"/>
 
-  <rect x="750" y="982" width="420" height="90" rx="14" class="research"/>
-  <text x="960" y="1015" text-anchor="middle" class="node-title">Primärberichte laden</text>
-  <path d="M770 1028 H1150" stroke="#c4b5fd" stroke-width="1.5"/>
-  <rect x="1084" y="1038" width="72" height="20" rx="10" class="ai-badge"/>
-  <text x="1120" y="1052" text-anchor="middle" class="ai-badge-text">KI</text>
-  <text x="945" y="1055" text-anchor="middle" class="node-title">Primärbelege auswerten</text>
+  <polygon points="600,965 755,1020 600,1075 445,1020" class="decision"/>
+  <text x="600" y="1014" text-anchor="middle" class="node-title">Neue Berichtsversion</text>
+  <text x="600" y="1038" text-anchor="middle" class="node-text">verfügbar?</text>
+  <path d="M445 1020 H392" class="edge"/>
+  <text x="405" y="1007" class="edge-label">Nein</text>
+  <path d="M600 1075 V1110" class="edge"/>
+  <text x="620" y="1086" class="edge-label">Ja</text>
 
-  <path d="M960 1072 V1100 H600 V1140" class="edge"/>
+  <rect x="390" y="1112" width="420" height="90" rx="14" class="research"/>
+  <text x="600" y="1145" text-anchor="middle" class="node-title">Primärberichte laden</text>
+  <path d="M410 1158 H790" stroke="#c4b5fd" stroke-width="1.5"/>
+  <rect x="724" y="1168" width="72" height="20" rx="10" class="ai-badge"/>
+  <text x="760" y="1182" text-anchor="middle" class="ai-badge-text">KI</text>
+  <text x="585" y="1185" text-anchor="middle" class="node-title">Primärbelege auswerten</text>
+
+  <path d="M600 1202 V1250" class="edge"/>
+  <g transform="translate(0 110)">
   <rect x="390" y="1140" width="420" height="86" rx="14" class="risk"/>
   <rect x="724" y="1146" width="72" height="20" rx="10" class="ai-badge"/>
   <text x="760" y="1160" text-anchor="middle" class="ai-badge-text">KI</text>
@@ -166,4 +172,5 @@
   <text x="760" y="2170" text-anchor="middle" class="ai-badge-text">KI</text>
   <text x="600" y="2192" text-anchor="middle" class="node-title">KI-Empfehlung validieren</text>
   <text x="600" y="2217" text-anchor="middle" class="node-text">Quellen, Beträge, Finanzierung, Blocker · Asset-Karten</text>
+  </g>
 </svg>

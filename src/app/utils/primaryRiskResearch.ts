@@ -30,9 +30,6 @@ export interface RiskDocumentSet {
 
 const DAY = 24 * 60 * 60 * 1000;
 const MAX_BYTES = 16_000_000;
-// Risk-document extraction runs in Electron's main process. Keep large SEC HTML
-// filings from monopolizing the event loop while regexes scan the full document.
-const MAX_RISK_TEXT_CHARS = 1_500_000;
 const MAX_DOCUMENTS = 4;
 function logSpaceX(step: string, details: Record<string, string | number | boolean | null> = {}) {
   console.info('[primary-risk:spacex]', JSON.stringify({ step, at: new Date().toISOString(), ...details }));
@@ -110,8 +107,9 @@ const TREASURY_OFFERING_2020 = 'https://www.treasurydirect.gov/instit/annceresul
 const APOLLO_ELTIF_ISIN = 'LU3170240538';
 const APOLLO_ELTIF_KID_ARCHIVE = 'https://www.francetransactions.com/IMG/pdf/dic-apollo-private-equity.pdf';
 const APOLLO_ELTIF_PAGE = 'https://www.apollo.com/agpm-eltif';
-const stockExcerptVersion = (isin: string) => ['US5801351017', 'DK0062498333', 'US6701002056', 'DE0007030009', 'US6092071058',
-  'DE0008430026'].includes(isin) ? 3 : isin === 'US84615Q1031' ? 5 : 2;
+const stockExcerptVersion = (isin: string) => isin === 'DE0008430026' ? 4
+  : ['US5801351017', 'DK0062498333', 'US6701002056', 'DE0007030009', 'US6092071058'].includes(isin) ? 3
+    : isin === 'US84615Q1031' ? 5 : 2;
 const apolloEltifDocumentUrl = (url: string) => url === APOLLO_ELTIF_KID_ARCHIVE;
 const treasuryAuctionUrl = (url: string) => /^https:\/\/www\.treasurydirect\.gov\/instit\/annceresult\/press\/preanre\/2020\/(?:R_20200819_3|A_20201015_1)\.pdf$/i.test(url);
 const treasuryGeneralUrl = (url: string) => [
@@ -215,6 +213,7 @@ const insuranceKeywords = [
   /Our objective in managing liquidity risk is to ensure that we\s+are in a position to meet our payment obligations at all\s+times/ig,
   /quantitative risk criteria also ensures that sufficient liquidity\s+is available even under adverse scenarios/ig,
   /The overview below shows the liquidity requirements\s+arising from our financial liabilities, divided into maturity\s+bands/ig,
+  /Maturity analysis of future\s+\(undiscounted\)\s+cash flows from financial liabilities/ig,
   /net result|consolidated result|konzernergebnis/ig,
   /combined ratio|total technical result|underwriting result|versicherungstechnisch/ig,
   /solvency ratio|solvency capital requirement|eligible own funds|solvenzquote/ig,
@@ -455,17 +454,17 @@ export class PrimaryRiskResearch {
     try {
       if (fs.statSync(file).size > 20_000_000) return;
       const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
-      if ([1, 2].includes(saved.version) && Array.isArray(saved.documents)) for (const doc of saved.documents.slice(-120)) {
+      if (saved.version === 3 && Array.isArray(saved.documents)) for (const doc of saved.documents.slice(-120)) {
         if (doc && typeof doc.source?.url === 'string' && typeof doc.excerpt === 'string' && typeof doc.hash === 'string'
           && Number.isFinite(doc.fetchedAt) && typeof doc.source?.title === 'string') this.cache.set(doc.source.url,
             doc.source.title.trim() ? doc : { ...doc, source: { ...doc.source,
               title: doc.source.url.split('/').filter(Boolean).pop() || 'Primärbericht' } });
       }
-      if (saved.version === 2 && Array.isArray(saved.submissions)) for (const entry of saved.submissions) {
+      if ([2, 3].includes(saved.version) && Array.isArray(saved.submissions)) for (const entry of saved.submissions) {
         if (entry && typeof entry.cik === 'string' && Number.isFinite(entry.fetchedAt) && Array.isArray(entry.filings))
           this.submissions.set(entry.cik, { fetchedAt: entry.fetchedAt, filings: entry.filings });
       }
-      if (saved.version === 2 && Array.isArray(saved.identifiers)) for (const entry of saved.identifiers) {
+      if ([2, 3].includes(saved.version) && Array.isArray(saved.identifiers)) for (const entry of saved.identifiers) {
         if (entry && typeof entry.isin === 'string' && Number.isFinite(entry.fetchedAt) &&
           (entry.cik === null || /^\d{10}$/.test(entry.cik))) this.cikCache.set(entry.isin, { fetchedAt: entry.fetchedAt, cik: entry.cik });
       }
@@ -475,7 +474,7 @@ export class PrimaryRiskResearch {
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const temporary = this.file + '.tmp';
     try {
-      fs.writeFileSync(temporary, JSON.stringify({ version: 2, documents: [...this.cache.values()].slice(-120),
+      fs.writeFileSync(temporary, JSON.stringify({ version: 3, documents: [...this.cache.values()].slice(-120),
         submissions: [...this.submissions].map(([cik, value]) => ({ cik, ...value })),
         identifiers: [...this.cikCache].map(([isin, value]) => ({ isin, ...value })) }), { mode: 0o600 });
       fs.renameSync(temporary, this.file);
@@ -567,7 +566,7 @@ export class PrimaryRiskResearch {
           || source.url.toLowerCase().endsWith('.pdf'))) {
           const { PDFParse } = loadPdfParser();
           const parser = new PDFParse({ data });
-          try { plain = (await parser.getText({ first: 1, last: 40 })).text; }
+          try { plain = (await parser.getText()).text; }
           finally { await parser.destroy(); }
         }
         const excerpt = miningPoolSource ? bitcoinMiningPoolExcerpt(data, fetchedAt) : riskExcerpt(plain, 'Crypto');
@@ -773,27 +772,20 @@ export class PrimaryRiskResearch {
         const contentType = response.headers.get('content-type') ?? '';
         let plain: string;
         let spaceXFullHtml = '';
-        let documentTextTruncated = false;
         if (contentType.includes('pdf') || url.toLowerCase().endsWith('.pdf')) {
           const parseStartedAt = Date.now();
           if (spaceX) onSpaceXStep?.('pdf-parse');
-          if (spaceX) logSpaceX('pdf-parse-start', { source: safeSource(url), bytes: data.length, pagesRequested: 12 });
+          if (spaceX) logSpaceX('pdf-parse-start', { source: safeSource(url), bytes: data.length, allPages: true });
           const { PDFParse } = loadPdfParser();
           const parser = new PDFParse({ data });
           try {
-            // Keep PDF extraction bounded on Electron's main process. SEC filings
-            // can be very large and only the latest SpaceX filing is required here.
-            plain = (await parser.getText({ first: 1, last: spaceX ? 12 : 40 })).text;
+            plain = (await parser.getText()).text;
           } finally { await parser.destroy(); }
           if (spaceX) logSpaceX('pdf-parse-complete', { source: safeSource(url), elapsedMs: Date.now() - parseStartedAt, textChars: plain.length });
         } else {
           plain = data.toString('utf8');
           if (spaceX) spaceXFullHtml = plain;
-          documentTextTruncated = plain.length > MAX_RISK_TEXT_CHARS;
-          if (documentTextTruncated) plain = plain.slice(0, MAX_RISK_TEXT_CHARS);
         }
-        documentTextTruncated ||= plain.length > MAX_RISK_TEXT_CHARS;
-        if (documentTextTruncated) plain = plain.slice(0, MAX_RISK_TEXT_CHARS);
         const treasuryGeneral = position.type === 'Bond' && position.isin.trim().toUpperCase() === TREASURY_BOND_ISIN
           && treasuryGeneralUrl(url) && documents.some(document => treasuryAuctionUrl(document.source.url));
         if (treasuryGeneral && !/Treasury marketable securit(?:y|ies)|Treasury Bonds/i.test(plain)) throw new Error('Treasury context not confirmed');
@@ -824,7 +816,6 @@ export class PrimaryRiskResearch {
         }
         if (spaceX) logSpaceX('risk-excerpt-complete', { excerptChars: excerpt.length });
         if (!excerpt) throw new Error('No risk evidence');
-        if (documentTextTruncated) gaps.push(`Primärdokument nur teilweise ausgewertet (Textlimit ${MAX_RISK_TEXT_CHARS.toLocaleString('de-DE')} Zeichen): ${url}`);
         if (position.type !== 'Stock' && !treasuryGeneral && !apolloCompanion && !excerpt.toUpperCase().includes(position.isin.trim().toUpperCase())
           && !(position.type === 'Bond' && excerpt.includes(position.isin.trim().slice(2, -1))))
           throw new Error('Instrument identity absent from risk excerpt');

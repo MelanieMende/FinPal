@@ -1,6 +1,6 @@
 import type { AnalysisPosition } from './portfolioAnalysis';
 
-export const ASSET_RISK_POLICY_VERSION = 'asset-type-primary-review-v5';
+export const ASSET_RISK_POLICY_VERSION = 'asset-type-primary-review-v6';
 export const riskChecksByType = {
   Stock: ['loss-making', 'low-margin', 'financing', 'going-concern', 'regulatory'],
   ETF: ['identity', 'strategy', 'costs', 'concentration', 'liquidity', 'structure', 'currency', 'regulatory'],

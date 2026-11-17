@@ -545,7 +545,8 @@ function qualifyMunichFinancingAndContinuity(position: AnalysisPosition, check: 
   const annualIndex = documents.findIndex(document => munichAnnualReport(document)
     && /objective in managing liquidity risk is to ensure that we\s+are in a position to meet our payment obligations at all\s+times/i.test(document.excerpt)
     && /sufficient liquidity\s+is available even under adverse scenarios/i.test(document.excerpt)
-    && /liquidity requirements\s+arising from our financial liabilities, divided into maturity\s+bands/i.test(document.excerpt));
+    && /liquidity requirements\s+arising from our financial liabilities, divided into maturity\s+bands/i.test(document.excerpt)
+    && /Maturity analysis of future\s+\(undiscounted\)\s+cash flows from financial liabilities[\s\S]{0,800}Subordinated liabilities\s+[–-]?\d/i.test(document.excerpt));
   const currentCash = munichReCashFromBalanceSheet(position, documents);
   if (annualIndex < 0 || !documents.some(munichRiskCarriedForward) || !currentCash) {
     if (check.finding === 'unknown' && check.reason === munichFinancingOpen && check.documentIndex === null) return check;
@@ -629,7 +630,7 @@ function qualifyMcdRegulatoryRisk(position: AnalysisPosition, check: RiskCheck, 
 export function riskFingerprint(position: AnalysisPosition, set: RiskDocumentSet): string {
   return createHash('sha256').update(JSON.stringify({ policy: RISK_POLICY, isin: riskInstrumentId(position),
     type: position.type, ...(position.isin.trim().toUpperCase() === 'US5801351017' ? { mcdReviewVersion: 2 } : {}),
-    ...(position.isin.trim().toUpperCase() === 'DE0008430026' ? { munichReviewVersion: 3 } : {}),
+    ...(position.isin.trim().toUpperCase() === 'DE0008430026' ? { munichReviewVersion: 4 } : {}),
     ...(position.isin.trim().toUpperCase() === 'US84615Q1031' ? { spaceXReviewVersion: 4 } : {}),
     ...(position.type === 'Crypto' ? { cryptoReviewVersion: 1 } : {}),
     ...(position.type === 'Crypto' && set.reviewContext ? { cryptoReviewContext: {
@@ -656,10 +657,10 @@ export function primaryDocumentsFingerprint(set: RiskDocumentSet): string {
   const documents = set.documents.filter(doc => doc.identity !== 'bitcoin-mining-pools')
     .map(doc => [doc.source.url, doc.hash, doc.excerptVersion ?? 0])
     .sort((a, b) => String(a[0]).localeCompare(String(b[0])));
-  return createHash('sha256').update(JSON.stringify(documents)).digest('hex');
+  return createHash('sha256').update(JSON.stringify({ policy: RISK_POLICY, documents })).digest('hex');
 }
 function legacyMcdFingerprint(position: AnalysisPosition, set: RiskDocumentSet): string {
-  return createHash('sha256').update(JSON.stringify({ policy: RISK_POLICY, isin: position.isin.trim().toUpperCase(),
+  return createHash('sha256').update(JSON.stringify({ policy: 'asset-type-primary-review-v5', isin: position.isin.trim().toUpperCase(),
     type: position.type, documents: set.documents.map(doc => [doc.source.url, doc.hash, 0])
       .sort((a, b) => String(a[0]).localeCompare(String(b[0]))) })).digest('hex');
 }

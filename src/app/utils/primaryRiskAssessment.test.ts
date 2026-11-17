@@ -513,7 +513,7 @@ it('closes Munich Re financing only with liquidity, maturities, current cash and
   const insurer = { ...position, id: 11, name: 'Munich Re', isin: 'DE0008430026', symbol: 'MUV2.DE' };
   const annual = { ...document, period: '2025-12-31', source: { title: 'Annual Report 2025',
     url: 'https://www.munichre.com/content/dam/munichre/mrwebsiteslaunches/2025-annual-report/MunichRe-Group-Annual-Report-2025-en.pdf' },
-  excerpt: riskExcerpt('Munich Re. Our objective in managing liquidity risk is to ensure that we are in a position to meet our payment obligations at all times. The use of quantitative risk criteria also ensures that sufficient liquidity is available even under adverse scenarios. The overview below shows the liquidity requirements arising from our financial liabilities, divided into maturity bands.', 'Stock', true) };
+  excerpt: riskExcerpt('Munich Re. Our objective in managing liquidity risk is to ensure that we are in a position to meet our payment obligations at all times. The use of quantitative risk criteria also ensures that sufficient liquidity is available even under adverse scenarios. The overview below shows the liquidity requirements arising from our financial liabilities, divided into maturity bands. Maturity analysis of future (undiscounted) cash flows from financial liabilities. Subordinated liabilities -7,434 -242 -301.', 'Stock', true) };
   const halfYear = { ...document, period: '2026-06-30', source: { title: 'Half-Year Financial Report 2026',
     url: 'https://www.munichre.com/content/dam/munichre/mrwebsiteslaunches/2026-half-year-financial-report/MunichRe-Half-Year-Financial-Report-2026-en.pdf' },
   // The production excerpt can start inside the matched context window and omit "statements relating to".
@@ -530,7 +530,8 @@ it('closes Munich Re financing only with liquidity, maturities, current cash and
   expect(result.gaps.some(gap => gap.startsWith('financing:'))).toBe(false);
   expect(result.gaps.some(gap => gap.startsWith('going-concern:'))).toBe(true);
   const withoutMaturity = validateRiskAssessment(insurer, { ...sourceSet, documents: [
-    { ...annual, excerpt: annual.excerpt.replaceAll('The overview below shows the liquidity requirements arising from our financial liabilities, divided into maturity bands.', '') }, halfYear,
+    { ...annual, excerpt: annual.excerpt.replaceAll('The overview below shows the liquidity requirements arising from our financial liabilities, divided into maturity bands.', '')
+      .replaceAll('Maturity analysis of future (undiscounted) cash flows from financial liabilities. Subordinated liabilities -7,434 -242 -301.', '') }, halfYear,
   ] }, { checks: [{ flag: 'financing', finding: 'unknown', reason: 'To be checked.', documentIndex: null, quote: '' }], metrics: [] });
   expect(withoutMaturity.checks.find(check => check.flag === 'financing')?.finding).toBe('unknown');
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-munich-upgrade-'));

@@ -9,7 +9,15 @@ import { TradeRepublicContractDocumentStore } from './tradeRepublicContractDocum
 
 jest.mock('pdf-parse', () => ({ PDFParse: class {
   constructor(private readonly options: { data: Buffer }) {}
-  async getText() { return { text: Buffer.from(this.options.data).toString('utf8') }; }
+  async getText(range?: { first?: number; last?: number }) {
+    const text = Buffer.from(this.options.data).toString('utf8');
+    const pages = text.split(/(?=\[\[PAGE \d+\]\])/);
+    if (pages.length === 1) return { text };
+    return { text: pages.filter(page => {
+      const number = Number(/^\[\[PAGE (\d+)\]\]/.exec(page)?.[1]);
+      return Number.isInteger(number) && number >= (range?.first ?? 1) && number <= (range?.last ?? Number.MAX_SAFE_INTEGER);
+    }).join('\n') };
+  }
   async destroy() { /* No native resources in this fixture. */ }
 } }));
 
@@ -414,8 +422,16 @@ it('loads Munich Re issuer reports for its German ISIN and reuses their dated ex
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-munich-documents-'));
   const now = Date.parse('2026-10-22T10:00:00Z');
   const position = { id: 11, name: 'Munich Re', isin: 'DE0008430026', symbol: 'MUV2.DE', type: 'Stock' } as AnalysisPosition;
-  const report = 'Munich Re Half-Year Financial Report 2026. Net result was 3925 EUR million. Combined ratio was 68.9 percent. Solvency ratio was 304 percent. Cash and cash equivalents were 5819 EUR million. Going concern and regulatory supervision are described.';
-  const fetcher = jest.fn(async (url: string) => new Response(report, { headers: { 'content-type': 'application/pdf' } }));
+  const report = '[[PAGE 1]] Munich Re Half-Year Financial Report 2026.\n' +
+    '[[PAGE 50]] Net result was 3925 EUR million. Combined ratio was 68.9 percent. Solvency ratio was 304 percent. Cash and cash equivalents were 5819 EUR million. Going concern and regulatory supervision are described.';
+  const annualReport = '[[PAGE 1]] Munich Re Group Annual Report 2025. Net result was EUR 6,000 million. ' +
+    `${'boilerplate '.repeat(125_001)}\n` +
+    '[[PAGE 364]] Our objective in managing liquidity risk is to ensure that we are in a position to meet our payment obligations at all times. ' +
+    'The use of quantitative risk criteria also ensures that sufficient liquidity is available even under adverse scenarios. ' +
+    'The overview below shows the liquidity requirements arising from our financial liabilities, divided into maturity bands. ' +
+    'Maturity analysis of future (undiscounted) cash flows from financial liabilities. Subordinated liabilities -7,434 -242 -301.';
+  const fetcher = jest.fn(async (url: string) => new Response(url.includes('Group-Annual-Report-2025') ? annualReport : report,
+    { headers: { 'content-type': 'application/pdf' } }));
   try {
     const file = path.join(folder, 'documents.json');
     const first = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
@@ -424,17 +440,21 @@ it('loads Munich Re issuer reports for its German ISIN and reuses their dated ex
     expect(first.documents).toHaveLength(4);
     expect(first.documents[0].period).toBe('2026-06-30');
     expect(first.documents[0].excerpt).toContain('Combined ratio');
+    const annual = first.documents.find(doc => doc.source.url.includes('Group-Annual-Report-2025'));
+    expect(annual?.excerpt).toContain('sufficient liquidity is available even under adverse scenarios');
+    expect(annual?.excerpt).toMatch(/Maturity analysis of future.*Subordinated liabilities/i);
     expect(first.documents.map(doc => doc.source.url)).toEqual(knownResearchSources(position));
     const second = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
     expect(fetcher).toHaveBeenCalledTimes(4);
     expect(second.documents.map(doc => doc.hash)).toEqual(first.documents.map(doc => doc.hash));
     const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
     const oldAnnual = saved.documents.find((doc: { source: { url: string } }) => doc.source.url.includes('Group-Annual-Report-2025'));
-    oldAnnual.excerptVersion = 2;
+    oldAnnual.excerptVersion = 3;
+    saved.version = 2;
     fs.writeFileSync(file, JSON.stringify(saved));
     const upgraded = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
-    expect(fetcher).toHaveBeenCalledTimes(5);
-    expect(upgraded.documents.find(doc => doc.source.url.includes('Group-Annual-Report-2025'))?.excerptVersion).toBe(3);
+    expect(fetcher).toHaveBeenCalledTimes(8);
+    expect(upgraded.documents.find(doc => doc.source.url.includes('Group-Annual-Report-2025'))?.excerptVersion).toBe(4);
     const wrongFetcher = jest.fn(async () => new Response(report.replaceAll('Munich Re', 'Other Company'), { headers: { 'content-type': 'application/pdf' } }));
     const wrong = await new PrimaryRiskResearch(path.join(folder, 'wrong.json'), wrongFetcher as unknown as typeof fetch, () => now).collect(position);
     expect(wrong.discoveryChecked).toBe(false);

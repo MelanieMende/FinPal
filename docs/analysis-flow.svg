@@ -61,7 +61,7 @@
   <path d="M960 606 V640 H300 V760 H410" class="edge"/>
   <polygon points="600,690 790,760 600,830 410,760" class="decision"/>
   <text x="600" y="751" text-anchor="middle" class="node-title">Berichte und Befund aktuell?</text>
-  <text x="600" y="776" text-anchor="middle" class="node-text">Dokumentstand und Prüffingerprint vergleichen</text>
+  <text x="600" y="776" text-anchor="middle" class="node-text">Ladezeit täglich im Hintergrund, Belege beim Start prüfen</text>
 
   <path d="M600 830 H220 V860" class="edge"/>
   <text x="490" y="850" class="edge-label">Ja</text>
@@ -74,7 +74,7 @@
   <text x="850" y="747" class="edge-label">Nein</text>
   <rect x="780" y="862" width="360" height="82" rx="14" class="research"/>
   <text x="960" y="896" text-anchor="middle" class="node-title">Primärberichte neu laden</text>
-  <text x="960" y="921" text-anchor="middle" class="node-text">Wenn abgelaufen oder geändert</text>
+  <text x="960" y="921" text-anchor="middle" class="node-text">Manuell oder beim Analysestart, wenn abgelaufen</text>
   <path d="M960 944 V980" class="edge"/>
 
   <rect x="750" y="982" width="420" height="80" rx="14" class="research"/>

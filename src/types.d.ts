@@ -49,6 +49,7 @@ declare global {
       signOutPortfolioChatGpt?():Promise<{revoked:boolean}>,
       getPortfolioChatGptModels?():Promise<import('./app/utils/chatGptAuth').ChatGptModel[]>,
       getLastPortfolioAnalysis?():Promise<import('./app/utils/portfolioAnalysis').SavedPortfolioAnalysis|null>,
+      getPortfolioPrimaryDocumentStatus?(assets:import('./app/utils/portfolioAnalysis').ResearchAsset[]):Promise<import('./app/utils/portfolioAnalysis').PrimaryDocumentStatus[]>,
       forgetLastPortfolioAnalysis?():Promise<boolean>,
       analyzePortfolio?(request:import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest,snapshot?:string):Promise<import('./app/utils/portfolioAnalysis').PortfolioAnalysisResult>,
       analyzePortfolioLocally?(request:import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest,snapshot?:string):Promise<import('./app/utils/portfolioAnalysis').PortfolioAnalysisResult>,

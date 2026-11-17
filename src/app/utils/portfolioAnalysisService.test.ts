@@ -179,6 +179,9 @@ it('reuses a persisted primary-document risk review without another AI risk requ
   first.saveKey('sk-testOnlyNotARealKey');
   await first.analyze(stockRequest);
   const second = new PortfolioAnalysisService(dir, mockedFetch as unknown as typeof fetch, undefined, undefined, undefined, onlineProvider);
+  expect(second.getPrimaryDocumentStatus(stockRequest.positions)[0]).toMatchObject({ assetId: 1, needsRefresh: false,
+    loadedAt: expect.any(String) });
+  expect(second.getPrimaryDocumentStatus([{ ...stockRequest.positions[0], isin: 'US0000000000' }])[0].needsRefresh).toBe(true);
   const progress = jest.fn();
   await second.analyze(stockRequest, progress);
   const riskCalls = mockedFetch.mock.calls.filter(([url, options]) => !url.includes('/submissions/') && !url.includes('/Archives/') &&

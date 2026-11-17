@@ -7,7 +7,7 @@ import { setDividendsInternal } from '../../../../store/dividends/dividends.redu
 import { analysisProgressReceived, analyzePortfolio } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
 import AssetList from '../../AssetsRoute/components/AssetList/AssetList';
 import { buildAnalysisPositions } from '../../../../utils/portfolioAnalysis';
-import PortfolioAnalysis, { ANALYSIS_PROFILE_KEY, ANALYSIS_MODEL_KEY, AssetRecommendationStatus, AssetResearchIndicator, RiskReview, comparableAnalysisSnapshot } from './PortfolioAnalysis';
+import PortfolioAnalysis, { ANALYSIS_PROFILE_KEY, ANALYSIS_MODEL_KEY, AssetRecommendationStatus, AssetResearchIndicator, PrimaryDocumentsIndicator, RiskReview, comparableAnalysisSnapshot } from './PortfolioAnalysis';
 import AnalysisRoute from '../AnalysisRoute';
 import { MARKET_PRICE_UPDATED_AT_KEY, MARKET_PRICE_UPDATED_EVENT } from '../../../../utils/syncTimestamps';
 import { tradeDecisionFixture } from '../../../../../testing/fixtures/tradeDecision';
@@ -261,6 +261,20 @@ it('stops promising reuse exactly at the 24-hour deadline', () => {
   expect(screen.getByText(/Erfolgreich geladen am/)).toBeInTheDocument();
   rerender(<AssetResearchIndicator status={status} now={loaded + 86400000} />);
   expect(screen.getByText(/Keine erfolgreichen Suchdaten/)).toBeInTheDocument();
+});
+
+it('shows a due report reload from the document load time even after a recent risk review', () => {
+  const loaded = Date.parse('2026-10-14T10:00:00Z');
+  const risk: import('../../../../utils/robustForecastModel').FundamentalRiskAssessment = { key: '1', status: 'assessed', materialRisks: [], rationale: 'Geprüft.', sources: [],
+    primaryDocumentsCheckedAt: new Date(loaded + 23 * 60 * 60 * 1000).toISOString() };
+  const props = { risk, now: loaded + 24 * 60 * 60 * 1000, openSource: jest.fn(), onReload: jest.fn(),
+    disabled: false, loading: false, forceReload: false };
+  const { rerender } = render(<PrimaryDocumentsIndicator {...props}
+    status={{ assetId: 1, loadedAt: new Date(loaded).toISOString(), needsRefresh: false }} />);
+  expect(screen.getByText(/Berichte laden: Aktualitätsprüfung fällig/)).toBeInTheDocument();
+  rerender(<PrimaryDocumentsIndicator {...props} now={loaded + 60 * 60 * 1000}
+    status={{ assetId: 1, loadedAt: new Date(loaded + 60 * 60 * 1000).toISOString(), needsRefresh: false }} />);
+  expect(screen.getByText('Berichte laden: geladen · aktuell')).toBeInTheDocument();
 });
 
 it('restores an executed 50 EUR sale as Done in both views and removes its proceeds from the remaining funding plan', async () => {
@@ -761,7 +775,7 @@ it('shows real progress, elapsed time and waiting time until the request finishe
     await act(async () => rejectAnalysis(new Error('Zeitlimit erreicht')));
     expect(screen.queryByLabelText('Laufende Analyse')).not.toBeInTheDocument();
     expect(unsubscribe).toHaveBeenCalledTimes(1);
-    expect(jest.getTimerCount()).toBe(0);
+    expect(jest.getTimerCount()).toBe(1); // The quiet status clock keeps document freshness visible.
   } finally { jest.useRealTimers(); }
 });
 

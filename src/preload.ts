@@ -96,6 +96,8 @@ contextBridge.exposeInMainWorld('API', {
   signOutPortfolioChatGpt: () => ipcRenderer.invoke('portfolio-ai:chatgpt-sign-out'),
   getPortfolioChatGptModels: () => ipcRenderer.invoke('portfolio-ai:chatgpt-models'),
   getLastPortfolioAnalysis: () => ipcRenderer.invoke('portfolio-ai:last-result'),
+  getPortfolioPrimaryDocumentStatus: (assets: import('./app/utils/portfolioAnalysis').ResearchAsset[]) =>
+    ipcRenderer.invoke('portfolio-ai:primary-document-status', assets),
   forgetLastPortfolioAnalysis: () => ipcRenderer.invoke('portfolio-ai:forget-result'),
   analyzePortfolio: (request: import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest, snapshot?: string) => ipcRenderer.invoke('portfolio-ai:analyze', request, snapshot),
   analyzePortfolioLocally: (request: import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest, snapshot?: string) => ipcRenderer.invoke('portfolio-ai:analyze-local', request, snapshot),

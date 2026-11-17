@@ -43,7 +43,7 @@ export function AssetOptimizationDetails({ plan, allocationKey, assetType, onOpe
     </div>
     {forecast && <div className="min-w-0 space-y-3 break-words">
       <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-4 gap-y-1 border-t border-white/10 pt-2">
-        <p className="m-0">{forecast.publisher} · Stand {forecast.publishedAt.slice(0, 10)} · Zieltermin {forecast.targetDate.slice(0, 10)}</p>
+        <p className="m-0 break-all">{forecast.publisher} · Stand {forecast.publishedAt.slice(0, 10)} · Zieltermin {forecast.targetDate.slice(0, 10)}</p>
         {forecast.dataStatus && <span className={`rounded-full px-2 py-1 ${forecast.dataStatus === 'stale-fallback' ? 'bg-amber-500/10 text-amber-200' : 'bg-emerald-500/10 text-emerald-200'}`}>
           {forecast.dataStatus === 'live' ? 'Aktuell abgerufen' : forecast.dataStatus === 'fresh-cache'
             ? `Cache · ${forecast.dataAgeHours?.toFixed(1) ?? '0,0'} Std.`

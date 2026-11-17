@@ -51,6 +51,8 @@ it('loads and persists Bitcoin network documentation without requiring an ISIN o
     expect(first.discoveryChecked).toBe(true);
     expect(first.gaps).toEqual([]);
     expect(first.documents).toHaveLength(9);
+    expect(new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now)
+      .cachedStatus(position, first.documents.map(doc => doc.source)).needsRefresh).toBe(false);
     expect(first.documents.every(document => document.period === null)).toBe(true);
     expect(first.documents.filter(document => document.identity === 'bitcoin-network')).toHaveLength(4);
     expect(first.documents.find(document => document.identity === 'trade-republic-casp')?.excerpt).toContain('licensed in Germany');
@@ -444,6 +446,10 @@ it('loads Munich Re issuer reports for its German ISIN and reuses their dated ex
     expect(annual?.excerpt).toContain('sufficient liquidity is available even under adverse scenarios');
     expect(annual?.excerpt).toMatch(/Maturity analysis of future.*Subordinated liabilities/i);
     expect(first.documents.map(doc => doc.source.url)).toEqual(knownResearchSources(position));
+    expect(new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now)
+      .cachedStatus(position, first.documents.map(doc => doc.source))).toEqual({ loadedAt: new Date(now).toISOString(), needsRefresh: false });
+    expect(new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now + 24 * 60 * 60 * 1000)
+      .cachedStatus(position, first.documents.map(doc => doc.source)).needsRefresh).toBe(true);
     const second = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
     expect(fetcher).toHaveBeenCalledTimes(4);
     expect(second.documents.map(doc => doc.hash)).toEqual(first.documents.map(doc => doc.hash));

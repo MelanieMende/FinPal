@@ -95,21 +95,23 @@ export function AssetResearchIndicator({ status, now }: { status?: AssetResearch
         : 'Status der gespeicherten Online-Recherche nicht verfügbar.'}
   </p>;
 }
-function PrimaryDocumentsIndicator({ risk, now, openSource, onReload, disabled, loading, forceReload, excerptNeedsRefresh = false }: { risk: FundamentalRiskAssessment; now: number; openSource: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void; onReload: () => void; disabled: boolean; loading: boolean; forceReload: boolean; excerptNeedsRefresh?: boolean }) {
+export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onReload, disabled, loading, forceReload, excerptNeedsRefresh = false }: { risk: FundamentalRiskAssessment; now: number; status?: import('../../../../utils/portfolioAnalysis').PrimaryDocumentStatus; openSource: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void; onReload: () => void; disabled: boolean; loading: boolean; forceReload: boolean; excerptNeedsRefresh?: boolean }) {
   const checkedAt = risk.primaryDocumentsCheckedAt ? Date.parse(risk.primaryDocumentsCheckedAt) : NaN;
-  const current = Number.isFinite(checkedAt) && checkedAt <= now && now - checkedAt < 24 * 60 * 60 * 1000;
+  const loadedAt = status?.loadedAt ? Date.parse(status.loadedAt) : NaN;
+  const current = !!status && !status.needsRefresh && Number.isFinite(loadedAt) && loadedAt <= now
+    && now - loadedAt < 24 * 60 * 60 * 1000;
   const documents = (risk.primaryDocuments ?? []).filter(source => source && typeof source.url === 'string' && typeof source.title === 'string');
   return <section aria-label="Primärberichte" className="my-3 min-w-0 rounded border border-white/10 bg-slate-950/25 p-3">
     <div className="flex min-w-0 flex-wrap items-start gap-2">
     <details className="group min-w-0 flex-1">
       <summary className={`flex min-w-0 cursor-pointer list-none items-center gap-2 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${current && !excerptNeedsRefresh ? 'text-emerald-300' : 'text-amber-300'}`}>
         <Icon icon={current && !excerptNeedsRefresh ? 'tick-circle' : 'refresh'} size={14} aria-hidden="true" />
-        <span className="min-w-0 break-words">Berichte laden: {loading && forceReload ? 'wird ausgeführt' : excerptNeedsRefresh ? 'neuer Auszug erforderlich' : current ? 'geladen · aktuell' : 'nicht aktuell oder nicht verfügbar'}</span>
+        <span className="min-w-0 break-words">Berichte laden: {loading && forceReload ? 'wird ausgeführt' : excerptNeedsRefresh ? 'neuer Auszug erforderlich' : current ? 'geladen · aktuell' : 'Aktualitätsprüfung fällig · neu laden'}</span>
         <Icon icon="chevron-right" size={12} aria-hidden="true" className="ml-auto shrink-0 text-gray-500 transition-transform group-open:rotate-90" />
       </summary>
       <div className="mt-2 min-w-0 space-y-2 border-t border-white/10 pt-2">
         {Number.isFinite(checkedAt)
-          ? <p className="m-0 text-xs text-gray-400">Zuletzt geprüft: {formatSyncTime(new Date(checkedAt).toISOString())} · Status 24 Stunden gültig. Das ist der Prüfzeitpunkt, nicht das Veröffentlichungsdatum der Berichte.</p>
+          ? <p className="m-0 text-xs text-gray-400">Risiken zuletzt geprüft: {formatSyncTime(new Date(checkedAt).toISOString())}. Berichtsauszüge {Number.isFinite(loadedAt) ? `zuletzt geladen: ${formatSyncTime(new Date(loadedAt).toISOString())}` : 'ohne gültigen Ladezeitpunkt'}. Nach 24 Stunden ist eine neue Aktualitätsprüfung fällig.</p>
           : <p className="m-0 text-xs text-gray-400">Für diese Analyse ist kein Prüfzeitpunkt der Primärberichte gespeichert.</p>}
         {documents.length
           ? <div className="flex flex-wrap gap-2" aria-label="Geladene Primärberichte">
@@ -471,6 +473,11 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => window.clearInterval(timer);
   }, [analyzing]);
+  useEffect(() => {
+    if (analyzing) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 60000);
+    return () => window.clearInterval(timer);
+  }, [analyzing]);
   const [signingIn, setSigningIn] = useState(false);
   const [localError, setError] = useState<string | null>(null);
   const error = localError || analysisState.error;
@@ -478,7 +485,21 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [researchStatus, setResearchStatus] = useState<AssetResearchStatus[]>([]);
+  const [primaryDocumentStatus, setPrimaryDocumentStatus] = useState<import('../../../../utils/portfolioAnalysis').PrimaryDocumentStatus[]>([]);
   const researchAssets = JSON.stringify(positions.map(({ id, name, isin, symbol, type }) => ({ id, name, isin, symbol, type })));
+  useEffect(() => {
+    if (!result || !window.API.getPortfolioPrimaryDocumentStatus) return;
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const statuses = await window.API.getPortfolioPrimaryDocumentStatus!(JSON.parse(researchAssets));
+        if (!cancelled) setPrimaryDocumentStatus(statuses);
+      } catch { if (!cancelled) setPrimaryDocumentStatus([]); }
+    };
+    void refresh();
+    const timer = window.setInterval(() => { void refresh(); }, 60 * 60 * 1000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [researchAssets, result]);
   useEffect(() => {
     if (!open || !window.API.getPortfolioResearchStatus) return;
     let cancelled = false;
@@ -896,7 +917,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                   </Button>
                 </div>
               </section>
-              <PrimaryDocumentsIndicator risk={risk} now={now} openSource={openSource} onReload={() => refreshRisk(rec.assetId, true)}
+              <PrimaryDocumentsIndicator risk={risk} now={now} status={primaryDocumentStatus.find(item => item.assetId === rec.assetId)} openSource={openSource} onReload={() => refreshRisk(rec.assetId, true)}
                 disabled={busy || !positions.some(position => position.id === rec.assetId)}
                 loading={assetProgress?.refreshingRisk === true && progress?.activeRiskStep === 'documents'
                   && progress?.documentsRefreshForced === true}

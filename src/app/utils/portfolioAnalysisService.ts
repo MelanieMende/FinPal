@@ -26,7 +26,7 @@ import { PrimaryRiskAssessmentCache, addRiskReviewContext, primaryDocumentsFinge
 import { allRiskCheckNames, riskReviewInstructions } from './assetRiskPolicy';
 import {
   DEFAULT_ANALYSIS_MODEL, ANALYSIS_TIMEOUT_MS, RESEARCH_BATCH_SIZE, RESEARCH_CONCURRENCY, validateAnalysisRequest,
-  type PortfolioAnalysisRequest, type PortfolioAnalysisResult, type AssetRecommendation, type AnalysisSource, type PortfolioAnalysisProgress, type SavedPortfolioAnalysis, type PortfolioForecastRefreshResult, type ResearchAsset,
+  type PortfolioAnalysisRequest, type PortfolioAnalysisResult, type AssetRecommendation, type AnalysisSource, type PortfolioAnalysisProgress, type SavedPortfolioAnalysis, type PortfolioForecastRefreshResult, type ResearchAsset, type PrimaryDocumentStatus,
 } from './portfolioAnalysis';
 
 function analysisSchema(request: PortfolioAnalysisRequest, sources: AnalysisSource[]) { return {
@@ -354,6 +354,20 @@ export class PortfolioAnalysisService {
       const cached = this.researchCache.findForSecurity(security, true);
       return { assetId: security.id, fetchedAt: cached ? new Date(cached.fetchedAt).toISOString() : null,
         expiresAt: cached ? new Date(cached.fetchedAt + RESEARCH_CACHE_TTL_MS).toISOString() : null };
+    });
+  }
+  getPrimaryDocumentStatus(assets: ResearchAsset[]): PrimaryDocumentStatus[] {
+    if (!Array.isArray(assets) || assets.length > 100 || assets.some(asset => !asset || !Number.isInteger(asset.id)
+      || ![asset.name, asset.isin, asset.symbol, asset.type].every(value => typeof value === 'string' && value.length <= 300)))
+      throw new Error('Die Asset-Kennungen sind ungültig.');
+    const saved = this.getLastResult();
+    const savedRequest = saved ? JSON.parse(fs.readFileSync(this.resultFile, 'utf8')).request as PortfolioAnalysisRequest : null;
+    return assets.map(asset => {
+      const position = savedRequest?.positions.find(item => item.id === asset.id && item.type === asset.type
+        && item.isin.trim().toUpperCase() === asset.isin.trim().toUpperCase());
+      const risk = saved?.report.fundamentalRisks?.find(item => item.key === String(asset.id));
+      return { assetId: asset.id, ...this.primaryRiskResearch.cachedStatus(asset,
+        position ? risk?.primaryDocuments ?? [] : []) };
     });
   }
   constructor(dataPath: string, private readonly requestFetch: typeof fetch = fetch, private readonly chatGptAuth?: ChatGptAuth,
@@ -703,8 +717,7 @@ export class PortfolioAnalysisService {
       throw new Error('Das Asset wurde seit der gespeicherten Analyse geändert. Bitte die Portfolioanalyse neu starten.');
     const request = currentInvestorContext ? { ...savedRequest, investorContext: currentInvestorContext } : savedRequest;
     const oldRisk = previous.report.fundamentalRisks?.find(item => item.key === String(asset.id));
-    const checkedAt = oldRisk?.primaryDocumentsCheckedAt ? Date.parse(oldRisk.primaryDocumentsCheckedAt) : NaN;
-    const documentsCurrent = Number.isFinite(checkedAt) && checkedAt <= Date.now() && Date.now() - checkedAt < 24 * 60 * 60 * 1000;
+    const documentsCurrent = !this.primaryRiskResearch.cachedStatus(position, oldRisk?.primaryDocuments ?? []).needsRefresh;
     const reusedDocuments = !documentsOnly && documentsCurrent
       ? this.primaryRiskResearch.reuseCached(position, oldRisk?.primaryDocuments ?? []) : null;
     if (!documentsOnly && documentsCurrent && !reusedDocuments)

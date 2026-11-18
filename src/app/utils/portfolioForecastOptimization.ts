@@ -17,7 +17,7 @@ export interface ReturnForecast {
   annualVolatilityPercent: number;
   volatilityAsOf: string;
   volatilityLookbackDays: number;
-  volatilityHistory?: { kind: 'short-listing'; isin: 'US84615Q1031'; observations: number };
+  volatilityHistory?: { kind: 'short-listing'; isin?: string; observations: number };
   dataStatus?: 'live' | 'fresh-cache' | 'stale-fallback';
   dataAgeHours?: number;
   scenarioReturns?: { p10: number; median: number; p90: number };
@@ -93,11 +93,11 @@ export function validReturnForecast(v: ReturnForecast, now = Date.now()): boolea
       && v.model.returnBasis === 'adjusted-close' && v.uncertainty?.method === 'historical-bootstrap'
       && v.uncertainty.historyYears === v.model.historyYears && !!v.scenarioReturns))
     && (v.riskHistory === undefined || !!v.riskHistory && v.riskHistory.currency === 'EUR' && validSources(v.riskHistory.sources)
-      && Array.isArray(v.riskHistory.closes) && v.riskHistory.closes.length >= 181 && v.riskHistory.closes.length <= 2000
+      && Array.isArray(v.riskHistory.closes) && v.riskHistory.closes.length >= (v.volatilityHistory?.kind === 'short-listing' ? 61 : 181) && v.riskHistory.closes.length <= 2000
       && v.riskHistory.closes.every((row, i, rows) => row && positive(row.price) && Number.isFinite(date(row.date))
         && date(row.date) <= now && (!i || row.date > rows[i - 1].date)))
     && (v.volatilityHistory === undefined || v.volatilityHistory.kind === 'short-listing'
-      && v.volatilityHistory.isin === 'US84615Q1031' && Number.isInteger(v.volatilityHistory.observations)
+      && (v.volatilityHistory.isin === undefined || typeof v.volatilityHistory.isin === 'string' && v.volatilityHistory.isin.length <= 12) && Number.isInteger(v.volatilityHistory.observations)
       && v.volatilityHistory.observations >= 61)
     && Number.isInteger(v.volatilityLookbackDays) && v.volatilityLookbackDays >= (v.volatilityHistory ? 90 : 180) && v.volatilityLookbackDays <= 3650
     && [published, volatility].every(t => Number.isFinite(t) && t <= now && now - t <= 90 * day)
@@ -272,9 +272,7 @@ function calculateForecastAllocation(request: PortfolioAnalysisRequest, forecast
     if (!f) {
       unresolved(i, asset.type === 'Bond'
         ? 'Eine belegte 12-Monats-Gesamtrendite einschließlich Kupon fehlt; ein reines Kursziel würde nicht ausreichen.'
-        : asset.isin.trim().toUpperCase() === 'US84615Q1031' && Date.now() < Date.UTC(2026, 11, 9)
-          ? 'Für SpaceX fehlt weiterhin eine vollständige Kombination aus belegtem 12-Monats-Kursziel und nutzbarer Kursserie. Verfügbare SPCX-Tageskurse werden ab 61 Beobachtungen und 90 Kalendertagen als vorläufige Volatilität ausgewertet; bleibt die Position eingefroren, fehlt mindestens eine dieser Grundlagen.'
-        : 'Mindestens eine erforderliche Optimierungseingabe fehlt. Benötigt werden sowohl eine veröffentlichte 12-Monats-Erwartung als auch eine belegte annualisierte historische Volatilität.');
+        : 'Mindestens eine erforderliche Optimierungseingabe fehlt. Benötigt werden sowohl eine veröffentlichte 12-Monats-Erwartung als auch eine belegte annualisierte historische Volatilität. Eine kurze verfügbare Kurshistorie kann ab 61 Kursen über 90 Kalendertage verwendet werden.');
       continue;
     }
     const held = i < request.positions.length ? request.positions[i] : null;

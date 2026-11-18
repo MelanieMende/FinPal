@@ -140,7 +140,7 @@
   <rect x="724" y="1628" width="72" height="20" rx="10" class="ai-badge"/>
   <text x="760" y="1642" text-anchor="middle" class="ai-badge-text">KI</text>
   <text x="600" y="1668" text-anchor="middle" class="node-title">Forecasts laden und Modell berechnen</text>
-  <text x="600" y="1691" text-anchor="middle" class="node-text">Forecasts und belegte Risikohistorien je Asset · kurze Historien markieren,</text>
+  <text x="600" y="1691" text-anchor="middle" class="node-text">EUR-Kovarianz: kurze Kurshistorien zulassen und Unsicherheit ausweisen;</text>
   <text x="600" y="1710" text-anchor="middle" class="node-text">Gebühren, Cashreserve, Finanzierung und Stressszenarien prüfen</text>
 
   <path d="M600 1716 V1740" class="edge"/>

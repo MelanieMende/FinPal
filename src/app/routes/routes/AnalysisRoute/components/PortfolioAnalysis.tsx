@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { Button, Card, Dialog, H5, Icon, Intent, Spinner, Tooltip } from '@blueprintjs/core';
 import { useAppSelector, useAppDispatch } from '../../../../hooks';
-import { ANALYSIS_TIMEOUT_MS, buildAnalysisPositions, validateAnalysisRequest, type AnalysisPosition, type AssetRecommendation, type AssetResearchStatus, type InvestmentProfile, type PortfolioAnalysisProgress } from '../../../../utils/portfolioAnalysis';
+import { ANALYSIS_TIMEOUT_MS, DEFAULT_ANALYSIS_MODEL, buildAnalysisPositions, validateAnalysisRequest, type AnalysisPosition, type AssetRecommendation, type AssetResearchStatus, type InvestmentProfile, type PortfolioAnalysisProgress } from '../../../../utils/portfolioAnalysis';
 import type { ChatGptModel, ChatGptStatus } from '../../../../utils/chatGptAuth';
 import { analyzePortfolio, analyzePortfolioLocally, refreshPortfolioForecast, refreshPortfolioPrimaryRisk, refreshPortfolioResearch, setAnalysisOpen, clearAnalysisResult } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
 import { formatSyncTime } from '../../../../utils/syncTimestamps';
@@ -22,6 +22,7 @@ import { allocationCandidateKey } from '../../../../utils/portfolioAllocation';
 import type { FundamentalRiskAssessment } from '../../../../utils/robustForecastModel';
 
 export const ANALYSIS_PROFILE_KEY = 'finpal.portfolioAnalysis.profile.v1';
+export const ANALYSIS_REASONING_KEY = 'finpal.portfolioAnalysis.reasoning.v1';
 export const ANALYSIS_MODEL_KEY = 'finpal.portfolioAnalysis.model.v1';
 type ProfileForm = { goal: string; risk: string; horizonYears: string; buyBudget: string; decisionDetails?: DecisionForm };
 const emptyProfile: ProfileForm = { goal: '', risk: '', horizonYears: '', buyBudget: '0' };
@@ -321,6 +322,7 @@ export function AssetRecommendationStatus({ recommendation, assetName }: { recom
 
 type AIConnectionSettingsProps = {
   provider: 'chatgpt' | 'api'; setProvider: (provider: 'chatgpt' | 'api') => void;
+  reasoningEffort: import('../../../../utils/portfolioAnalysis').ReasoningEffort; setReasoningEffort: (value: import('../../../../utils/portfolioAnalysis').ReasoningEffort) => void;
   busy: boolean; secureStorage: boolean; chatGpt: ChatGptStatus; models: ChatGptModel[]; model: string;
   selectModel: (model: string) => void; signIn: (clientId?: string) => void; signingIn: boolean;
   signOut: () => void; cancelSignIn: () => void; hasKey: boolean; apiKey: string; setApiKey: (value: string) => void;
@@ -328,13 +330,25 @@ type AIConnectionSettingsProps = {
 };
 
 export function AIConnectionSettings(props: AIConnectionSettingsProps) {
-  const { provider, setProvider, busy, secureStorage, chatGpt, models, model, selectModel, signIn, signingIn,
+  const { provider, setProvider, reasoningEffort, setReasoningEffort, busy, secureStorage, chatGpt, models, model, selectModel, signIn, signingIn,
     signOut, cancelSignIn, hasKey, apiKey, setApiKey, saveApiKey, forgetApiKey, openUsage } = props;
   return <div data-testid="ai-connection-settings" className="min-w-0 space-y-4 p-4">
     <label className="block text-xs text-gray-300">KI-Zugang
       <select className={`${inputClass} mt-1`} style={{ colorScheme: 'dark' }} value={provider} disabled={busy} onChange={e => setProvider(e.target.value as 'chatgpt' | 'api')}>
         <option value="chatgpt">ChatGPT Plus / Pro</option><option value="api">OpenAI API (separat kostenpflichtig)</option>
       </select>
+    </label>
+    {provider === 'chatgpt' && chatGpt.connected && <label className="block text-xs text-gray-300">ChatGPT-Modell
+      <select className={`${inputClass} mt-1`} style={{ colorScheme: 'dark' }} value={model} disabled={busy} onChange={e => selectModel(e.target.value)}>
+        {!models.length && <option value="">Keine Modelle verfügbar</option>}
+        {models.map(m => <option key={m.slug} value={m.slug}>{m.displayName}</option>)}
+      </select>
+    </label>}
+    <label className="block text-xs text-gray-300">Reasoning-Aufwand
+      <select className={`${inputClass} mt-1`} style={{ colorScheme: 'dark' }} value={reasoningEffort} disabled={busy} onChange={e => setReasoningEffort(e.target.value as import('../../../../utils/portfolioAnalysis').ReasoningEffort)}>
+        <option value="low">Niedrig</option><option value="medium">Mittel</option><option value="high">Hoch</option>
+      </select>
+      <span className="mt-1 block text-gray-400">Höherer Aufwand kann Analysezeit und Nutzung erhöhen. Die Unterstützung hängt vom Modell ab.</span>
     </label>
     {provider === 'chatgpt' ? <div className="min-w-0 space-y-3">
       <p className="text-xs text-gray-400 m-0">Die Analyse nutzt dein bestehendes ChatGPT-Kontingent. Anmeldung und Freigabe erfolgen im Browser. Webrecherche hängt von Modell und Kontofreigabe ab.</p>
@@ -346,12 +360,6 @@ export function AIConnectionSettings(props: AIConnectionSettingsProps) {
         {chatGpt.connected && <Button disabled={busy} onClick={signOut}>ChatGPT abmelden</Button>}
         {signingIn && <Button onClick={cancelSignIn}>Anmeldung abbrechen</Button>}
       </div>
-      {chatGpt.connected && <label className="block text-xs text-gray-300">ChatGPT-Modell
-        <select className={`${inputClass} mt-1`} style={{ colorScheme: 'dark' }} value={model} disabled={busy} onChange={e => selectModel(e.target.value)}>
-          {!models.length && <option value="">Keine Modelle verfügbar</option>}
-          {models.map(m => <option key={m.slug} value={m.slug}>{m.displayName}</option>)}
-        </select>
-      </label>}
     </div> : <div className="min-w-0 space-y-3">
       <p className="text-xs text-gray-400 m-0">API-Nutzung und Webrecherche werden separat bei OpenAI abgerechnet. Der Schlüssel wird lokal verschlüsselt gespeichert.</p>
       {hasKey && <p className="m-0 text-xs text-emerald-300">API-Schlüssel gespeichert.</p>}
@@ -478,6 +486,10 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
     ...(parseDecisionDetails(profile.decisionDetails) ? { decisionDetails: parseDecisionDetails(profile.decisionDetails) } : {}),
   } as InvestmentProfile);
   const protectedCash = protectedCashEUR(investmentProfile());
+  const [reasoningEffort, setReasoningEffortState] = useState<import('../../../../utils/portfolioAnalysis').ReasoningEffort>(() => {
+    try { const value = localStorage.getItem(ANALYSIS_REASONING_KEY); return value === 'medium' || value === 'high' ? value : 'low'; } catch { return 'low'; }
+  });
+  const setReasoningEffort = (value: import('../../../../utils/portfolioAnalysis').ReasoningEffort) => { setReasoningEffortState(value); try { localStorage.setItem(ANALYSIS_REASONING_KEY, value); } catch { /* Storage may be unavailable. */ } };
   const [provider, setProvider] = useState<'chatgpt' | 'api'>(analysisState.provider);
   const [chatGpt, setChatGpt] = useState(emptyChatGpt);
   const [models, setModels] = useState<ChatGptModel[]>([]);
@@ -538,8 +550,9 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
   const snapshot = JSON.stringify({ positions, profile, priceUpdatedAt, investorContext });
   const stale = !!result && comparableAnalysisSnapshot(resultSnapshot) !== comparableAnalysisSnapshot(snapshot);
   const aiConnected = provider === 'chatgpt' ? chatGpt.connected : hasKey;
-  const activeAccount = chatGpt.accounts.find(a => a.clientId === chatGpt.activeClientId)?.label;
   const providerLabel = provider === 'chatgpt' ? 'ChatGPT' : 'OpenAI API';
+  const modelLabel = provider === 'chatgpt' ? models.find(item => item.slug === model)?.displayName ?? (model || 'Kein Modell ausgewählt') : DEFAULT_ANALYSIS_MODEL;
+  const reasoningLabel = { low: 'Niedrig', medium: 'Mittel', high: 'Hoch' }[reasoningEffort];
   const hasExecution = result?.recommendations.some(rec => executions[rec.assetId]?.status !== 'open' && executions[rec.assetId]);
   const fundingCheck = result && hasExecution ? checkPortfolioFunding({
     investorContext,
@@ -625,7 +638,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
       if (investorFactsError) throw new Error(investorFactsError);
       if (!profile.horizonYears.trim() || !profile.buyBudget.trim()) throw new Error('Bitte Anlagedauer und Kaufbudget angeben.');
       const request = {
-        provider, model, positions, priceUpdatedAt, ...(targetAssetId === undefined ? {} : { targetAssetId }),
+        provider, model, reasoningEffort, positions, priceUpdatedAt, ...(targetAssetId === undefined ? {} : { targetAssetId }),
         investorContext,
         profile: investmentProfile(),
       };
@@ -677,7 +690,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
       const asset = positions.find(position => position.id === assetId);
       if (!asset) throw new Error('Das Asset ist nicht mehr im Portfolio vorhanden.');
       const refreshed = await dispatch(refreshPortfolioPrimaryRisk({ asset: { id: asset.id, name: asset.name, isin: asset.isin,
-        symbol: asset.symbol, type: asset.type }, investorContext, documentsOnly })).unwrap();
+        symbol: asset.symbol, type: asset.type }, investorContext, documentsOnly, reasoningEffort })).unwrap();
       if (alive.current) {
         const risk = refreshed.fundamentalRisks?.find(item => item.key === String(assetId));
         setNotice(documentsOnly
@@ -752,12 +765,12 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
               <span aria-hidden="true" className={`h-2.5 w-2.5 shrink-0 rounded-full ${aiConnected ? 'bg-emerald-400' : 'bg-gray-500'}`} />
               {aiConnected ? 'Verbunden' : 'Nicht verbunden'}
             </p>
-            <p className="m-0 ml-[18px] truncate text-xs text-gray-400">{providerLabel}{provider === 'chatgpt' && activeAccount ? ` · ${activeAccount}` : ''}</p>
+            <p className="m-0 ml-[18px] break-words text-xs text-gray-400">{providerLabel} · {modelLabel} · Reasoning: {reasoningLabel}</p>
           </div>
           <Button small icon="cog" onClick={() => setConnectionSettingsOpen(true)}>KI-Einstellungen</Button>
         </section>
         <Dialog isOpen={connectionSettingsOpen} onClose={() => setConnectionSettingsOpen(false)} title="KI-Zugang einrichten" className="bp5-dark" style={{ width: 'min(560px, calc(100vw - 32px))' }}>
-          <AIConnectionSettings provider={provider} setProvider={setProvider} busy={busy} secureStorage={secureStorage}
+          <AIConnectionSettings provider={provider} setProvider={setProvider} reasoningEffort={reasoningEffort} setReasoningEffort={setReasoningEffort} busy={busy} secureStorage={secureStorage}
             chatGpt={chatGpt} models={models} model={model} selectModel={selectModel} signIn={signIn} signingIn={signingIn}
             signOut={() => void run(async () => {
               const logout = await window.API.signOutPortfolioChatGpt(); await refreshStatus();
@@ -974,7 +987,6 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
               <div className="flex flex-wrap gap-2">
                 <Button small disabled={busy || !positions.some(position => position.id === rec.assetId)} onClick={() => analyze(rec.assetId)} aria-label={`Asset ${rec.assetId} neu analysieren`}>Neu analysieren</Button>
               </div>
-              <p className="mt-1 mb-0 text-xs text-gray-400">Die inhaltliche Prüfung neuer Primärberichte kann KI-Kontingent verbrauchen.</p>
               {rec.updatedAt && <p className="text-xs text-gray-400">Einzelanalyse vom {formatSyncTime(rec.updatedAt)} · {rec.model}. Portfolio-Zusammenfassung und übrige Empfehlungen stammen aus der Gesamtanalyse.</p>}
               <EltifValuation position={positions.find(position => position.id === rec.assetId)} evidence={rec.navEvidence} />
               <AnalysisMessages infos={rec.infos} warnings={rec.warnings} />

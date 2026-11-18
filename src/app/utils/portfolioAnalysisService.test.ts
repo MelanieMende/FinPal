@@ -56,11 +56,14 @@ it('assesses a new ETF from its exact issuer document and saves the candidate re
   const researched = { ...research, output: [{ type: 'web_search_call', status: 'completed' },
     { type: 'message', content: [{ type: 'output_text', text: 'Official product document', annotations: [{ type: 'url_citation', title: candidate.name, url }] }] }] };
   const queue = [new Response(JSON.stringify(researched)), structuredResponse(answer), structuredResponse(riskAnswer), structuredResponse(answer)];
-  const fetcher = jest.fn(async (target: string) => target === url
+  const fetcher = jest.fn(async (target: string, _options?: RequestInit) => target === url
     ? new Response(html, { headers: { 'content-type': 'text/html' } })
     : queue.shift() ?? new Response('', { status: 500 }));
   const service = new PortfolioAnalysisService(dir, fetcher as unknown as typeof fetch); service.saveKey('sk-testOnlyNotARealKey');
-  const result = await service.analyze(request);
+  const result = await service.analyze({ ...request, reasoningEffort: 'high' });
+  const apiCalls = fetcher.mock.calls.filter(([target]) => target === 'https://api.openai.com/v1/responses');
+  expect(apiCalls.length).toBeGreaterThan(1);
+  expect(apiCalls.every(([, options]) => JSON.parse((options as RequestInit).body as string).reasoning.effort === 'high')).toBe(true);
   expect(result.fundamentalRisks?.find(item => item.key === `new:${isin}`)).toMatchObject({ status: 'assessed', structuralRisks: expect.arrayContaining(['structure']) });
   expect(fetcher.mock.calls.filter(([target]) => target === url)).toHaveLength(1);
   expect(fs.existsSync(path.join(dir, 'portfolio-primary-risk-assessments.json'))).toBe(true);

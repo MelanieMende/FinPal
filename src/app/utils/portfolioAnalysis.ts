@@ -35,7 +35,10 @@ export interface AnalysisPosition {
   eltifProductTerms?: EltifProductTerms;
 }
 
+export type ReasoningEffort = 'low' | 'medium' | 'high';
+
 export interface PortfolioAnalysisRequest {
+  reasoningEffort?: ReasoningEffort;
   investorContext?: InvestorContext;
   targetAssetId?: number;
   refreshMarketForecasts?: boolean;
@@ -133,6 +136,7 @@ export function buildAnalysisPositions(assets: Asset[]): AnalysisPosition[] {
 
 export function validateAnalysisRequest(request: PortfolioAnalysisRequest): void {
   if (!request || !['chatgpt', 'api'].includes(request.provider)) throw new Error('Bitte einen KI-Zugang auswählen.');
+  if (request.reasoningEffort !== undefined && !['low', 'medium', 'high'].includes(request.reasoningEffort)) throw new Error('Der Reasoning-Aufwand ist ungültig.');
   if (request.refreshMarketForecasts !== undefined && typeof request.refreshMarketForecasts !== 'boolean') throw new Error('Die Forecast-Aktualisierung ist ungültig.');
   if (request.investorContext !== undefined && !validInvestorContext(request.investorContext)) throw new Error('Die dauerhaften Analyseangaben oder Anschaffungsdaten sind ungültig.');
   const p = request?.profile;

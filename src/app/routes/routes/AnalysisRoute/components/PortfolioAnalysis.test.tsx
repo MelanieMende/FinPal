@@ -7,7 +7,7 @@ import { setDividendsInternal } from '../../../../store/dividends/dividends.redu
 import { analysisProgressReceived, analyzePortfolio } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
 import AssetList from '../../AssetsRoute/components/AssetList/AssetList';
 import { buildAnalysisPositions } from '../../../../utils/portfolioAnalysis';
-import PortfolioAnalysis, { ANALYSIS_PROFILE_KEY, ANALYSIS_MODEL_KEY, AssetRecommendationStatus, AssetResearchIndicator, PrimaryDocumentsIndicator, RiskReview, comparableAnalysisSnapshot } from './PortfolioAnalysis';
+import PortfolioAnalysis, { ANALYSIS_PROFILE_KEY, ANALYSIS_MODEL_KEY, ANALYSIS_REASONING_KEY, AssetRecommendationStatus, AssetResearchIndicator, PrimaryDocumentsIndicator, RiskReview, comparableAnalysisSnapshot } from './PortfolioAnalysis';
 import AnalysisRoute from '../AnalysisRoute';
 import { MARKET_PRICE_UPDATED_AT_KEY, MARKET_PRICE_UPDATED_EVENT } from '../../../../utils/syncTimestamps';
 import { tradeDecisionFixture } from '../../../../../testing/fixtures/tradeDecision';
@@ -60,6 +60,20 @@ async function open() {
 async function openAISettings() {
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'KI-Einstellungen' })); });
 }
+
+it('saves the reasoning setting immediately and restores it when the view remounts', async () => {
+  const view = render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
+  await open();
+  await openAISettings();
+  expect(screen.getByLabelText(/Reasoning-Aufwand/)).toHaveValue('low');
+  fireEvent.change(screen.getByLabelText(/Reasoning-Aufwand/), { target: { value: 'high' } });
+  expect(localStorage.getItem(ANALYSIS_REASONING_KEY)).toBe('high');
+  view.unmount();
+  render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
+  await open();
+  await openAISettings();
+  expect(screen.getByLabelText(/Reasoning-Aufwand/)).toHaveValue('high');
+});
 
 it('shows a blocked card status and moves the trade status details into its tooltip', async () => {
   const base = { assetId: 1, action: 'Halten' as const, rationale: 'Begründung', risk: 'Risiko', sourceIndexes: [] as number[] };
@@ -564,7 +578,7 @@ it('keeps the asset card visible while refreshing only its primary risk assessme
   expect(refreshRiskButton.closest('section[aria-label="Unternehmens- und Produktrisiken"]')).not.toBeNull();
   fireEvent.click(refreshRiskButton);
   expect(window.API.refreshPortfolioPrimaryRisk).toHaveBeenCalledWith(expect.objectContaining({ id: 1, type: 'Stock' }),
-    expect.objectContaining({ assets: expect.any(Array), taxResidencies: expect.any(Array) }));
+    expect.objectContaining({ assets: expect.any(Array), taxResidencies: expect.any(Array) }), false, 'low');
   expect(screen.getAllByText('Stock Asset')).toHaveLength(2);
   expect(screen.getByTestId('asset-risk-loading-1')).toHaveTextContent('Aktuelle Primärberichte werden geladen');
   expect(screen.queryByTestId('asset-reload-status-2')).not.toBeInTheDocument();

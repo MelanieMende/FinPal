@@ -67,6 +67,37 @@ it('estimates symmetric PSD covariance from aligned EUR intervals and preserves 
   expect(estimateEuroCovariance([{ ...first, riskHistory: { ...first.riskHistory!, closes: first.riskHistory!.closes.slice(-180) } }])).toBeNull();
 });
 
+it('explains which asset lacks a EUR history and reports a known short listing', () => {
+  const r = request();
+  const short = robustReturnForecastFixture('33', { riskHistory: undefined, volatilityLookbackDays: 157,
+    volatilityHistory: { kind: 'short-listing', isin: 'US84615Q1031', observations: 109 } });
+  const reasons = buildRobustForecastAllocation(r, [robustReturnForecastFixture('31'), short]).optimization!.robust!.reviewReasons.join(' ');
+  expect(reasons).toContain('JinkoSolar (JKS)');
+  expect(reasons).toContain('109 Kurse über 157 Kalendertage');
+  expect(reasons).toContain('EUR-Kurse und Wechselkurse müssen verfügbar sein');
+});
+
+it('uses measured common EUR returns for a documented short listing without a history blocker', () => {
+  const first = robustReturnForecastFixture('31');
+  const short = robustReturnForecastFixture('33', { riskHistory: { ...first.riskHistory!, closes: first.riskHistory!.closes.slice(-110) },
+    volatilityLookbackDays: 109, volatilityHistory: { kind: 'short-listing', isin: 'US0000000001', observations: 110 } });
+  expect(validReturnForecast(short)).toBe(true);
+  const model = estimateEuroCovariance([first, short]);
+  expect(model?.observations).toBe(109);
+  const plan = buildRobustForecastAllocation(request(), [first, short]);
+  expect(plan.optimization!.robust!.covarianceStatus).toBe('measured-eur');
+  expect(plan.warnings.join(' ')).toContain('verkürzten gemeinsamen Zeitraum');
+  expect(plan.optimization!.robust!.reviewReasons.join(' ')).not.toContain('EUR-Kurshistorie');
+  expect(validReturnForecast({ ...short, volatilityHistory: undefined })).toBe(false);
+});
+
+it('explains insufficient common dates even when each EUR history exists', () => {
+  const first = robustReturnForecastFixture('31');
+  const second = robustReturnForecastFixture('33', { riskHistory: { ...first.riskHistory!, closes: first.riskHistory!.closes.slice(-181).map((row, index) => ({ ...row, date: new Date(Date.parse(row.date) - (index % 2 ? 0 : 86400000 * 500)).toISOString().slice(0, 10) })).sort((a, b) => a.date.localeCompare(b.date)) } });
+  const reasons = buildRobustForecastAllocation(request(), [first, second]).optimization!.robust!.reviewReasons.join(' ');
+  expect(reasons).toMatch(/Nur \d+ gemeinsame EUR-Kurstage/);
+});
+
 it('keeps cited company risks visible without turning them into an automatic trade veto', () => {
   const bitcoin = robustReturnForecastFixture('31', { referencePrice: 74184.09, targetPrice: 75600.29, annualVolatilityPercent: 43.35,
     uncertainty: { method: 'historical-bootstrap', historyYears: 5 }, scenarioReturns: { p10: -45.88, median: 7.636, p90: 103.23 } });

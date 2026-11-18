@@ -54,8 +54,9 @@ export function estimateEuroCovariance(forecasts: ReturnForecast[]) {
   if (!forecasts.length || forecasts.some(f => !f.riskHistory || f.riskHistory.currency !== 'EUR')) return null;
   const series = forecasts.map(f => new Map(f.riskHistory!.closes.map(row => [row.date, row.price])));
   const dates = [...series[0].keys()].filter(date => series.every(values => values.has(date))).sort().slice(-366);
-  if (dates.length < 181 || Date.now() - Date.parse(dates[dates.length - 1]) > 7 * 86400000
-    || Date.parse(dates[dates.length - 1]) - Date.parse(dates[0]) < 180 * 86400000) return null;
+  const shortListing = forecasts.some(f => f.volatilityHistory?.kind === 'short-listing');
+  if (dates.length < (shortListing ? 61 : 181) || Date.now() - Date.parse(dates[dates.length - 1]) > 7 * 86400000
+    || Date.parse(dates[dates.length - 1]) - Date.parse(dates[0]) < (shortListing ? 90 : 180) * 86400000) return null;
   const rows = dates.slice(1).map((date, i) => series.map(values => Math.log(values.get(date)! / values.get(dates[i])!)));
   if (rows.some(row => row.some(value => !Number.isFinite(value)))) return null;
   const n = rows.length, p = forecasts.length;
@@ -74,6 +75,27 @@ export function estimateEuroCovariance(forecasts: ReturnForecast[]) {
   const covariance = sample.map((row, i) => row.map((value, j) => value * annualization * (i === j ? 1 : 1 - shrinkage)));
   if (covariance.some((row, i) => !(row[i] > 0))) return null;
   return { keys: forecasts.map(f => f.key), covariance, observations: n, shrinkage };
+}
+
+function covarianceUnavailableReason(forecasts: ReturnForecast[], label: (key: string) => string): string {
+  if (!forecasts.length) return 'Keine geeigneten Prognosen für die EUR-Kovarianz verfügbar.';
+  const missing = forecasts.filter(f => !f.riskHistory || f.riskHistory.currency !== 'EUR');
+  if (missing.length) return `EUR-Kurshistorie fehlt für ${missing.map(f => {
+    const short = f.volatilityHistory;
+    return short ? `${label(f.key)} (kurze verfügbare Kurshistorie: ${short.observations} Kurse über ${f.volatilityLookbackDays} Kalendertage; EUR-Kurse und Wechselkurse müssen verfügbar sein)` : label(f.key);
+  }).join(', ')}. Ursache kann eine zu kurze Historie oder ein fehlgeschlagener Kurs- bzw. Wechselkursabruf sein.`;
+  const maps = forecasts.map(f => new Map(f.riskHistory!.closes.map(row => [row.date, row.price])));
+  const dates = [...maps[0].keys()].filter(date => maps.every(map => map.has(date))).sort().slice(-366);
+  if (!dates.length) return 'Die EUR-Kurshistorien haben keine gemeinsamen Kurstage.';
+  const last = dates[dates.length - 1];
+  if (Date.now() - Date.parse(last) > 7 * 86400000)
+    return `Der letzte gemeinsame EUR-Kurstag ist der ${last} und damit älter als sieben Tage.`;
+  const span = Math.floor((Date.parse(last) - Date.parse(dates[0])) / 86400000);
+  const shortListing = forecasts.some(f => f.volatilityHistory?.kind === 'short-listing');
+  const minimumDates = shortListing ? 61 : 181, minimumSpan = shortListing ? 90 : 180;
+  if (dates.length < minimumDates || span < minimumSpan)
+    return `Nur ${dates.length} gemeinsame EUR-Kurstage über ${span} Kalendertage verfügbar; erforderlich sind mindestens ${minimumDates} gemeinsame Kurstage über ${minimumSpan} Kalendertage.`;
+  return 'Die gemeinsamen EUR-Kurshistorien ergeben keine gültige Kovarianz, etwa weil eine Renditereihe keine Schwankung aufweist.';
 }
 
 export function conservativeForecast(f: ReturnForecast, current: number) {
@@ -234,6 +256,8 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
   }
   plan.assumptions.push(measured ? `Kovarianz aus ${measured.observations} gemeinsamen EUR-Renditeintervallen; datengestützte Schrumpfung der Nebendiagonalen (${(measured.shrinkage * 100).toFixed(1)} %). Keine fest angenommene Korrelation.`
     : 'Gemeinsame EUR-Kurshistorie fehlt: keine belastbare Kovarianz und keine bestätigte Umschichtung; eine Zahlenrechnung bleibt ausschließlich ein Szenario.');
+  if (measured && [...supplied.values()].some(f => f.volatilityHistory?.kind === 'short-listing'))
+    plan.warnings.push('Kurze verfügbare Kurshistorie: Die EUR-Kovarianzen beruhen auf einem verkürzten gemeinsamen Zeitraum und sind entsprechend unsicherer. Sie allein blockieren keine Entscheidung.');
   if (plan.status !== 'calculated') return plan;
   const trades = plan.positions.filter(p => p.amountEUR !== null && (p.action === 'Kaufen' || p.action === 'Verkaufen'));
   details.concentration = { beforeLargestPercent: Math.max(0, ...plan.positions.map(p => p.currentWeightPercent ?? 0)),
@@ -245,7 +269,12 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
       details.reviewReasons.push(`${candidate.name}: Die Analyse stellt den modellierten Kauf zurück; die abhängige Umschichtung bleibt zur Prüfung offen.`);
     }
   }
-  if (!measured) details.reviewReasons.push('Gemeinsame aktuelle EUR-Kurshistorien für gemessene Kovarianzen fehlen.');
+  if (!measured) details.reviewReasons.push(covarianceUnavailableReason([...supplied.values()], key => {
+    const item = request.positions.find(position => String(position.id) === key)
+      ?? candidates.find(candidate => allocationCandidateKey(candidate) === key)
+      ?? previous?.newAssetRecommendations?.find(candidate => allocationCandidateKey(candidate) === key);
+    return item ? `${item.name}${item.symbol ? ` (${item.symbol})` : ''}` : key;
+  }));
   for (const trade of trades) {
     if (!estimates.find(e => e.key === trade.key)?.complete) details.reviewReasons.push(`${trade.name}: Prognoseabdeckung oder Prognosespanne ist nicht ausreichend belegt.`);
     if (trade.action === 'Kaufen') {

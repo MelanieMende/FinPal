@@ -270,7 +270,7 @@ async function buildAndCheck() {
     export function renderSettings(provider) {
       const chatGpt = { connected: true, activeClientId: 'layout-account', accounts: [{ clientId: 'layout-account', label: 'Very Long Connected Account Name For Layout Validation', connected: true }] };
       return renderToStaticMarkup(<section style={{ width: 'min(560px, calc(100vw - 32px))' }}><AIConnectionSettings
-        provider={provider} setProvider={() => {}} busy={false} secureStorage={true} chatGpt={chatGpt}
+        provider={provider} setProvider={() => {}} reasoningEffort="high" setReasoningEffort={() => {}} busy={false} secureStorage={true} chatGpt={chatGpt}
         models={[{ slug: 'layout-model', displayName: 'Very Long ChatGPT Model Display Name For Layout Validation' }]}
         model="layout-model" selectModel={() => {}} signIn={() => {}} signingIn={true} signOut={() => {}}
         cancelSignIn={() => {}} hasKey={true} apiKey="sk-layout-validation-placeholder" setApiKey={() => {}}

@@ -168,6 +168,22 @@ it('preserves analyst coverage and dispersion and converts historical prices wit
   expect(missingFX.uncertainty!.analystCount).toBe(7);
 });
 
+it('provides a short EUR history for any stock using same-day exchange rates', async () => {
+  const recent = history.slice(-110);
+  const client: YahooForecastClient = {
+    quoteSummary: jest.fn().mockResolvedValue({ financialData: { targetMeanPrice: 620, currentPrice: 560, numberOfAnalystOpinions: 7 },
+      price: { currency: 'USD', regularMarketTime: new Date(now - day) } }),
+    chart: jest.fn(async symbol => symbol === 'USDEUR=X'
+      ? { quotes: recent.map(row => ({ date: row.date, close: .9 })) }
+      : { quotes: recent.map(row => ({ ...row, adjclose: row.adjClose })), meta: { currency: 'USD' } }),
+  };
+  const forecast = await createYahooMarketForecastProvider(client, () => now)({ id: 34, name: 'New company', symbol: 'NEW',
+    isin: 'US0000000001', type: 'Stock', shares: 1, price: 560, currency: 'USD', costBasis: null, dividendsEarned: 0, realizedGainLoss: null });
+  expect(forecast?.volatilityHistory?.kind).toBe('short-listing');
+  expect(forecast?.riskHistory?.closes.length).toBeGreaterThanOrEqual(61);
+  expect(validReturnForecast(forecast!, now)).toBe(true);
+});
+
 it('rejects incomplete consensus data or too little price history', async () => {
   const client: YahooForecastClient = {
     quoteSummary: jest.fn().mockResolvedValue({ financialData: { targetMeanPrice: 620, currentPrice: 560, numberOfAnalystOpinions: 0 },

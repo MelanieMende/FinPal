@@ -507,6 +507,16 @@ it('loads Munich Re issuer reports for its German ISIN and reuses their dated ex
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });
 
+it('extracts the Lufthansa liquidity and going concern statement across PDF line breaks', () => {
+  const text = `Matters of significance for the interim financial statements and going concern status
+Taking into account the corporate planning and the resulting liquidity planning, the further
+potential funding measures and the uncertainties about the future course of business, the
+Company’s Executive Board considers the Group’s liquidity to be secure for the next 18
+months. The consolidated financial statements were therefore prepared on a going
+concern basis.`;
+  expect(riskExcerpt(text, 'Stock', false, 'DE0008232125')).toContain('liquidity to be secure for the next 18 months. The consolidated financial statements were therefore prepared on a going concern basis.');
+});
+
 it('loads Lufthansa interim and annual reports for its verified German ISIN', async () => {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-lufthansa-documents-'));
   const now = Date.parse('2026-10-26T10:00:00Z');

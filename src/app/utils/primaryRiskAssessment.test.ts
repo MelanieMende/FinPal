@@ -587,6 +587,21 @@ it('marks only reviewed Munich Re residual uncertainty as decision-ready', () =>
     ? { ...check, finding: 'risk' as const } : check) }).decisionReadiness).toBeUndefined();
 });
 
+it('uses the Lufthansa Q3 continuity statement extracted from a line-broken report', () => {
+  const position = { id: 18, name: 'Lufthansa', isin: 'DE0008232125', symbol: 'LHA.DE', type: 'Stock' } as AnalysisPosition;
+  const text = `Matters of significance for the interim financial statements and going concern status
+Taking into account the corporate planning and the resulting liquidity planning, the further
+potential funding measures and the uncertainties about the future course of business, the
+Company’s Executive Board considers the Group’s liquidity to be secure for the next 18
+months. The consolidated financial statements were therefore prepared on a going
+concern basis.`;
+  const filing = { ...document, source: { title: 'LG-QR-2026-3-e.pdf', url: 'https://investor-relations.lufthansagroup.com/fileadmin/downloads/en/financial-reports/interims-reports/LG-QR-2026-3-e.pdf' },
+    period: '2026-09-30', excerpt: riskExcerpt(text, 'Stock', false, position.isin), excerptVersion: 4 };
+  const reviewed = validateRiskAssessment(position, { documents: [filing], discoveryChecked: true, gaps: [] }, { checks: [], metrics: [] });
+  expect(reviewed.checks.find(check => check.flag === 'going-concern')).toMatchObject({ finding: 'no-risk', documentIndex: 0, reason: expect.stringContaining('18 Monate') });
+  expect(reviewed.gaps.some(gap => gap.startsWith('going-concern:'))).toBe(false);
+});
+
 it('separates reviewed Lufthansa gaps from its independently evidenced margin risk', () => {
   const checks = [
     { flag: 'loss-making', finding: 'no-risk', reason: 'Quartalsgewinn belegt.', documentIndex: 0, quote: 'Net profit attributable was EUR 123m.' },
@@ -606,6 +621,15 @@ it('separates reviewed Lufthansa gaps from its independently evidenced margin ri
       { title: 'LH-AR-2025-e.pdf', url: 'https://investor-relations.lufthansagroup.com/fileadmin/downloads/en/financial-reports/annual-reports/LH-AR-2025-e.pdf' },
     ] };
   expect(riskForModel(record)).toMatchObject({ decisionReadiness: 'reviewed-uncertainty', materialRisks: ['low-margin'] });
+  const withRegulatoryRisk: PrimaryRiskRecord = { ...record, checks: checks.map(check => check.flag === 'regulatory'
+    ? { ...check, finding: 'risk', documentIndex: 0, quote: 'US tariffs create additional costs.', reason: 'Zollkosten sind belegt.' } : check),
+    gaps: record.gaps.filter(gap => !gap.startsWith('regulatory:')) };
+  expect(riskForModel(withRegulatoryRisk)).toMatchObject({ decisionReadiness: 'reviewed-uncertainty', materialRisks: ['low-margin', 'regulatory'] });
+  const withContinuityEvidence: PrimaryRiskRecord = { ...withRegulatoryRisk, checks: withRegulatoryRisk.checks.map(check => check.flag === 'going-concern'
+    ? { ...check, finding: 'no-risk', documentIndex: 0, quote: 'The consolidated financial statements were prepared on a going concern basis.', reason: 'Fortführung belegt.' } : check),
+    gaps: withRegulatoryRisk.gaps.filter(gap => !gap.startsWith('going-concern:')) };
+  expect(riskForModel(withContinuityEvidence)).toMatchObject({ decisionReadiness: 'reviewed-uncertainty', materialRisks: ['low-margin', 'regulatory'] });
+
   expect(riskForModel({ ...record, gaps: [...record.gaps, 'cash: fehlt'] }).decisionReadiness).toBeUndefined();
   expect(riskForModel({ ...record, checks: checks.map(check => check.flag === 'financing'
     ? { ...check, finding: 'risk' as const } : check) }).decisionReadiness).toBeUndefined();

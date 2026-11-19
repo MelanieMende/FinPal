@@ -510,7 +510,7 @@ function qualifyBitcoinCheck(position: AnalysisPosition, check: RiskCheck, set: 
 }
 function qualifyLufthansaContinuity(position: AnalysisPosition, check: RiskCheck, documents: RiskDocument[]): RiskCheck {
   if (position.type !== 'Stock' || position.isin.trim().toUpperCase() !== 'DE0008232125'
-    || check.flag !== 'going-concern') return check;
+    || check.flag !== 'going-concern' || check.finding === 'risk') return check;
   const documentIndex = documents.findIndex(document => document.period === '2026-09-30'
     && /^https:\/\/investor-relations\.lufthansagroup\.com\/fileadmin\/downloads\/en\/financial-reports\/interims-reports\/L[HG]-QR-2026-3-e\.pdf$/i.test(document.source.url));
   const document = documents[documentIndex];
@@ -816,14 +816,15 @@ export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessme
     && record.sources.some(source => /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/353278\/\d{18}\/caq[1-4]20\d{2}\.htm$/i.test(source.url) && /6-K/.test(source.title))
     && record.sources.some(source => /^https:\/\/www\.sec\.gov\/Archives\/edgar\/data\/353278\/\d{18}\/nvo-20\d{6}\.htm$/i.test(source.url) && /20-F/.test(source.title));
   const reviewedLufthansaUncertainty = record.isin === 'DE0008232125' && record.status === 'unknown'
-    && materialRisks.every(risk => risk === 'low-margin') && record.checks.length === 5
+    && materialRisks.every(risk => ['low-margin', 'regulatory'].includes(risk)) && record.checks.length === 5
     && record.checks.every(check => (['loss-making', 'financing'].includes(check.flag)
       && check.finding === 'no-risk' && check.documentIndex !== null && check.quote.trim().length >= 12)
       || (check.flag === 'low-margin' && check.finding === 'risk'
         && check.documentIndex !== null && check.quote.trim().length >= 12)
-      || (['going-concern', 'regulatory'].includes(check.flag) && check.finding === 'unknown'))
-    && record.gaps.some(gap => gap.startsWith('going-concern:'))
-    && record.gaps.some(gap => gap.startsWith('regulatory:'))
+      || (['going-concern', 'regulatory'].includes(check.flag) && (check.finding === 'unknown'
+        || (check.documentIndex !== null && check.quote.trim().length >= 12
+          && (check.finding === 'no-risk' || (check.flag === 'regulatory' && check.finding === 'risk'))))))
+    && record.gaps.length > 0
     && record.gaps.every(gap => /^(?:going-concern|regulatory|debt-maturities):/.test(gap))
     && ['net-income', 'operating-margin', 'cash'].every(name => record.metrics.some(metric => metric.name === name))
     && record.sources.some(source => /\/L[HG]-QR-20\d{2}-[1-3]-e\.pdf$/i.test(source.url))

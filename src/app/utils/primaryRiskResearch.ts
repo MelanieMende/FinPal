@@ -109,7 +109,7 @@ const APOLLO_ELTIF_ISIN = 'LU3170240538';
 const APOLLO_ELTIF_KID_ARCHIVE = 'https://www.francetransactions.com/IMG/pdf/dic-apollo-private-equity.pdf';
 const APOLLO_ELTIF_PAGE = 'https://www.apollo.com/agpm-eltif';
 const stockExcerptVersion = (isin: string) => isin === 'DE0008430026' ? 4
-  : isin === 'DE0008232125' ? 3
+  : isin === 'DE0008232125' ? 4
   : ['US5801351017', 'DK0062498333', 'US6701002056', 'DE0007030009', 'US6092071058'].includes(isin) ? 3
     : isin === 'US84615Q1031' ? 5 : 2;
 const apolloEltifDocumentUrl = (url: string) => url === APOLLO_ELTIF_KID_ARCHIVE;
@@ -327,6 +327,7 @@ function spaceXContinuityQuote(html: string): string {
   return /We believe that our existing sources of liquidity and other financing activities will be sufficient to meet our anticipated cash needs for at least the next twelve months/i.exec(text)?.[0] ?? '';
 }
 function lufthansaGoingConcernExcerpt(text: string): string {
+  text = text.replace(/\s+/g, ' ');
   const conclusion = /Taking into account the corporate planning and the resulting liquidity planning, the further potential funding measures and the uncertainties about the future course of business, the Company[’']s Executive Board considers the Group[’']s liquidity to be secure for the next 18 months\.\s*The consolidated financial statements were therefore prepared on a going concern basis\./i.exec(text);
   if (!conclusion) return '';
   const heading = /Matters of significance for the interim financial statements and going concern status/i.exec(text);

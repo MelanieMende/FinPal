@@ -291,7 +291,8 @@ it('loads a local ETF history model for a new review candidate and passes the jo
   const result = await service.analyze({ ...request, priceUpdatedAt: new Date().toISOString(), positions: request.positions.map(position => ({ ...position, currency: 'EUR' })) });
   expect(provider.mock.calls.find(([position]) => position.id === 0)?.[0]).toMatchObject({ isin: candidate.isin, symbol: 'IUSN.DE', type: 'ETF', currency: 'EUR', shares: 0 });
   const correctionCall = mockedFetch.mock.calls.find(([, options]) => { const input = JSON.parse(options?.body as string).input; return input.length > 1 && JSON.parse(input.at(-1).content).correction?.candidateMarketForecasts?.length; });
-  const correction = JSON.parse(JSON.parse(correctionCall?.[1]?.body as string).input.at(-1).content).correction;
+  if (typeof correctionCall?.[1]?.body !== 'string') throw new Error('Expected a candidate forecast correction request');
+  const correction = JSON.parse(JSON.parse(correctionCall[1].body).input.at(-1).content).correction;
   expect(correction.candidateMarketForecasts[0]).toMatchObject({ key: 'new:IE00BF4RFH31', model: { kind: 'etf-history-v1' } });
   expect(correction.candidateMarketForecasts[0].riskHistory).toBeUndefined();
   expect(correction.allocationPlan.optimization.inputs.some((input: { key: string }) => input.key === 'new:IE00BF4RFH31')).toBe(true);
@@ -322,7 +323,8 @@ it('includes IS3N local history in the joint candidate budget optimization', asy
     isin: candidate.isin, symbol: 'IS3N.DE', price: f.referencePrice, type: 'ETF', currency: 'EUR', shares: 0,
   });
   const correctionCall = mockedFetch.mock.calls.find(([, options]) => { const input = JSON.parse(options?.body as string).input; return input.length > 1 && JSON.parse(input.at(-1).content).correction?.candidateMarketForecasts?.length; });
-  const correction = JSON.parse(JSON.parse(correctionCall?.[1]?.body as string).input.at(-1).content).correction;
+  if (typeof correctionCall?.[1]?.body !== 'string') throw new Error('Expected a candidate forecast correction request');
+  const correction = JSON.parse(JSON.parse(correctionCall[1].body).input.at(-1).content).correction;
   expect(correction.candidateMarketForecasts[0]).toMatchObject({ key: 'new:IE00BKM4GZ66', model: { kind: 'etf-history-v1' } });
   expect(correction.allocationPlan.optimization.inputs.some((input: { key: string }) => input.key === 'new:IE00BKM4GZ66')).toBe(true);
   expect(result.allocationPlan!.optimization!.forecasts.some(item => item.key === 'new:IE00BKM4GZ66')).toBe(true);

@@ -763,7 +763,7 @@ export class PortfolioAnalysisService {
         const updatedRisk: FundamentalRiskAssessment = {
           ...(oldRisk ?? { key: String(asset.id), status: 'unknown' as const, materialRisks: [],
             rationale: 'Die Dokumente wurden geladen; eine inhaltliche Risikoprüfung steht noch aus.', sources: [] }),
-          primaryDocumentsCheckedAt: new Date().toISOString(), primaryDocuments: set.documents.map(document => document.source),
+          primaryDocuments: set.documents.map(document => document.source),
           primaryDocumentsFingerprint: documentsFingerprint, primaryDocumentsFingerprintVersion: 2,
           ...(position.isin.trim().toUpperCase() === 'US84615Q1031' ? { primaryExcerptVersion: set.documents.find(document => document.period === '2026-09-30')?.excerptVersion } : {}),
           ...(changed ? { primaryDocumentsChanged: true } : { primaryDocumentsChanged: undefined }),

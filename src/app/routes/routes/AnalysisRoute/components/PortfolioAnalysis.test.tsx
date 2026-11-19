@@ -306,11 +306,19 @@ it('shows a due report reload from the document load time even after a recent ri
   const props = { risk, now: loaded + 24 * 60 * 60 * 1000, openSource: jest.fn(), onReload: jest.fn(),
     disabled: false, loading: false, forceReload: false };
   const { rerender } = render(<PrimaryDocumentsIndicator {...props}
-    status={{ assetId: 1, loadedAt: new Date(loaded).toISOString(), needsRefresh: false }} />);
+    status={{ assetId: 1, loadedAt: new Date(loaded).toISOString(), freshnessCheckedAt: new Date(loaded).toISOString(), needsRefresh: false }} />);
   expect(screen.getByText(/Berichte laden: Aktualitätsprüfung fällig/)).toBeInTheDocument();
+  expect(screen.getByText(/^Aktualität zuletzt geprüft:/)).toHaveTextContent('erneute Prüfung fällig');
+  expect(screen.getByText(/^Berichte zuletzt geladen:/).tagName).toBe('P');
+  expect(screen.getByText(/^Risiken zuletzt geprüft:/).tagName).toBe('P');
   rerender(<PrimaryDocumentsIndicator {...props} now={loaded + 60 * 60 * 1000}
-    status={{ assetId: 1, loadedAt: new Date(loaded + 60 * 60 * 1000).toISOString(), needsRefresh: false }} />);
+    status={{ assetId: 1, loadedAt: new Date(loaded).toISOString(), freshnessCheckedAt: new Date(loaded + 60 * 60 * 1000).toISOString(), needsRefresh: false }} />);
   expect(screen.getByText('Berichte laden: geladen · aktuell')).toBeInTheDocument();
+  expect(screen.getByText(/^Aktualität zuletzt geprüft:/)).toHaveTextContent('noch 24 Std. 00 Min. gültig');
+  rerender(<PrimaryDocumentsIndicator {...props} now={loaded + 2 * 60 * 60 * 1000}
+    status={{ assetId: 1, loadedAt: new Date(loaded).toISOString(), freshnessCheckedAt: new Date(loaded + 60 * 60 * 1000).toISOString(), needsRefresh: false }} />);
+  expect(screen.getByText(/^Aktualität zuletzt geprüft:/)).toHaveTextContent('noch 23 Std. 00 Min. gültig');
+  expect(screen.queryByText(/Nach 24 Stunden/)).not.toBeInTheDocument();
 });
 
 it('restores an executed 50 EUR sale as Done in both views and removes its proceeds from the remaining funding plan', async () => {

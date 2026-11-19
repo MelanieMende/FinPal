@@ -11,6 +11,7 @@ export interface RiskDocument {
   excerpt: string;
   hash: string;
   fetchedAt: number;
+  freshnessCheckedAt?: number;
   period: string | null;
   identity?: string;
   excerptVersion?: number;
@@ -515,11 +516,14 @@ export class PrimaryRiskResearch {
     }
     return { documents, gaps: [], discoveryChecked: true };
   }
-  cachedStatus(position: Pick<AnalysisPosition, 'isin' | 'type' | 'symbol'>, sources: AnalysisSource[]): { loadedAt: string | null; needsRefresh: boolean } {
+  cachedStatus(position: Pick<AnalysisPosition, 'isin' | 'type' | 'symbol'>, sources: AnalysisSource[]): { loadedAt: string | null; freshnessCheckedAt: string | null; needsRefresh: boolean } {
     const set = this.reuseCached(position, sources);
     const loadedAt = set?.documents.length ? Math.min(...set.documents.map(document => document.fetchedAt)) : NaN;
+    // A legacy successful download is itself an actual source check.
+    const checkedAt = set?.documents.length ? Math.min(...set.documents.map(document => document.freshnessCheckedAt ?? document.fetchedAt)) : NaN;
     return { loadedAt: Number.isFinite(loadedAt) ? new Date(loadedAt).toISOString() : null,
-      needsRefresh: !Number.isFinite(loadedAt) || loadedAt > this.now() || this.now() - loadedAt >= DAY };
+      freshnessCheckedAt: Number.isFinite(checkedAt) ? new Date(checkedAt).toISOString() : null,
+      needsRefresh: !Number.isFinite(checkedAt) || checkedAt > this.now() || this.now() - checkedAt >= DAY };
   }
   async lufthansaReportFreshness(position: Pick<AnalysisPosition, 'isin'>, sources: AnalysisSource[]): Promise<{ newerReportAvailable: boolean; verified: boolean }> {
     if (position.isin.trim().toUpperCase() !== 'DE0008232125') return { newerReportAvailable: false, verified: true };
@@ -606,7 +610,7 @@ export class PrimaryRiskResearch {
           : miningPoolSource ? 'bitcoin-mining-pools' : 'bitcoin-network';
       const excerptVersion = miningPoolSource ? 1 : 3;
       if (!forceRefresh && stored?.identity === identity && stored.excerptVersion === excerptVersion
-        && this.now() - stored.fetchedAt < DAY && stored.fetchedAt <= this.now()) {
+        && this.now() - (stored.freshnessCheckedAt ?? stored.fetchedAt) < DAY && (stored.freshnessCheckedAt ?? stored.fetchedAt) <= this.now()) {
         documents.push(stored);
         continue;
       }
@@ -644,7 +648,7 @@ export class PrimaryRiskResearch {
                   && /block.?chain|wallet|consensus|private key|bitcoin price/i.test(excerpt));
         if (!excerpt || !valid) throw new Error('Bitcoin source identity or required evidence missing');
         const document: RiskDocument = { source, excerpt, hash: createHash('sha256').update(data).digest('hex'),
-          fetchedAt, period: null, identity, excerptVersion };
+          fetchedAt, freshnessCheckedAt: fetchedAt, period: null, identity, excerptVersion };
         this.cache.set(source.url, document);
         documents.push(document);
         try { this.save(); } catch { /* This run can still use the downloaded document. */ }
@@ -699,8 +703,8 @@ export class PrimaryRiskResearch {
     // unnecessary network dependency to every portfolio analysis.
     if (!forceRefresh && isin === 'US84615Q1031') {
       const cached = [...this.cache.values()].filter(document => document.source.url.startsWith('https://www.sec.gov/Archives/edgar/data/1181412/')
-        && document.excerptVersion === stockExcerptVersion(isin) && this.now() - document.fetchedAt < DAY
-        && document.fetchedAt <= this.now());
+        && document.excerptVersion === stockExcerptVersion(isin) && this.now() - (document.freshnessCheckedAt ?? document.fetchedAt) < DAY
+        && (document.freshnessCheckedAt ?? document.fetchedAt) <= this.now());
       if (cached.length) {
         const latest = cached.sort((a, b) => b.fetchedAt - a.fetchedAt)[0];
         if (spaceX) logSpaceX('cache-hit', { elapsedMs: Date.now() - startedAt, source: safeSource(latest.source.url) });
@@ -792,7 +796,7 @@ export class PrimaryRiskResearch {
       .slice(0, position.isin.trim().toUpperCase() === 'US84615Q1031' ? 1
         : position.type === 'Bond' && position.isin.trim().toUpperCase() === TREASURY_BOND_ISIN ? 5 : MAX_DOCUMENTS)) {
       const stored = this.cache.get(url);
-      if (!forceRefresh && stored && this.now() - stored.fetchedAt < DAY &&
+      if (!forceRefresh && stored && this.now() - (stored.freshnessCheckedAt ?? stored.fetchedAt) < DAY && (stored.freshnessCheckedAt ?? stored.fetchedAt) <= this.now() &&
         (position.type !== 'Stock' || stored.excerptVersion === stockExcerptVersion(position.isin.trim().toUpperCase())) &&
         (position.isin.trim().toUpperCase() !== 'IE00B3WJKG14' || stored.excerptVersion === 3) &&
         (position.isin.trim().toUpperCase() !== 'IE00B8GKDB10' || stored.excerptVersion === 2) &&
@@ -890,7 +894,7 @@ export class PrimaryRiskResearch {
                 : 'TreasuryDirect: Marktgängige US-Staatsanleihen'
             : decodeURIComponent(new URL(url).pathname.split('/').filter(Boolean).pop() || new URL(url).hostname));
         const document: RiskDocument = { source: { title: documentTitle, url }, excerpt,
-          hash: createHash('sha256').update(data).digest('hex'), fetchedAt: this.now(), period,
+          hash: createHash('sha256').update(data).digest('hex'), fetchedAt: this.now(), freshnessCheckedAt: this.now(), period,
           ...(position.type === 'Stock' ? { excerptVersion: stockExcerptVersion(position.isin.trim().toUpperCase()) } : {}),
           ...(position.isin.trim().toUpperCase() === 'IE00B3WJKG14' ? { excerptVersion: 3 } : {}),
           ...(position.isin.trim().toUpperCase() === 'IE00B8GKDB10' ? { excerptVersion: 2 } : {}),

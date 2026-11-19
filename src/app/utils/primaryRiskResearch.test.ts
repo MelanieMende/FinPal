@@ -447,19 +447,30 @@ it('loads Munich Re issuer reports for its German ISIN and reuses their dated ex
     expect(annual?.excerpt).toMatch(/Maturity analysis of future.*Subordinated liabilities/i);
     expect(first.documents.map(doc => doc.source.url)).toEqual(knownResearchSources(position));
     expect(new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now)
-      .cachedStatus(position, first.documents.map(doc => doc.source))).toEqual({ loadedAt: new Date(now).toISOString(), needsRefresh: false });
+      .cachedStatus(position, first.documents.map(doc => doc.source))).toEqual({ loadedAt: new Date(now).toISOString(), freshnessCheckedAt: new Date(now).toISOString(), needsRefresh: false });
     expect(new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now + 24 * 60 * 60 * 1000)
       .cachedStatus(position, first.documents.map(doc => doc.source)).needsRefresh).toBe(true);
     const second = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
     expect(fetcher).toHaveBeenCalledTimes(4);
     expect(second.documents.map(doc => doc.hash)).toEqual(first.documents.map(doc => doc.hash));
+    const freshnessFile = path.join(folder, 'freshness.json');
+    fs.copyFileSync(file, freshnessFile);
+    const later = now + 25 * 60 * 60 * 1000;
+    const refreshed = await new PrimaryRiskResearch(freshnessFile, fetcher as unknown as typeof fetch, () => later).collect(position, undefined, [], true);
+    const sources = refreshed.documents.map(doc => doc.source);
+    const restoredStatus = new PrimaryRiskResearch(freshnessFile, fetcher as unknown as typeof fetch, () => later).cachedStatus(position, sources);
+    expect(restoredStatus).toMatchObject({ freshnessCheckedAt: new Date(later).toISOString(), needsRefresh: false });
+    const failingFetch = jest.fn(async () => new Response('', { status: 503 }));
+    await new PrimaryRiskResearch(freshnessFile, failingFetch as unknown as typeof fetch, () => later + 86400000).collect(position, undefined, [], true);
+    expect(new PrimaryRiskResearch(freshnessFile, failingFetch as unknown as typeof fetch, () => later + 86400000)
+      .cachedStatus(position, sources)).toMatchObject({ freshnessCheckedAt: new Date(later).toISOString(), needsRefresh: true });
     const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
     const oldAnnual = saved.documents.find((doc: { source: { url: string } }) => doc.source.url.includes('Group-Annual-Report-2025'));
     oldAnnual.excerptVersion = 3;
     saved.version = 2;
     fs.writeFileSync(file, JSON.stringify(saved));
     const upgraded = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
-    expect(fetcher).toHaveBeenCalledTimes(8);
+    expect(fetcher).toHaveBeenCalledTimes(12);
     expect(upgraded.documents.find(doc => doc.source.url.includes('Group-Annual-Report-2025'))?.excerptVersion).toBe(4);
     const wrongFetcher = jest.fn(async () => new Response(report.replaceAll('Munich Re', 'Other Company'), { headers: { 'content-type': 'application/pdf' } }));
     const wrong = await new PrimaryRiskResearch(path.join(folder, 'wrong.json'), wrongFetcher as unknown as typeof fetch, () => now).collect(position);

@@ -105,8 +105,11 @@ export function AssetResearchIndicator({ status, now }: { status?: AssetResearch
 export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onReload, disabled, loading, forceReload, excerptNeedsRefresh = false }: { risk: FundamentalRiskAssessment; now: number; status?: import('../../../../utils/portfolioAnalysis').PrimaryDocumentStatus; openSource: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void; onReload: () => void; disabled: boolean; loading: boolean; forceReload: boolean; excerptNeedsRefresh?: boolean }) {
   const checkedAt = risk.primaryDocumentsCheckedAt ? Date.parse(risk.primaryDocumentsCheckedAt) : NaN;
   const loadedAt = status?.loadedAt ? Date.parse(status.loadedAt) : NaN;
-  const current = !!status && !status.needsRefresh && Number.isFinite(loadedAt) && loadedAt <= now
-    && now - loadedAt < 24 * 60 * 60 * 1000;
+  const freshnessCheckedAt = status?.freshnessCheckedAt ? Date.parse(status.freshnessCheckedAt) : NaN;
+  const current = !!status && !status.needsRefresh && Number.isFinite(freshnessCheckedAt) && freshnessCheckedAt <= now
+    && now - freshnessCheckedAt < 24 * 60 * 60 * 1000;
+  const remainingMinutes = Math.max(0, Math.ceil((freshnessCheckedAt + 24 * 60 * 60 * 1000 - now) / 60000));
+  const validity = current ? `noch ${Math.floor(remainingMinutes / 60)} Std. ${String(remainingMinutes % 60).padStart(2, '0')} Min. gültig` : 'erneute Prüfung fällig';
   const newReportAwaitingReview = risk.primaryDocumentsChanged === true;
   const reportVersionAvailable = status?.newerReportAvailable === true;
   const publicationCheckUnverified = status?.publicationCheckVerified === false;
@@ -131,11 +134,14 @@ export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onRel
             ? <p className="m-0 text-xs text-amber-200">Eine neuere Berichtsversion ist verfügbar. Bitte die Berichte neu laden und danach die Risiken erneut prüfen.</p>
             : publicationCheckUnverified
               ? <p className="m-0 text-xs text-amber-200">Der aktuelle Berichtsstand konnte nicht mit der Emittentenübersicht abgeglichen werden. Bitte die Berichte erneut laden.</p>
-          : Number.isFinite(checkedAt) && !Number.isFinite(loadedAt)
+          : !Number.isFinite(loadedAt)
           ? <p className="m-0 text-xs text-amber-200">Kein gültiger Ladezeitpunkt der Berichtsauszüge. Bitte die Berichte neu laden; eine 24-Stunden-Prüffrist lässt sich nicht bestimmen.</p>
-          : Number.isFinite(checkedAt)
-          ? <p className="m-0 text-xs text-gray-400">Risiken zuletzt geprüft: {formatSyncTime(new Date(checkedAt).toISOString())}. Berichtsauszüge zuletzt geladen: {formatSyncTime(new Date(loadedAt).toISOString())}. Nach 24 Stunden ist eine neue Aktualitätsprüfung fällig.</p>
-          : <p className="m-0 text-xs text-gray-400">Für diese Analyse ist kein Prüfzeitpunkt der Primärberichte gespeichert.</p>}
+          : null}
+        <div className="text-xs text-gray-400">
+          <p className="m-0">Aktualität zuletzt geprüft: {Number.isFinite(freshnessCheckedAt) ? <>{formatSyncTime(new Date(freshnessCheckedAt).toISOString())} · {validity}</> : 'nicht verfügbar'}</p>
+          <p className="m-0">Berichte zuletzt geladen: {Number.isFinite(loadedAt) ? formatSyncTime(new Date(loadedAt).toISOString()) : 'nicht verfügbar'}</p>
+          <p className="m-0">Risiken zuletzt geprüft: {Number.isFinite(checkedAt) ? formatSyncTime(new Date(checkedAt).toISOString()) : 'nicht verfügbar'}</p>
+        </div>
         {documents.length
           ? <div className="flex flex-wrap gap-2" aria-label="Geladene Primärberichte">
             {documents.map((source, index) => <a key={`${source.url}-${index}`} href={source.url} onClick={event => openSource(event, source.url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">{source.title}</a>)}

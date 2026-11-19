@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="2390" viewBox="0 0 1200 2390" role="img" aria-labelledby="title description">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="2700" viewBox="0 0 1200 2700" role="img" aria-labelledby="title description">
   <title id="title">FinPal Analyseablauf</title>
   <desc id="description">Flussdiagramm vom Laden der Finanzdaten über Recherche, Risikoprüfung mit aktuell bestätigten Verwahr-, Produkt- und Steuerangaben und Portfoliomodell bis zur validierten Empfehlung. Geladene Primärberichte werden vollständig nach relevanten Belegen durchsucht; nur kompakte, relevante Auszüge gehen in die inhaltliche Bewertung ein. In der Gesamtanalyse wird der gespeicherte Risikobefund für aktuelle, unveränderte Primärberichte und unveränderte Prüflogik wiederverwendet und direkt an die Forecasts übergeben; nur neue oder geänderte Belege beziehungsweise eine geänderte Prüflogik lösen eine erneute inhaltliche KI-Prüfung aus. Der optionale Trade-Republic-Dokumentensync behält nur erkannte Krypto-Vertrags-PDFs dauerhaft; andere Timeline-PDFs werden nach der temporären Prüfung entfernt. Eine ausdrücklich nutzerbestätigte Angabe zu direkt gehaltenen Kryptowerten kann zusammen mit bestätigter Trade-Republic-Verwahrung die angegebene Halteform zuordnen, ersetzt aber keine Produktverifizierung oder passenden Vertragsunterlagen. Bei Bitcoin werden MiCAR-Diensterahmen, Steuerquellen, Anbieterstatus und exakt passende Produktvertragsunterlagen getrennt bewertet. Bestätigt der Nutzer, dass bei Trade Republic keine BTC-Produktunterlagen verfügbar sind, gilt dies höchstens drei Monate als geprüfte Restunsicherheit; danach ist eine erneute Bestätigung erforderlich. Eine Anbieterzulassung oder Steuerregel belegt keine Produktbilligung. Die Bitcoin-Mining-Pool-Verteilung wird als aktuelle 7-Tage-Blockstichprobe geprüft; sie belegt keine tatsächliche Hashing-Kontrolle. Belegte Risiken sind Entscheidungsfaktoren und keine automatischen Blocker. Das Ergebnis enthält für jedes aktuell gehaltene Asset eine eigene Karte; dessen dauerhafte Einzelangaben stehen direkt unter dem KI-Ergebnis.</desc>
   <defs>
@@ -60,6 +60,7 @@
   <text x="620" y="530" class="edge-label">Ja</text>
   <path d="M960 606 V640 H600" class="connector"/>
   <path d="M600 640 V680" class="edge"/>
+  <text x="820" y="660" text-anchor="middle" class="small">Danach KI-Verbindung vorbereiten</text>
   <text x="60" y="675" class="section">3 · RISIKOPRÜFUNG</text>
   <polygon points="600,680 790,760 600,840 410,760" class="decision"/>
   <text x="600" y="753" text-anchor="middle" class="node-title">Aktualitätsprüfung notwendig?</text>
@@ -170,7 +171,23 @@
   <rect x="390" y="2150" width="420" height="82" rx="14" class="positive"/>
   <rect x="724" y="2156" width="72" height="20" rx="10" class="ai-badge"/>
   <text x="760" y="2170" text-anchor="middle" class="ai-badge-text">KI</text>
-  <text x="600" y="2192" text-anchor="middle" class="node-title">KI-Empfehlung validieren</text>
-  <text x="600" y="2217" text-anchor="middle" class="node-text">Quellen, Beträge, Finanzierung, Blocker · Asset-Karten</text>
+  <text x="600" y="2192" text-anchor="middle" class="node-title">Bestandsanalyse validieren</text>
+  <text x="600" y="2217" text-anchor="middle" class="node-text">Quellen, Beträge, Finanzierung und konkrete Blocker</text>
+  <path d="M600 2232 V2260" class="edge"/>
+  <polygon points="600,2262 790,2322 600,2382 410,2322" class="decision"/>
+  <text x="600" y="2313" text-anchor="middle" class="node-title">Freies Cash oder Verkauf?</text>
+  <text x="600" y="2337" text-anchor="middle" class="node-text">Reserve und ausführbare Verkäufe beachten</text>
+  <path d="M790 2322 H980 V2420" class="edge"/>
+  <text x="855" y="2311" class="edge-label">Ja</text>
+  <rect x="810" y="2422" width="340" height="96" rx="14" class="research"/>
+  <text x="980" y="2452" text-anchor="middle" class="node-title">Neue Kaufideen recherchieren</text>
+  <text x="980" y="2477" text-anchor="middle" class="node-text">Quellen und Risiken prüfen; danach</text>
+  <text x="980" y="2500" text-anchor="middle" class="small">gemeinsam optimieren und finanzieren</text>
+  <path d="M410 2322 H220 V2570 H600" class="edge"/>
+  <text x="285" y="2311" class="edge-label">Nein</text>
+  <path d="M980 2518 V2570 H600" class="edge"/>
+  <path d="M600 2570 V2600" class="edge"/>
+  <rect x="390" y="2602" width="420" height="65" rx="14" class="positive"/>
+  <text x="600" y="2640" text-anchor="middle" class="node-title">Ergebnis und Asset-Karten</text>
   </g>
 </svg>

@@ -31,13 +31,19 @@ const stageLabels: Record<PortfolioAnalysisProgress['stage'], string> = {
   prices: 'Kurse werden aktualisiert',
   forecast: 'Forecast wird aktualisiert',
   preparing: 'KI-Verbindung wird vorbereitet',
-  research: 'Onlinequellen werden ohne KI gesucht',
+  research: 'Online-Recherche wird ausgeführt',
   'ai-research': 'KI recherchiert fehlende Quellen im Web',
   'risk-review': 'Primärberichte und Unternehmensrisiken werden geprüft',
   analysis: 'Portfolio und Empfehlungen werden analysiert',
   retrying: 'Unterbrochene KI-Anfrage wird einmal erneut versucht',
   correcting: 'Empfehlungen werden korrigiert und erneut geprüft',
   validating: 'Antwort und Quellen werden geprüft',
+};
+const logRiskSteps: Record<NonNullable<PortfolioAnalysisProgress['activeRiskStep']>, string> = {
+  documents: 'Primärberichte werden abgeglichen', 'sec-discovery': 'SEC-Einreichungen werden gesucht',
+  download: 'Primärbericht wird heruntergeladen', 'pdf-parse': 'PDF-Text wird extrahiert',
+  'risk-excerpt': 'Bericht wird nach Risikohinweisen durchsucht', assessment: 'Dokumentinhalt wird ausgewertet',
+  reuse: 'Gespeicherter Risikobefund wird wiederverwendet',
 };
 interface AssetReloadStatus {
   message: string;
@@ -214,7 +220,7 @@ export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, c
       </div>
     </div>
     {primaryDocumentsStep}
-    {checkStatus && <div role="status" className="mx-3 mb-0 mt-2 flex items-center gap-2 rounded border border-sky-400/25 bg-sky-500/10 px-2.5 py-2 text-xs text-sky-200">
+    {checkStatus && <div role="status" data-testid={`asset-risk-loading-${risk.key}`} className="mx-3 mb-0 mt-2 flex items-center gap-2 rounded border border-sky-400/25 bg-sky-500/10 px-2.5 py-2 text-xs text-sky-200">
       <Spinner size={14} /> {checkStatus}
     </div>}
     {reviewPending && <div role="status" className="mx-3 mb-0 mt-2 rounded border border-amber-400/30 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-200">
@@ -759,13 +765,27 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
       </div>}
       {open && <div id="portfolio-analysis-content" className="mt-5 space-y-4">
         <p className="text-xs text-gray-400">Analysiert werden alle {positions.length} gehaltenen Positionen, unabhängig vom aktiven Asset-Type-Filter. Zusätzlich werden passende Assets außerhalb deines Portfolios recherchiert. Empfehlungen sind eine Entscheidungshilfe und führen keine Trades aus.</p>
+        {analysisState.log && <details open className="min-w-0 rounded-lg border border-white/10 bg-slate-950/30 p-3 text-xs text-gray-300">
+          <summary className="cursor-pointer font-bold text-indigo-200">{analysisState.log.status === 'running' ? 'Protokoll der laufenden Analyse' : 'Protokoll der letzten Analyse'}</summary>
+          <p className="mb-2 mt-2">{analysisState.log.title} · {({ running: 'Läuft', completed: 'Abgeschlossen', failed: 'Fehlgeschlagen', interrupted: 'Unterbrochen' } as const)[analysisState.log.status]}</p>
+          <p className="mt-0 text-gray-400">Aufgezeichnete Fortschrittsmeldungen und Abschlussstatus; keine vollständige Liste aller internen Aktionen oder KI-Gedankengänge.</p>
+          <ol aria-label="Analyseprotokoll" className="m-0 max-h-80 min-w-0 space-y-1 overflow-auto pl-5">
+            {analysisState.log.entries.map((entry, index) => {
+              const event = entry.progress;
+              const label = entry.message ?? (event ? `${event.stage === 'research' && event.logDetail && event.activeAssetId !== undefined ? stageLabels.research : event.logDetail ?? stageLabels[event.stage] ?? 'Analyseschritt'}${event.activeCandidateName ? ` · ${event.activeCandidateName}` : entry.assetName ? ` · ${entry.assetName}` : event.activeAssetId !== undefined ? ` · Asset ${event.activeAssetId}` : ''}${event.stage === 'research' && event.logDetail && event.activeAssetId !== undefined ? ` · ${event.logDetail}` : ''}${event.activeRiskStep ? ` · ${logRiskSteps[event.activeRiskStep] ?? event.activeRiskStep}` : ''}${event.researchTotal ? ` · ${event.researchCompleted ?? 0}/${event.researchTotal} abgeschlossen` : ''}` : 'Analyseschritt');
+              return <li key={index} className="break-words"><time dateTime={new Date(entry.at).toISOString()}>{new Date(entry.at).toLocaleTimeString('de-DE')}</time> · {label}</li>;
+            })}
+          </ol>
+        </details>}
         <section aria-label="KI-Zugang Status" className="flex min-w-0 flex-wrap items-center justify-between gap-3 rounded-lg border border-white/10 bg-slate-950/30 px-3 py-2">
           <div className="min-w-0">
             <p className={`m-0 flex items-center gap-2 text-sm font-bold ${aiConnected ? 'text-emerald-300' : 'text-gray-300'}`}>
               <span aria-hidden="true" className={`h-2.5 w-2.5 shrink-0 rounded-full ${aiConnected ? 'bg-emerald-400' : 'bg-gray-500'}`} />
               {aiConnected ? 'Verbunden' : 'Nicht verbunden'}
             </p>
-            <p className="m-0 ml-[18px] break-words text-xs text-gray-400">{providerLabel} · {modelLabel} · Reasoning: {reasoningLabel}</p>
+            <p className="m-0 ml-[18px] break-words text-xs text-gray-400">{providerLabel}{provider === 'chatgpt' && chatGpt.activeClientId
+              ? ` · ${chatGpt.accounts.find(account => account.clientId === chatGpt.activeClientId)?.label ?? 'ChatGPT-Konto'}`
+              : ''} · {modelLabel} · Reasoning: {reasoningLabel}</p>
           </div>
           <Button small icon="cog" onClick={() => setConnectionSettingsOpen(true)}>KI-Einstellungen</Button>
         </section>

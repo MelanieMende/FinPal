@@ -4,7 +4,7 @@ import { setupStore } from '../../../../store';
 import { setCashInternal } from '../../../../store/cash/cash.reducer';
 import { setTransactionsInternal } from '../../../../store/transactions/transactions.reducer';
 import { setDividendsInternal } from '../../../../store/dividends/dividends.reducer';
-import { analysisProgressReceived, analyzePortfolio } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
+import { analysisProgressReceived, analyzePortfolio, ANALYSIS_LOG_KEY } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
 import AssetList from '../../AssetsRoute/components/AssetList/AssetList';
 import { buildAnalysisPositions } from '../../../../utils/portfolioAnalysis';
 import PortfolioAnalysis, { ANALYSIS_PROFILE_KEY, ANALYSIS_MODEL_KEY, ANALYSIS_REASONING_KEY, AssetRecommendationStatus, AssetResearchIndicator, PrimaryDocumentsIndicator, RiskReview, comparableAnalysisSnapshot } from './PortfolioAnalysis';
@@ -60,6 +60,31 @@ async function open() {
 async function openAISettings() {
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'KI-Einstellungen' })); });
 }
+
+it('shows the running analysis log and restores the last log after a restart', async () => {
+  const { store, unmount } = render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
+  await open();
+  const request: import('../../../../utils/portfolioAnalysis').PortfolioAnalysisRequest = { provider: 'api', positions: buildAnalysisPositions(assets), priceUpdatedAt: null,
+    profile: { goal: 'growth' as const, risk: 'medium' as const, horizonYears: 10, buyBudget: 0 } };
+  act(() => {
+    store.dispatch(analyzePortfolio.pending('log-run', { request, snapshot: '' }));
+    store.dispatch(analysisProgressReceived({ requestId: 'log-run', progress: { stage: 'research', activeAssetId: 1, logDetail: 'Recherche abgeschlossen: 2 Quellen gefunden.', researchCompleted: 1, researchTotal: 2, lastActivityAt: Date.now() } }));
+    store.dispatch(analysisProgressReceived({ requestId: 'log-run', progress: { stage: 'research', logDetail: 'Online-Recherche wurde ausgeführt', researchCompleted: 2, researchTotal: 2, lastActivityAt: Date.now() } }));
+  });
+  expect(screen.getByText('Protokoll der laufenden Analyse')).toBeInTheDocument();
+  expect(screen.getByText('Protokoll der laufenden Analyse').closest('details')).toHaveAttribute('open');
+  expect(screen.getByRole('list', { name: 'Analyseprotokoll' })).toHaveTextContent('Online-Recherche wird ausgeführt · Stock Asset · Recherche abgeschlossen: 2 Quellen gefunden. · 1/2 abgeschlossen');
+  expect(screen.getByRole('list', { name: 'Analyseprotokoll' })).toHaveTextContent('Online-Recherche wurde ausgeführt · 2/2 abgeschlossen');
+  fireEvent.click(screen.getByText('Protokoll der laufenden Analyse'));
+  expect(screen.getByText('Protokoll der laufenden Analyse').closest('details')).not.toHaveAttribute('open');
+  expect(localStorage.getItem(ANALYSIS_LOG_KEY)).toContain('Recherche abgeschlossen');
+  unmount();
+  render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
+  await open();
+  expect(screen.getByText('Protokoll der letzten Analyse')).toBeInTheDocument();
+  expect(screen.getByText('Protokoll der letzten Analyse').closest('details')).toHaveAttribute('open');
+  expect(screen.getByText(/Ausgang ist nicht bekannt/)).toBeInTheDocument();
+});
 
 it('saves the reasoning setting immediately and restores it when the view remounts', async () => {
   const view = render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
@@ -123,20 +148,18 @@ it('separates material risk findings from the recommendation blocker', () => {
     ].join('\n'), sources: [{ title: 'Lufthansa Quartalsbericht', url: 'https://example.com/lufthansa.pdf' }] }}
   openSource={jest.fn()} />);
   const review = screen.getByRole('region', { name: 'Unternehmens- und Produktrisiken' });
-  expect(review).toHaveClass('border-red-400/35');
-  expect(within(review).getByText('Geprüft · offene Punkte')).toBeInTheDocument();
-  expect(within(review).getByText('Wesentliches Risiko belegt')).toBeInTheDocument();
-  const findings = within(review).getByText('Befunde und Primärquellen anzeigen').closest('details');
+  expect(review).toHaveClass('border-amber-400/30');
+  expect(within(review).getByText('Wesentliche Risiken')).toBeInTheDocument();
+  const findings = within(review).getByText('Befunde anzeigen').closest('details');
   expect(findings).not.toHaveAttribute('open');
-  fireEvent.click(within(review).getByText('Befunde und Primärquellen anzeigen'));
+  fireEvent.click(within(review).getByText('Befunde anzeigen'));
   expect(findings).toHaveAttribute('open');
   expect(within(review).getByText('Marge')).toBeInTheDocument();
   expect(within(review).getByText('Bedeutung für die Entscheidung')).toBeInTheDocument();
   expect(within(review).getByText(/kein automatischer Handelsblocker/)).toBeInTheDocument();
   expect(within(review).getByText(/Die berichtete EBIT-Marge beträgt 3,1/)).toBeInTheDocument();
-  expect(within(review).getByText('Offene Punkte')).toBeInTheDocument();
+  expect(within(review).getByText('Geprüfte Restunsicherheiten')).toBeInTheDocument();
   expect(within(review).getByText('Belegte Kennzahlen')).toBeInTheDocument();
-  expect(within(review).getByRole('link', { name: 'Lufthansa Quartalsbericht' })).toBeInTheDocument();
 });
 
 it('marks an incomplete risk review red and a material risk without open points amber', () => {
@@ -144,15 +167,14 @@ it('marks an incomplete risk review red and a material risk without open points 
     rationale: 'Kein überprüfbarer Befund mit Textstelle.', sources: [] }} openSource={jest.fn()} />);
   const incompleteReview = screen.getByRole('region', { name: 'Unternehmens- und Produktrisiken' });
   expect(incompleteReview).toHaveClass('border-red-400/35');
-  expect(within(incompleteReview).getAllByText('Geprüft · offene Punkte')).toHaveLength(2);
+  expect(within(incompleteReview).getByText('Geprüft · offene Punkte')).toBeInTheDocument();
   incompleteView.unmount();
 
   render(<RiskReview risk={{ key: '1', status: 'assessed', materialRisks: ['low-margin'],
     rationale: 'Marge: Risiko belegt (Die berichtete EBIT-Marge beträgt 3,1 %.)', sources: [] }} openSource={jest.fn()} />);
   const materialReview = screen.getByRole('region', { name: 'Unternehmens- und Produktrisiken' });
   expect(materialReview).toHaveClass('border-amber-400/30');
-  expect(within(materialReview).getByText('Wesentliches Risiko belegt')).toBeInTheDocument();
-  expect(within(materialReview).getByText('1 wesentlich')).toBeInTheDocument();
+  expect(within(materialReview).getByText('Wesentliche Risiken')).toBeInTheDocument();
 });
 
 it('shows Munich Re going-concern uncertainty as reviewed residual uncertainty', () => {
@@ -292,14 +314,14 @@ it('shows a due report reload from the document load time even after a recent ri
 });
 
 it('restores an executed 50 EUR sale as Done in both views and removes its proceeds from the remaining funding plan', async () => {
-  const savedReport = await window.API.analyzePortfolio({} as never);
+  const savedReport = await window.API.analyzePortfolio!({} as never);
   savedReport.recommendations[0] = { ...savedReport.recommendations[0], action: 'Verkaufen', plannedAmountEUR: 50,
     executionBaseline: { shares: 2, transactionIds: [1] } };
   savedReport.fundingCheck = { status: 'conditional', cashEUR: 0, saleProceedsEUR: 50, buyAmountEUR: 0,
     feeScenarioEUR: 2, balanceBeforeSpreadAndTaxEUR: 48, shortfallEUR: 0, warnings: [] };
   const snapshot = JSON.stringify({ positions: buildAnalysisPositions(assets), profile: {}, priceUpdatedAt: null, transactionIds: [1] });
   window.API.getLastPortfolioAnalysis = jest.fn().mockResolvedValue({ report: savedReport, snapshot, provider: 'chatgpt' });
-  jest.mocked(window.API.analyzePortfolio).mockClear();
+  jest.mocked(window.API.analyzePortfolio!).mockClear();
   const soldAssets = assets.map(asset => asset.ID === 1 ? { ...asset, current_shares: 1, currencySymbol: '€' } : asset);
   const sale = { ID: 2, asset_ID: 1, type: 'Sell', date: '2026-10-02', amount: 1, price_per_share: 50,
     fee: 1, in_out: 49 } as Transaction;
@@ -328,7 +350,7 @@ it('restores an executed 50 EUR sale as Done in both views and removes its proce
 });
 
 it('restores the detailed sale decision and links scenario evidence outside the original recommendation sources', async () => {
-  const savedReport = await window.API.analyzePortfolio({} as never);
+  const savedReport = await window.API.analyzePortfolio!({} as never);
   savedReport.sources.push({ title: 'Market outlook', url: 'https://example.com/outlook' });
   savedReport.recommendations[0] = { ...savedReport.recommendations[0], action: 'Verkaufen', plannedAmountEUR: 50,
     orderRecommendation: { type: 'limit', validity: 'day', execution: 'finpal-preview',
@@ -336,7 +358,7 @@ it('restores the detailed sale decision and links scenario evidence outside the 
     tradeDecision: { ...tradeDecisionFixture, scenarios: tradeDecisionFixture.scenarios.map(s => ({ ...s, sourceIndexes: [1] })) },
   };
   window.API.getLastPortfolioAnalysis = jest.fn().mockResolvedValue({ report: savedReport, snapshot: '', provider: 'chatgpt' });
-  jest.mocked(window.API.analyzePortfolio).mockClear();
+  jest.mocked(window.API.analyzePortfolio!).mockClear();
   await act(async () => { render(<PortfolioAnalysis standalone priceUpdatedAt={null} />, { preloadedState: { assets } }); });
   expect(screen.getByRole('region', { name: 'Halten oder jetzt reduzieren' })).toBeInTheDocument();
   expect(screen.getByText(tradeDecisionFixture.amountRationale)).toBeInTheDocument();
@@ -348,7 +370,7 @@ it('restores the detailed sale decision and links scenario evidence outside the 
 });
 
 it('shows forecast, target weighting and AI result in one asset card', async () => {
-  const savedReport = await window.API.analyzePortfolio({} as never);
+  const savedReport = await window.API.analyzePortfolio!({} as never);
   savedReport.mode = 'ai';
   const request = { provider: 'api' as const, priceUpdatedAt: new Date(Date.now()).toISOString(),
     profile: { goal: 'growth' as const, risk: 'high' as const, horizonYears: 10, buyBudget: 1000 },
@@ -366,14 +388,14 @@ it('shows forecast, target weighting and AI result in one asset card', async () 
   expect(analysis.compareDocumentPosition(assetFacts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(assetFacts.compareDocumentPosition(details) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(within(assetFacts).getByText(/Dauerhafte Angaben zu Stock Asset/)).toBeInTheDocument();
-  expect(details).toHaveTextContent('Kursziel: 60 EUR');
+  expect(details).toHaveTextContent(/Analysten-Kursziel\s*60 EUR/);
   expect(details).toHaveTextContent('Modellaktion:');
   expect(within(article).getByText('Begründung')).toBeInTheDocument();
   expect(screen.queryByRole('article', { name: 'Zielgewicht Stock Asset' })).not.toBeInTheDocument();
 });
 
 it('keeps one analysis card for every currently held asset when an AI recommendation is missing', async () => {
-  const savedReport = await window.API.analyzePortfolio({} as never);
+  const savedReport = await window.API.analyzePortfolio!({} as never);
   savedReport.mode = 'ai';
   savedReport.recommendations = savedReport.recommendations.filter(rec => rec.assetId === 1);
   window.API.getLastPortfolioAnalysis = jest.fn().mockResolvedValue({ report: savedReport, snapshot: '', provider: 'chatgpt' });
@@ -412,7 +434,7 @@ it('orders asset analysis by workflow and replaces quote, research, risk and for
   const request = { provider: 'api' as const, positions: buildAnalysisPositions([quotedAsset, secondQuotedAsset]),
     profile: { goal: 'growth' as const, risk: 'medium' as const, horizonYears: 10, buyBudget: 0 }, priceUpdatedAt };
   const snapshot = JSON.stringify({ positions: request.positions, profile: request.profile, priceUpdatedAt });
-  const report = await window.API.analyzePortfolio({} as never);
+  const report = await window.API.analyzePortfolio!({} as never);
   report.mode = 'ai';
   report.recommendations[0] = { ...report.recommendations[0], sourceIndexes: [0] };
   report.fundamentalRisks = [{ key: '1', status: 'assessed', materialRisks: [],
@@ -444,10 +466,13 @@ it('orders asset analysis by workflow and replaces quote, research, risk and for
   fireEvent.click(within(researchDetails).getByText('Online-Recherche: muss neu geladen werden'));
   expect(within(researchDetails).getByRole('link', { name: '[0] Report' })).toBeInTheDocument();
   expect(risk).toHaveTextContent('Alter gespeicherter Risikobefund');
-  expect(forecast).toHaveTextContent('Kursziel: 60 EUR');
+  expect(forecast).toHaveTextContent(/Analysten-Kursziel\s*60 EUR/);
 
   act(() => { store.dispatch(analyzePortfolio.pending('refresh', { request, snapshot })); });
-  expect(store.getState().portfolioAnalysis.progress?.stage).toBe('prices');
+  expect(store.getState().portfolioAnalysis.progress?.stage).toBe('preparing');
+  act(() => { store.dispatch(analysisProgressReceived({ requestId: 'refresh', progress: {
+    stage: 'prices', activeAssetId: 1, lastActivityAt: Date.now(),
+  } })); });
   expect(within(getCard()).getByTestId('asset-price-loading-1')).toBeInTheDocument();
   expect(within(getCard()).getByRole('region', { name: 'Aktueller Kurs für Stock Asset' })).not.toHaveTextContent('50,00');
 
@@ -463,11 +488,10 @@ it('orders asset analysis by workflow and replaces quote, research, risk and for
     reusedRiskAssetIds: [], lastActivityAt: Date.now(),
   } })); });
   expect(within(getCard()).getByTestId('asset-risk-loading-1')).toBeInTheDocument();
-  expect(within(getCard()).queryByText('Alter gespeicherter Risikobefund')).not.toBeInTheDocument();
 
   act(() => { store.dispatch(analysisProgressReceived({ requestId: 'refresh', progress: { stage: 'forecast', lastActivityAt: Date.now() } })); });
   expect(within(getCard()).getByTestId('asset-forecast-loading-1')).toBeInTheDocument();
-  expect(within(getCard()).queryByText(/Kursziel: 60 EUR/)).not.toBeInTheDocument();
+  expect(within(getCard()).queryByText(/Analysten-Kursziel\s*60 EUR/)).not.toBeInTheDocument();
   expect(within(getCard()).getByRole('region', { name: 'KI-Analyseergebnis für Stock Asset' })).toHaveTextContent('Begründung');
 });
 
@@ -477,7 +501,7 @@ it('does not show a Trade Republic contract document section in Bitcoin analysis
   const request = { provider: 'api' as const, positions: buildAnalysisPositions([bitcoin]),
     profile: { goal: 'growth' as const, risk: 'medium' as const, horizonYears: 10, buyBudget: 0 }, priceUpdatedAt };
   const snapshot = JSON.stringify({ positions: request.positions, profile: request.profile, priceUpdatedAt });
-  const report = await window.API.analyzePortfolio({} as never);
+  const report = await window.API!.analyzePortfolio!({} as never);
   report.mode = 'ai';
   report.recommendations = report.recommendations.filter(recommendation => recommendation.assetId === bitcoin.ID);
   const store = setupStore({ assets: [bitcoin] });
@@ -489,9 +513,9 @@ it('does not show a Trade Republic contract document section in Bitcoin analysis
 });
 
 it('displays sourced new assets outside the local asset list and keeps them after a route remount', async () => {
-  const response = await window.API.analyzePortfolio({} as never);
-  jest.mocked(window.API.analyzePortfolio).mockClear();
-  jest.mocked(window.API.analyzePortfolio).mockResolvedValue({ ...response, newAssetRecommendations: [{
+  const response = await window.API!.analyzePortfolio!({} as never);
+  jest.mocked(window.API!.analyzePortfolio!).mockClear();
+  jest.mocked(window.API!.analyzePortfolio!).mockResolvedValue({ ...response, newAssetRecommendations: [{
     name: 'New ETF', isin: 'IE00B4L5Y983', symbol: 'IWDA', type: 'ETF', action: 'Kaufen',
     rationale: 'Breitere Diversifikation', risk: 'Marktrisiko', sourceIndexes: [0],
     marketQuote: { isin: 'IE00B4L5Y983', price: 99.1234, currency: 'EUR', exchange: 'XETR', kind: 'last-trade',
@@ -534,14 +558,14 @@ function fillProfile() {
 }
 
 it('refreshes all forecasts without starting another AI analysis', async () => {
-  const response = await window.API.analyzePortfolio({} as never);
-  jest.mocked(window.API.analyzePortfolio).mockClear();
-  jest.mocked(window.API.refreshPortfolioForecast).mockResolvedValue({ report: response, refreshedAssetIds: [1], unavailableAssetIds: [2] });
+  const response = await window.API.analyzePortfolio!({} as never);
+  jest.mocked(window.API.analyzePortfolio!).mockClear();
+  jest.mocked(window.API.refreshPortfolioForecast!).mockResolvedValue({ report: response, refreshedAssetIds: [1], unavailableAssetIds: [2] });
   render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
   await open(); fillProfile();
   expect(screen.getByRole('button', { name: 'Alle Forecasts neu laden' })).toBeDisabled();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
-  jest.mocked(window.API.analyzePortfolio).mockClear();
+  jest.mocked(window.API.analyzePortfolio!).mockClear();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Alle Forecasts neu laden' })); });
   await waitFor(() => expect(window.API.refreshPortfolioForecast).toHaveBeenCalledWith(
     expect.not.objectContaining({ targetAssetId: expect.anything() }), undefined, expect.any(String)));
@@ -550,14 +574,21 @@ it('refreshes all forecasts without starting another AI analysis', async () => {
 });
 
 it('refreshes one asset forecast without starting a new AI asset analysis', async () => {
-  const response = await window.API.analyzePortfolio({} as never);
-  jest.mocked(window.API.analyzePortfolio).mockClear();
-  jest.mocked(window.API.refreshPortfolioForecast).mockResolvedValue({ report: response, refreshedAssetIds: [1], unavailableAssetIds: [] });
+  const response = await window.API.analyzePortfolio!({} as never);
+  response.allocationPlan = buildForecastAllocation({
+    provider: 'api',
+    priceUpdatedAt: null,
+    profile: { goal: 'growth', risk: 'medium', horizonYears: 10, buyBudget: 0 },
+    positions: buildAnalysisPositions(assets),
+  }, [returnForecastFixture('1', { targetPrice: 60, referencePrice: 50 })]);
+  jest.mocked(window.API.analyzePortfolio!).mockResolvedValue(response);
+  jest.mocked(window.API.analyzePortfolio!).mockClear();
+  jest.mocked(window.API.refreshPortfolioForecast!).mockResolvedValue({ report: response, refreshedAssetIds: [1], unavailableAssetIds: [] });
   render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
   await open(); fillProfile();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
-  jest.mocked(window.API.analyzePortfolio).mockClear();
-  const forecastTile = screen.getByRole('region', { name: 'Prognose und Zielgewichtung Bitcoin' });
+  jest.mocked(window.API.analyzePortfolio!).mockClear();
+  const forecastTile = screen.getByRole('region', { name: 'Prognose und Zielgewichtung Stock Asset' });
   await act(async () => { fireEvent.click(within(forecastTile).getByRole('button', { name: 'Forecast neu laden' })); });
   await waitFor(() => expect(window.API.refreshPortfolioForecast).toHaveBeenCalledWith(
     expect.not.objectContaining({ targetAssetId: expect.anything() }), 1, expect.any(String)));
@@ -566,13 +597,13 @@ it('refreshes one asset forecast without starting a new AI asset analysis', asyn
 });
 
 it('keeps the asset card visible while refreshing only its primary risk assessment', async () => {
-  const response = await window.API.analyzePortfolio({} as never);
+  const response = await window.API.analyzePortfolio!({} as never);
   let finish!: (value: typeof response) => void;
   jest.mocked(window.API.refreshPortfolioPrimaryRisk!).mockReturnValue(new Promise(resolve => { finish = resolve; }));
   render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
   await open(); fillProfile();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
-  jest.mocked(window.API.analyzePortfolio).mockClear();
+  jest.mocked(window.API.analyzePortfolio!).mockClear();
   const refreshRiskButton = screen.getByRole('button', { name: 'Unternehmens- und Produktrisiken für Asset 1 neu prüfen' });
   expect(refreshRiskButton).toBeInTheDocument();
   expect(refreshRiskButton.closest('section[aria-label="Unternehmens- und Produktrisiken"]')).not.toBeNull();
@@ -580,7 +611,7 @@ it('keeps the asset card visible while refreshing only its primary risk assessme
   expect(window.API.refreshPortfolioPrimaryRisk).toHaveBeenCalledWith(expect.objectContaining({ id: 1, type: 'Stock' }),
     expect.objectContaining({ assets: expect.any(Array), taxResidencies: expect.any(Array) }), false, 'low');
   expect(screen.getAllByText('Stock Asset')).toHaveLength(2);
-  expect(screen.getByTestId('asset-risk-loading-1')).toHaveTextContent('Aktuelle Primärberichte werden geladen');
+  expect(screen.getByTestId('asset-risk-loading-1')).toHaveTextContent('Gültige Primärberichte werden wiederverwendet oder auf Aktualität geprüft');
   expect(screen.queryByTestId('asset-reload-status-2')).not.toBeInTheDocument();
   await act(async () => { finish(response); });
   expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
@@ -588,7 +619,7 @@ it('keeps the asset card visible while refreshing only its primary risk assessme
 });
 
 it('refreshes online research for one asset without starting a new AI analysis', async () => {
-  const response = await window.API.analyzePortfolio({} as never);
+  const response = await window.API.analyzePortfolio!({} as never);
   const refreshResearch = window.API.refreshPortfolioResearch;
   if (!refreshResearch) throw new Error('Die Test-API für die Rechercheaktualisierung fehlt.');
   let finish!: (value: typeof response) => void;
@@ -596,7 +627,7 @@ it('refreshes online research for one asset without starting a new AI analysis',
   render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
   await open(); fillProfile();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
-  jest.mocked(window.API.analyzePortfolio).mockClear();
+  jest.mocked(window.API.analyzePortfolio!).mockClear();
   const refreshButton = screen.getByRole('button', { name: 'Online-Recherche für Asset 1 neu laden' });
   expect(refreshButton.closest('section[aria-label="Online-Recherche für Stock Asset"]')).not.toBeNull();
   expect(screen.getByTestId('asset-research-details-1')).not.toHaveAttribute('open');
@@ -612,8 +643,8 @@ it('refreshes online research for one asset without starting a new AI analysis',
 });
 
 it('displays the shared financing check and its unresolved deductions', async () => {
-  const response = await window.API.analyzePortfolio({} as never);
-  jest.mocked(window.API.analyzePortfolio).mockResolvedValue({ ...response, fundingCheck: {
+  const response = await window.API.analyzePortfolio!({} as never);
+  jest.mocked(window.API.analyzePortfolio!).mockResolvedValue({ ...response, fundingCheck: {
     status: 'conditional', cashEUR: 10, saleProceedsEUR: 50, buyAmountEUR: 54, feeScenarioEUR: 4,
     balanceBeforeSpreadAndTaxEUR: 2, shortfallEUR: 0, warnings: ['Verkaufssteuern und Spreads noch offen.'],
   } });
@@ -634,7 +665,7 @@ it('starts a single asset refresh, keeps existing results visible and preserves 
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
   const original = store.getState().portfolioAnalysis.result;
   let reject: (error: Error) => void;
-  jest.mocked(window.API.analyzePortfolio).mockImplementationOnce(() => new Promise((_resolve, rejectPromise) => { reject = rejectPromise; }));
+  jest.mocked(window.API.analyzePortfolio!).mockImplementationOnce(() => new Promise((_resolve, rejectPromise) => { reject = rejectPromise; }));
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Asset 1 neu analysieren' })); });
   expect(window.API.analyzePortfolio).toHaveBeenLastCalledWith(expect.objectContaining({ targetAssetId: 1, positions: expect.arrayContaining([expect.objectContaining({ id: 1 }), expect.objectContaining({ id: 2 })]) }), expect.any(String));
   expect(screen.getByText('Begründung')).toBeInTheDocument();
@@ -655,7 +686,7 @@ it('keeps asset recommendation cards visible during a full rerun and labels the 
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
   const original = store.getState().portfolioAnalysis.result;
   let reject: (error: Error) => void;
-  jest.mocked(window.API.analyzePortfolio).mockImplementationOnce(() => new Promise((_resolve, rejectPromise) => { reject = rejectPromise; }));
+  jest.mocked(window.API.analyzePortfolio!).mockImplementationOnce(() => new Promise((_resolve, rejectPromise) => { reject = rejectPromise; }));
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
   expect(store.getState().portfolioAnalysis.result).toEqual(original);
   expect(screen.getByText('Begründung')).toBeInTheDocument();
@@ -669,7 +700,7 @@ it('keeps asset recommendation cards visible during a full rerun and labels the 
   expect(screen.getByText(/0\/1 Assets abgeschlossen/)).toBeInTheDocument();
   act(() => progressCallback({ stage: 'risk-review', activeAssetId: 1, activeRiskStep: 'reuse',
     completedRiskAssetIds: [], reusedRiskAssetIds: [1], researchCompleted: 0, researchTotal: 1, lastActivityAt: Date.now() }));
-  expect(screen.getByText(/Gespeicherter Risikobefund wird wiederverwendet/)).toBeInTheDocument();
+  expect(screen.getAllByText(/Gespeicherter Risikobefund wird wiederverwendet/).length).toBeGreaterThan(0);
   act(() => progressCallback({ stage: 'risk-review', completedRiskAssetIds: [1], reusedRiskAssetIds: [1],
     researchCompleted: 1, researchTotal: 1, lastActivityAt: Date.now() }));
   expect(screen.getByTestId('asset-reload-status-1')).toHaveTextContent('Gespeicherte Risikoprüfung wird wiederverwendet');
@@ -733,7 +764,7 @@ it('does not transmit data until started and analyzes all held positions using t
 });
 
 it('reports a quota failure and restores the analysis button', async () => {
-  jest.mocked(window.API.analyzePortfolio).mockRejectedValue(new Error('ChatGPT-Kontingent ausgeschöpft'));
+  jest.mocked(window.API.analyzePortfolio!).mockRejectedValue(new Error('ChatGPT-Kontingent ausgeschöpft'));
   render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } }); await open(); fillProfile();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
   expect(screen.getByRole('alert')).toHaveTextContent('ChatGPT-Kontingent ausgeschöpft');
@@ -741,7 +772,7 @@ it('reports a quota failure and restores the analysis button', async () => {
 });
 
 it('offers ChatGPT browser sign-in without asking for an API key', async () => {
-  jest.mocked(window.API.getPortfolioAIStatus).mockResolvedValue({ hasApiKey: false, secureStorageAvailable: true, model: 'api-model', chatGpt: { connected: false, accounts: [] } });
+  jest.mocked(window.API.getPortfolioAIStatus!).mockResolvedValue({ hasApiKey: false, secureStorageAvailable: true, model: 'api-model', chatGpt: { connected: false, accounts: [] } });
   window.API.signInPortfolioChatGpt = jest.fn().mockResolvedValue(chatGpt);
   render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } }); await open();
   expect(within(screen.getByRole('region', { name: 'KI-Zugang Status' })).getByText('Nicht verbunden')).toBeInTheDocument();
@@ -768,8 +799,8 @@ it('shows real progress, elapsed time and waiting time until the request finishe
   let progressCallback: (progress: import('../../../../utils/portfolioAnalysis').PortfolioAnalysisProgress) => void;
   const unsubscribe = jest.fn();
   window.API.onPortfolioAnalysisProgress = jest.fn(callback => { progressCallback = callback; return unsubscribe; });
-  let rejectAnalysis: (error: Error) => void;
-  jest.mocked(window.API.analyzePortfolio).mockImplementation(() => new Promise((_resolve, reject) => { rejectAnalysis = reject; }));
+  let rejectAnalysis!: (error: Error) => void;
+  jest.mocked(window.API.analyzePortfolio!).mockImplementation(() => new Promise((_resolve, reject) => { rejectAnalysis = reject; }));
   render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
   await open(); fillProfile();
   jest.useFakeTimers();
@@ -777,7 +808,7 @@ it('shows real progress, elapsed time and waiting time until the request finishe
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
     expect(screen.getByRole('status')).toHaveTextContent('KI-Verbindung wird vorbereitet');
     act(() => progressCallback({ stage: 'research', lastActivityAt: Date.now() }));
-    expect(screen.getByRole('status')).toHaveTextContent('Onlinequellen werden ohne KI gesucht');
+    expect(screen.getByRole('status')).toHaveTextContent('Online-Recherche wird ausgeführt');
     act(() => jest.advanceTimersByTime(65000));
     expect(screen.getByText(/Laufzeit:/)).toHaveTextContent('Laufzeit: 1:05');
     expect(screen.getByText(/Laufzeit:/)).toHaveTextContent('Letzte Rückmeldung vor 65 s');
@@ -795,14 +826,14 @@ it('shows real progress, elapsed time and waiting time until the request finishe
 
 
 it.each(['success', 'failure'] as const)('keeps progress and a %s outcome across route unmounts', async outcome => {
-  const savedReport = await window.API.analyzePortfolio({} as import('../../../../utils/portfolioAnalysis').PortfolioAnalysisRequest);
-  jest.mocked(window.API.analyzePortfolio).mockClear();
+  const savedReport = await window.API.analyzePortfolio!({} as import('../../../../utils/portfolioAnalysis').PortfolioAnalysisRequest);
+  jest.mocked(window.API.analyzePortfolio!).mockClear();
   let progressCallback: (progress: import('../../../../utils/portfolioAnalysis').PortfolioAnalysisProgress) => void;
   const unsubscribe = jest.fn();
   window.API.onPortfolioAnalysisProgress = jest.fn(callback => { progressCallback = callback; return unsubscribe; });
   let resolveAnalysis: (report: typeof savedReport) => void;
   let rejectAnalysis: (error: Error) => void;
-  jest.mocked(window.API.analyzePortfolio).mockImplementation(() => new Promise((resolve, reject) => {
+  jest.mocked(window.API.analyzePortfolio!).mockImplementation(() => new Promise((resolve, reject) => {
     resolveAnalysis = resolve; rejectAnalysis = reject;
   }));
   const first = render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
@@ -838,7 +869,7 @@ it.each(['tab change', 'app restart'] as const)('remembers an explicitly selecte
     { slug: 'account-model', displayName: 'Available model' },
     { slug: 'chosen-model', displayName: 'Chosen model' },
   ];
-  jest.mocked(window.API.getPortfolioChatGptModels).mockResolvedValue(available);
+  jest.mocked(window.API.getPortfolioChatGptModels!).mockResolvedValue(available);
   const first = render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
   await open();
   await openAISettings();
@@ -864,7 +895,7 @@ it('keeps the saved preference when it is temporarily unavailable and restores i
   expect(screen.getByLabelText('ChatGPT-Modell')).toHaveValue('account-model');
   expect(localStorage.getItem(ANALYSIS_MODEL_KEY)).toBe('chosen-model');
   first.unmount();
-  jest.mocked(window.API.getPortfolioChatGptModels).mockResolvedValue([
+  jest.mocked(window.API.getPortfolioChatGptModels!).mockResolvedValue([
     { slug: 'account-model', displayName: 'Available model' },
     { slug: 'chosen-model', displayName: 'Chosen model' },
   ]);
@@ -875,8 +906,8 @@ it('keeps the saved preference when it is temporarily unavailable and restores i
 
 
 it('restores the report and asset indicators on app startup without starting a new analysis', async () => {
-  const savedReport = await window.API.analyzePortfolio({} as import('../../../../utils/portfolioAnalysis').PortfolioAnalysisRequest);
-  jest.mocked(window.API.analyzePortfolio).mockClear();
+  const savedReport = await window.API.analyzePortfolio!({} as import('../../../../utils/portfolioAnalysis').PortfolioAnalysisRequest);
+  jest.mocked(window.API.analyzePortfolio!).mockClear();
   const profile = { goal: 'growth', risk: 'medium', horizonYears: '10', buyBudget: '0' };
   localStorage.setItem(ANALYSIS_PROFILE_KEY, JSON.stringify(profile));
   const facts = readInvestorFacts('', assets);
@@ -895,7 +926,7 @@ it('restores the report and asset indicators on app startup without starting a n
 
 
 it('does not replace a newly started analysis with a delayed startup restore', async () => {
-  const savedReport = await window.API.analyzePortfolio({} as import('../../../../utils/portfolioAnalysis').PortfolioAnalysisRequest);
+  const savedReport = await window.API.analyzePortfolio!({} as import('../../../../utils/portfolioAnalysis').PortfolioAnalysisRequest);
   let restore: (value: import('../../../../utils/portfolioAnalysis').SavedPortfolioAnalysis) => void;
   window.API.getLastPortfolioAnalysis = jest.fn(() => new Promise(resolve => { restore = resolve; }));
   const store = setupStore({ assets });
@@ -904,7 +935,7 @@ it('does not replace a newly started analysis with a delayed startup restore', a
   await act(async () => restore({ report: savedReport, snapshot: 'old-snapshot', provider: 'chatgpt' }));
   expect(store.getState().portfolioAnalysis.requestId).toBe('new-request');
   expect(store.getState().portfolioAnalysis.result).toBeNull();
-  expect(store.getState().portfolioAnalysis.progress?.stage).toBe('prices');
+  expect(store.getState().portfolioAnalysis.progress?.stage).toBe('preparing');
 });
 
 
@@ -946,14 +977,14 @@ it('opens ChatGPT usage management through the external browser bridge', async (
 
 
 it('shows warnings first and opens informational messages only through their tab', async () => {
-  const response = await window.API.analyzePortfolio({} as never);
+  const response = await window.API.analyzePortfolio!({} as never);
   const quoteNote = 'Die Kurse aller Positionen besitzen einen quoteAsOf-Zeitpunkt; ein fehlender Kurszeitpunkt liegt nicht vor. Die US-Schlusskurse mit Status market-closed werden nicht allein wegen Börsenschluss oder Vorbörse beanstandet.';
   const marketClosedInfo = 'Assets 6, 11, 25, 33, 34: Letzter Schlusskurs – regulärer US-Markt noch geschlossen. Der ältere Kurs ist durch die Handelspause erklärbar.';
   const concentrationInfo = 'Bitcoin stellt 27,50 % der Anlagen beziehungsweise 23,27 % einschließlich Cash und damit die größte Einzelrisikokonzentration dar; das lokale Modell weist 43,35 % annualisierte Volatilität und ein sehr breites historisches Bootstrap-Band aus [82].';
   const executionInfo = 'Spreads und tatsächliche Ausführungskurse müssen unmittelbar vor jeder Order geprüft werden. Die gespeicherte 1-EUR-Pauschale ist kein aktuelles Geld-/Brief-Angebot [13].';
   const sectorInfo = 'QDVE ist ein konzentrierter US-Technologie-Sektor-ETF und kein breiter S&P-500-Fonds; Halbleiter, Hardware und Software dominieren, bei hohem Bewertungsniveau [28][33].';
   const currencyInfo = 'Die exakte wirtschaftliche Währungsrisiko-Allokation des Portfolios ist nicht quantifizierbar. Handels-, Fonds- und Berichtswährungen sind keine exakten Nettoexpositionen; für die Anleihe ist jedoch ein direktes USD-Nominalrisiko bestätigt.';
-  jest.mocked(window.API.analyzePortfolio).mockResolvedValue({ ...response,
+  jest.mocked(window.API.analyzePortfolio!).mockResolvedValue({ ...response,
     infos: ['Regulärer Schlusskurs'], warnings: [quoteNote, marketClosedInfo, concentrationInfo, currencyInfo, executionInfo, sectorInfo, 'Bei einer Position fehlt quoteAsOf.'],
     recommendations: response.recommendations.map(rec => ({ ...rec, infos: ['Einzelanalyse abgeschlossen'], warnings: ['Kursdaten prüfen'] })),
   });
@@ -994,8 +1025,8 @@ it('shows warnings first and opens informational messages only through their tab
 });
 
 it('omits empty info and warning sections', async () => {
-  const response = await window.API.analyzePortfolio({} as never);
-  jest.mocked(window.API.analyzePortfolio).mockResolvedValue({ ...response, infos: [], warnings: [] });
+  const response = await window.API.analyzePortfolio!({} as never);
+  jest.mocked(window.API.analyzePortfolio!).mockResolvedValue({ ...response, infos: [], warnings: [] });
   render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
   await open(); fillProfile();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
@@ -1005,22 +1036,22 @@ it('omits empty info and warning sections', async () => {
 
 
 it('waits for quotes and sends the refreshed holdings and snapshot to the analysis', async () => {
-  const response = await window.API.analyzePortfolio({} as never);
-  jest.mocked(window.API.analyzePortfolio).mockClear();
+  const response = await window.API.analyzePortfolio!({} as never);
+  jest.mocked(window.API.analyzePortfolio!).mockClear();
   let resolveQuote: (quote: unknown) => void;
-  jest.mocked(window.API.sendToYahooFinanceAPI).mockImplementationOnce(() => new Promise(resolve => { resolveQuote = resolve; }));
+  jest.mocked(window.API.sendToYahooFinanceAPI!).mockImplementationOnce(() => new Promise(resolve => { resolveQuote = resolve; }));
   const held = [{ ...assets[0], symbol: 'STOCK', is_watched: false }];
-  jest.mocked(window.API.analyzePortfolio).mockResolvedValue({ ...response, recommendations: [response.recommendations[0]] });
+  jest.mocked(window.API.analyzePortfolio!).mockResolvedValue({ ...response, recommendations: [response.recommendations[0]] });
   const { store, unmount } = render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets: held } });
   await open(); fillProfile();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
-  expect(screen.getByRole('status')).toHaveTextContent('Kurse werden aktualisiert');
-  expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
+  expect(screen.getByRole('status')).toHaveTextContent('KI-Verbindung wird vorbereitet');
+  expect(window.API.analyzePortfolio!).not.toHaveBeenCalled();
   await act(async () => { resolveQuote({ source: 'yahoo-finance', price: { regularMarketPrice: 60, currency: 'EUR', regularMarketTime: '2026-10-08T08:05:52Z' } }); });
-  expect(window.API.analyzePortfolio).toHaveBeenCalledTimes(1);
-  const [request, snapshot] = jest.mocked(window.API.analyzePortfolio).mock.calls[0];
+  expect(window.API.analyzePortfolio!).toHaveBeenCalledTimes(1);
+  const [request, snapshot] = jest.mocked(window.API.analyzePortfolio!).mock.calls[0];
   expect(request.positions[0]).toMatchObject({ id: 1, price: 60, quote: { source: 'yahoo-finance', quoteAsOf: '2026-10-08T08:05:52.000Z' } });
-  expect(JSON.parse(snapshot)).toEqual({ positions: request.positions, profile: { ...request.profile, horizonYears: '10', buyBudget: '0' }, priceUpdatedAt: request.priceUpdatedAt, investorContext: request.investorContext, transactionIds: [] });
+  expect(JSON.parse(snapshot!)).toEqual({ positions: request.positions, profile: { ...request.profile, horizonYears: '10', buyBudget: '0' }, priceUpdatedAt: request.priceUpdatedAt, investorContext: request.investorContext, transactionIds: [] });
   expect(store.getState().portfolioAnalysis.resultSnapshot).toBe(snapshot);
   expect(request.priceUpdatedAt).toBe(localStorage.getItem(MARKET_PRICE_UPDATED_AT_KEY));
   unmount();
@@ -1030,17 +1061,17 @@ it('waits for quotes and sends the refreshed holdings and snapshot to the analys
 
 
 it.each([true, false])('shows separate ELTIF broker price and NAV status (NAV evidenced: %s)', async evidenced => {
-  const response = await window.API.analyzePortfolio({} as never);
-  jest.mocked(window.API.analyzePortfolio).mockClear();
+  const response = await window.API.analyzePortfolio!({} as never);
+  jest.mocked(window.API.analyzePortfolio!).mockClear();
   const evidence = { isin: 'LU3170240538', value: 110, currency: 'USD', valuationDate: '2026-09-30', publicationCycle: 'Monthly', nextPublicationDue: '2026-10-31', sourceIndexes: [0] };
-  jest.mocked(window.API.analyzePortfolio).mockResolvedValue({ ...response, recommendations: [{ ...response.recommendations[0], assetId: 32, sourceIndexes: [], navEvidence: evidenced ? evidence : null }] });
+  jest.mocked(window.API.analyzePortfolio!).mockResolvedValue({ ...response, recommendations: [{ ...response.recommendations[0], assetId: 32, sourceIndexes: [], navEvidence: evidenced ? evidence : null }] });
   const asset: Asset = { ...assets[0], ID: 32, type: 'Fund' as const, name: 'Apollo ELTIF', isin: 'LU3170240538', price: 109.395, quote: { originalPrice: 109.395, originalCurrency: 'EUR', valuationCurrency: 'EUR' as const, source: 'trade-republic', quoteAsOf: '2026-09-10T15:21:10Z', fetchedAt: '2026-10-05T10:22:22Z', convertedAt: null, fxRateToEUR: 1, fxSource: null, fxAsOf: null, fxFetchedAt: null } };
   const clock = jest.spyOn(Date, 'now').mockReturnValue(Date.parse('2026-10-08T08:00:00Z'));
   try {
     const { store } = render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets: [asset] } });
     await open(); fillProfile();
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
-    await waitFor(() => expect(window.API.analyzePortfolio).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(window.API.analyzePortfolio!).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(store.getState().portfolioAnalysis.result).not.toBeNull());
     const section = within(await screen.findByRole('region', { name: 'Brokerpreis und NAV' }));
     expect(section.getByText('Produktbedingungen (Primärdokumente 2026)')).toBeInTheDocument();

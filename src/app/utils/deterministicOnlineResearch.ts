@@ -13,6 +13,7 @@ export interface DeterministicResearchResult {
   fetchedAt: number;
   newsCount: number;
   searchStatus: 'completed' | 'failed';
+  cacheStatus?: 'reused' | 'fresh';
   sources: AnalysisSource[];
   text: string;
 }
@@ -57,7 +58,7 @@ export function createDeterministicOnlineResearchProvider(client: OnlineSearchCl
     // fresh discovery cache when a newly required primary source is added.
     const key = JSON.stringify({ id: position.id, identity, knownSources: knownResearchSources(position) });
     const cached = cache.get(key);
-    if (!options.forceRefresh && cached && now() - cached.fetchedAt < ttl) return cached;
+    if (!options.forceRefresh && cached && cached.searchStatus === 'completed' && cached.fetchedAt <= now() && now() - cached.fetchedAt < ttl) return { ...cached, cacheStatus: 'reused' };
     let timer: ReturnType<typeof setTimeout> | undefined;
     let result: { news?: SearchNews[] } = {};
     let searchStatus: DeterministicResearchResult['searchStatus'] = 'completed';
@@ -87,9 +88,11 @@ export function createDeterministicOnlineResearchProvider(client: OnlineSearchCl
       assetId: position.id, query, fetchedAt, searchStatus, newsCount: news.filter(item => !!safeUrl(item.link)).length, sources,
       text: `Asset ${position.id} (${position.name}): deterministische Online-Suche nach ${JSON.stringify(query)} am ${new Date(fetchedAt).toISOString()}. ${searchStatus === 'completed' ? `${news.length} Nachrichtentreffer` : 'Die Nachrichtensuche ist fehlgeschlagen'}; ${sources.length} validierte HTTPS-Quellen erfasst. Treffer sind Suchbelege und wurden nicht semantisch als Tatsachen oder Empfehlungen interpretiert.`,
     };
-    cache.set(key, research);
-    if (cache.size > 200) cache.delete(cache.keys().next().value!);
-    try { save(); } catch { /* A valid online result survives a cache write failure. */ }
-    return research;
+    if (searchStatus === 'completed') {
+      cache.set(key, research);
+      if (cache.size > 200) cache.delete(cache.keys().next().value!);
+      try { save(); } catch { /* A valid online result survives a cache write failure. */ }
+    }
+    return { ...research, cacheStatus: 'fresh' };
   };
 }

@@ -47,8 +47,8 @@ describe('README.md Tests', () => {
 		expect(diagram).toContain('Konkreter Hinderungsgrund?');
 		expect(diagram).toContain('Kaufen · Halten · Verkaufen');
 		expect(diagram).toContain('Gehaltene Assets nacheinander');
-		expect(diagram).toContain('Forecasts parallel laden');
-		expect(diagram).toContain('Primärberichte abgleichen');
+		expect(diagram).toContain('Forecasts laden und Modell berechnen');
+		expect(diagram).toContain('Primärberichte laden');
 		expect(diagram).toContain('Unverändert: Cache');
 	});
 

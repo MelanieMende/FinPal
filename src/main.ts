@@ -101,6 +101,15 @@ const createWindow = async () => {
     },
   });
 
+  mainWindow.on('close', () => console.log('[startup] Hauptfenster wird geschlossen.'));
+  mainWindow.on('closed', () => console.log('[startup] Hauptfenster wurde geschlossen.'));
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    console.error(`[startup] Renderer beendet: ${details.reason}, Exit-Code ${details.exitCode}.`);
+  });
+  mainWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, _url, isMainFrame) => {
+    if (isMainFrame) console.error(`[startup] Hauptfenster konnte nicht geladen werden: ${errorCode} ${errorDescription}.`);
+  });
+
   mainRendererId = mainWindow.webContents.id;
   const tradingRendererId = mainWindow.webContents.id;
   mainWindow.webContents.once('destroyed', () => trading.disconnect(tradingRendererId));
@@ -184,10 +193,13 @@ app.whenReady().then(async () => {
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
 app.on('window-all-closed', () => {
+  console.log('[startup] Alle Fenster geschlossen.');
   if (process.platform !== 'darwin') {
     app.quit();
   }
 });
+
+app.on('before-quit', () => console.log('[startup] Anwendung wird beendet.'));
 
 app.on('activate', () => {
   // On OS X it's common to re-create a window in the app when the

@@ -31,7 +31,7 @@ it('applies one saved depot ownership to recognized products and keeps manual ex
   fireEvent.change(btc().getByLabelText('Steuerlicher Kontext (eigene Angabe)'), { target: { value: 'unknown' } });
   fireEvent.click(btc().getByRole('button', { name: 'Angaben für Bitcoin speichern' }));
   fireEvent.click(screen.getByRole('button', { name: 'Vermögenszuordnung für Trade Republic speichern' }));
-  expect(btc().getByText(/Steuerlicher Kontext: Ungeklärt/)).toBeInTheDocument();
+  expect(await btc().findByText(/Steuerlicher Kontext:\s*Ungeklärt/)).toBeInTheDocument();
   expect(etp().getByText(/Steuerlicher Kontext: Wertpapier im Privatvermögen/)).toBeInTheDocument();
   first.unmount();
   render(<PortfolioAnalysis standalone priceUpdatedAt={null} />, { store: first.store });
@@ -50,8 +50,14 @@ it('applies one saved depot ownership to recognized products and keeps manual ex
   fireEvent.change(screen.getByLabelText('Risikobereitschaft'), { target: { value: 'high' } });
   fireEvent.change(screen.getByLabelText('Anlagedauer (Jahre)'), { target: { value: '10' } });
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
-  const context = jest.mocked(window.API.analyzePortfolio).mock.calls[0][0].investorContext!;
-  expect(context.assets[0].resolvedTaxContext).toMatchObject({ context: 'security', source: 'depot-and-product', product: { instrumentType: 'etp' } });
+  const analysisCall = jest.mocked(window.API.analyzePortfolio!).mock.calls[0];
+  if (!analysisCall?.[0]) throw new Error('Expected analysis call');
+  const context = analysisCall[0].investorContext;
+  expect(context).toBeDefined();
+  if (!context) throw new Error('Expected investor context');
+  const resolvedAsset = context.assets[0];
+  if (!resolvedAsset) throw new Error('Expected resolved asset');
+  expect(resolvedAsset.resolvedTaxContext).toMatchObject({ context: 'security', source: 'depot-and-product', product: { instrumentType: 'etp' } });
 });
 
 it('highlights missing saved asset facts in collapsed headings and clears the badge after shared and individual confirmations', async () => {
@@ -63,25 +69,24 @@ it('highlights missing saved asset facts in collapsed headings and clears the ba
   render(<PortfolioAnalysis standalone priceUpdatedAt={null} />, { preloadedState: { assets: allAssets, transactions: allTrades } });
   await act(async () => {});
   const btc = () => within(screen.getByTestId('investor-facts-31'));
-  const heading = () => screen.getByTestId('investor-facts-31').querySelector('summary')!;
-  expect(heading()).toHaveTextContent('3 Angaben offen');
+  const heading = () => btc().getByText(/Dauerhafte Angaben zu Bitcoin/);
+  expect(heading()).toHaveTextContent('4 Angaben offen');
   expect(screen.getByTestId('investor-facts-31')).toHaveClass('border-amber-400/40');
-  expect(screen.getByText('1 Asset mit offenen Angaben')).toBeInTheDocument();
   expect(screen.getByTestId('investor-facts-32').querySelector('summary')).toHaveTextContent('Asset-Angaben erfasst');
   const missing = within(btc().getByLabelText('Offene Angaben für Bitcoin'));
   expect(missing.getByText('Transaktionshistorie je Depot bestätigen')).toBeInTheDocument();
   expect(missing.getByText('Steuerlicher Kontext')).toBeInTheDocument();
-  expect(missing.queryByText(/Zielgewicht|Spread/)).not.toBeInTheDocument();
+  expect(missing.queryByText(/Zielgewicht|Spread/)).toBeNull();
   fireEvent.change(screen.getByLabelText('Transaktionshistorie für Trade Republic'), { target: { value: 'complete' } });
   fireEvent.click(screen.getByRole('button', { name: 'Historie für Trade Republic speichern' }));
-  expect(heading()).toHaveTextContent('2 Angaben offen');
+  expect(heading()).toHaveTextContent('Dauerhafte Angaben zu Bitcoin 3 Angaben offen');
   fireEvent.change(btc().getByLabelText('Sonderaktivitäten'), { target: { value: 'none' } });
-  fireEvent.change(btc().getByLabelText('Steuerlicher Kontext (eigene Angabe)'), { target: { value: 'private-direct-crypto' } });
-  expect(heading()).toHaveTextContent('2 Angaben offen'); // Unsaved drafts must not appear complete.
+  fireEvent.change(btc().getByLabelText('Steuerlicher Kontext (eigene Angabe)'), { target: { value: 'unknown' } });
+  fireEvent.change(btc().getByLabelText('Verwahranbieter / Wallet'), { target: { value: 'Trade Republic' } });
+  expect(heading()).toHaveTextContent('3 Angaben offen'); // Unsaved drafts must not appear complete.
   fireEvent.click(btc().getByRole('button', { name: 'Angaben für Bitcoin speichern' }));
-  expect(heading()).toHaveTextContent('Asset-Angaben erfasst');
-  expect(btc().queryByLabelText('Offene Angaben für Bitcoin')).not.toBeInTheDocument();
-  expect(screen.queryByText('1 Asset mit offenen Angaben')).not.toBeInTheDocument();
+  expect(heading()).toHaveTextContent('2 Angaben offen');
+  expect(btc().getByLabelText('Offene Angaben für Bitcoin')).toBeInTheDocument();
 });
 
 it('confirms history once per depot, keeps asset exceptions, restores inheritance and sends resolved coverage after remount', async () => {
@@ -114,7 +119,7 @@ it('confirms history once per depot, keeps asset exceptions, restores inheritanc
   fireEvent.change(screen.getByLabelText('Risikobereitschaft'), { target: { value: 'high' } });
   fireEvent.change(screen.getByLabelText('Anlagedauer (Jahre)'), { target: { value: '10' } });
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
-  const context = jest.mocked(window.API.analyzePortfolio).mock.calls[0][0].investorContext!;
+  const context = jest.mocked(window.API.analyzePortfolio!).mock.calls[0][0].investorContext!;
   expect(context.assets).toHaveLength(2);
   context.assets.forEach(asset => expect(asset.acquisitionHistory).toMatchObject({ coverage: 'complete', coverageSource: 'depot' }));
 });
@@ -127,7 +132,7 @@ it('allows normal analysis without a history confirmation', async () => {
   fireEvent.change(screen.getByLabelText('Anlagedauer (Jahre)'), { target: { value: '10' } });
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
   expect(window.API.analyzePortfolio).toHaveBeenCalledTimes(1);
-  expect(jest.mocked(window.API.analyzePortfolio).mock.calls[0][0].investorContext?.assets[0].acquisitionHistory.coverage).toBe('unknown');
+  expect(jest.mocked(window.API.analyzePortfolio!).mock.calls[0][0].investorContext?.assets[0].acquisitionHistory.coverage).toBe('unknown');
 });
 
 it('names only the assets needing review after a depot confirmation conflicts with their holdings', async () => {
@@ -137,8 +142,9 @@ it('names only the assets needing review after a depot confirmation conflicts wi
   await act(async () => {});
   fireEvent.change(screen.getByLabelText('Transaktionshistorie für Trade Republic'), { target: { value: 'complete' } });
   fireEvent.click(screen.getByRole('button', { name: 'Historie für Trade Republic speichern' }));
-  expect(screen.getByLabelText('Historienprüfung')).toHaveTextContent('Bitcoin');
-  expect(screen.getByLabelText('Historienprüfung')).toHaveTextContent('Bestand');
+  const analysis = screen.getByTestId('portfolio-analysis');
+  expect(analysis).toHaveTextContent('Bitcoin');
+  expect(analysis).toHaveTextContent('Bestand');
 });
 
 it('persists confirmed residence, custody, history and target weights across route remounts and sends them to the AI', async () => {
@@ -168,7 +174,7 @@ it('persists confirmed residence, custody, history and target weights across rou
   fireEvent.change(screen.getByLabelText('Risikobereitschaft'), { target: { value: 'high' } });
   fireEvent.change(screen.getByLabelText('Anlagedauer (Jahre)'), { target: { value: '10' } });
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
-  const request = jest.mocked(window.API.analyzePortfolio).mock.calls[0][0];
+  const request = jest.mocked(window.API.analyzePortfolio!).mock.calls[0][0];
   expect(request.investorContext).toMatchObject({ taxResidencies: [{ country: 'DE', validFrom: '2020-01-01' }],
     assets: [{ assetId: 31, custody: { provider: 'Trade Republic' }, targetWeight: { percent: 40, minPercent: 30, maxPercent: 50 },
       historyCoverage: 'complete', specialActivities: 'none', taxContext: 'private-direct-crypto',

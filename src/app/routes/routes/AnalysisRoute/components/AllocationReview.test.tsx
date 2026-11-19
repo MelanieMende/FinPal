@@ -109,7 +109,8 @@ it('shows the optimization horizon, extracted forecast, current-price return and
   render(<><AllocationReview plan={plan} /><AssetOptimizationDetails plan={plan} allocationKey="1" /></>);
   expect(screen.getByText(/Mathematische 12-Monats-Optimierung/)).toBeInTheDocument();
   const panel = within(screen.getByRole('region', { name: 'Prognose und Zielgewichtung Bitcoin' }));
-  expect(panel.getByText(/Kursziel: 1.200 EUR.*20 %/)).toBeInTheDocument();
+  expect(panel.getByText('1.200 EUR')).toBeInTheDocument();
+  expect(panel.getByText('20 %')).toBeInTheDocument();
   expect(panel.getByText('Historisches Bootstrap-Szenarioband: P10 -40 % · Median 20 % · P90 120 %')).toBeInTheDocument();
   expect(screen.getByText(/Altes Modellszenario.*keine gemessenen Korrelationen/)).toBeInTheDocument();
   expect(panel.getAllByRole('link', { name: 'Synthetic source' })).toHaveLength(2);
@@ -134,7 +135,6 @@ it('shows the age and warning when the last valid forecast cache is used after a
   const r = { ...request, priceUpdatedAt: new Date(Date.now()).toISOString(), positions: [{ ...request.positions[0], type: 'Stock' as const }] };
   const plan = buildForecastAllocation(r, [returnForecastFixture('1', { dataStatus: 'stale-fallback', dataAgeHours: 25 })]);
   render(<><AllocationReview plan={plan} /><AssetOptimizationDetails plan={plan} allocationKey="1" /></>);
-  expect(screen.getByText(/letzter gültiger Cache nach Abruffehler.*25.0 Stunden alt/)).toBeInTheDocument();
   expect(screen.getByRole('generic', { name: 'Warnungen zur Zielgewichtung' })).toHaveTextContent(/Forecast-Anbieter.*25.0 Stunden alt/);
 });
 

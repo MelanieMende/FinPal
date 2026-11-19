@@ -195,6 +195,7 @@ export function validateAnalysisRequest(request: PortfolioAnalysisRequest): void
 }
 
 export interface PortfolioAnalysisProgress {
+  logDetail?: string;
   stage: 'prices' | 'forecast' | 'preparing' | 'research' | 'ai-research' | 'risk-review' | 'analysis' | 'validating' | 'correcting' | 'retrying';
   activeRiskStep?: 'documents' | 'sec-discovery' | 'download' | 'pdf-parse' | 'risk-excerpt' | 'assessment' | 'reuse';
   documentsRefreshForced?: boolean;

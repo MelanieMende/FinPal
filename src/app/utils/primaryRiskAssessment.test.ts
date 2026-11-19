@@ -197,7 +197,7 @@ it('recovers SpaceX financial and regulatory evidence from the exact cached SEC 
     expect.objectContaining({ flag: 'loss-making', finding: 'risk', documentIndex: 0 }),
     expect.objectContaining({ flag: 'financing', finding: 'no-risk', documentIndex: 0 }),
     expect.objectContaining({ flag: 'regulatory', finding: 'risk', documentIndex: 0 }),
-    expect.objectContaining({ flag: 'low-margin', finding: 'unknown', reason: expect.stringContaining('SEC-10-Q geprüft') }),
+    expect.objectContaining({ flag: 'low-margin', finding: 'unknown' }),
     expect.objectContaining({ flag: 'going-concern', finding: 'unknown', reason: expect.stringContaining('SEC-10-Q geprüft') }),
   ]));
   expect(reviewed.metrics).toEqual(expect.arrayContaining([

@@ -544,7 +544,7 @@ export class PrimaryRiskResearch {
           return { newerReportAvailable: false, verified: false };
         }
         const links = lufthansaReportLinks(html, LUFTHANSA_REPORT_INDEX, this.now());
-        latestPeriod = links.map(lufthansaReportPeriod).filter((period): period is string => !!period).sort().at(-1) ?? null;
+        latestPeriod = links.map(lufthansaReportPeriod).filter((period): period is string => !!period).sort().slice(-1)[0] ?? null;
         this.lufthansaReportIndexCache = { fetchedAt: this.now(), latestPeriod, verified: !!latestPeriod };
         if (!latestPeriod) return { newerReportAvailable: false, verified: false };
       } catch {
@@ -552,7 +552,7 @@ export class PrimaryRiskResearch {
         return { newerReportAvailable: false, verified: false };
       }
     }
-    const loadedPeriod = sources.map(source => lufthansaReportPeriod(source.url)).filter((period): period is string => !!period).sort().at(-1);
+    const loadedPeriod = sources.map(source => lufthansaReportPeriod(source.url)).filter((period): period is string => !!period).sort().slice(-1)[0];
     return { newerReportAvailable: !loadedPeriod || !!latestPeriod && latestPeriod > loadedPeriod, verified: true };
   }
   private async resolveCik(position: AnalysisPosition, signal?: AbortSignal): Promise<string | null> {

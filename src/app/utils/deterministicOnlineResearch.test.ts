@@ -21,7 +21,8 @@ it('performs a deterministic identifier search, validates links and reuses its 2
     const second = await provider(position);
     expect(search).toHaveBeenCalledTimes(1);
     expect(search).toHaveBeenCalledWith('EXA.DE DE000EXAMPLE Example AG', expect.objectContaining({ newsCount: 5, enableFuzzyQuery: false }));
-    expect(first).toEqual(second);
+    expect(first.cacheStatus).toBe('fresh');
+    expect(second).toEqual({ ...first, cacheStatus: 'reused' });
     expect(first.sources).toContainEqual(expect.objectContaining({ title: expect.stringContaining('Quarterly update'), url: 'https://example.com/update' }));
     expect(first.sources.some(source => source.url.startsWith('javascript:'))).toBe(false);
     expect(first.text).toContain('nicht semantisch als Tatsachen oder Empfehlungen interpretiert');
@@ -37,4 +38,6 @@ it('keeps deterministic source links and reports the gap when the online search 
   expect(result.newsCount).toBe(0);
   expect(result.sources).toContainEqual(expect.objectContaining({ url: 'https://finance.yahoo.com/quote/EXA.DE/history/' }));
   expect(result.text).toContain('Nachrichtensuche ist fehlgeschlagen');
+  await provider(position);
+  expect(search).toHaveBeenCalledTimes(2);
 });

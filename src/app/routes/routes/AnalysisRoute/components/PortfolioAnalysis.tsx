@@ -102,38 +102,51 @@ export function AssetResearchIndicator({ status, now }: { status?: AssetResearch
         : 'Status der gespeicherten Online-Recherche nicht verfügbar.'}
   </p>;
 }
-export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onReload, disabled, loading, forceReload, excerptNeedsRefresh = false }: { risk: FundamentalRiskAssessment; now: number; status?: import('../../../../utils/portfolioAnalysis').PrimaryDocumentStatus; openSource: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void; onReload: () => void; disabled: boolean; loading: boolean; forceReload: boolean; excerptNeedsRefresh?: boolean }) {
+export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onReload, onCheck, checking = false, disabled, loading, forceReload, excerptNeedsRefresh = false }: { risk: FundamentalRiskAssessment; now: number; status?: import('../../../../utils/portfolioAnalysis').PrimaryDocumentStatus; openSource: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void; onReload: () => void; onCheck?: () => void; checking?: boolean; disabled: boolean; loading: boolean; forceReload: boolean; excerptNeedsRefresh?: boolean }) {
+  const [expanded, setExpanded] = useState(false);
   const checkedAt = risk.primaryDocumentsCheckedAt ? Date.parse(risk.primaryDocumentsCheckedAt) : NaN;
   const loadedAt = status?.loadedAt ? Date.parse(status.loadedAt) : NaN;
   const freshnessCheckedAt = status?.freshnessCheckedAt ? Date.parse(status.freshnessCheckedAt) : NaN;
-  const current = !!status && !status.needsRefresh && Number.isFinite(freshnessCheckedAt) && freshnessCheckedAt <= now
+  const current = !!status && status.publicationCheckVerified !== false && !status.newerReportAvailable && Number.isFinite(freshnessCheckedAt) && freshnessCheckedAt <= now
     && now - freshnessCheckedAt < 24 * 60 * 60 * 1000;
   const remainingMinutes = Math.max(0, Math.ceil((freshnessCheckedAt + 24 * 60 * 60 * 1000 - now) / 60000));
-  const validity = current ? `noch ${Math.floor(remainingMinutes / 60)} Std. ${String(remainingMinutes % 60).padStart(2, '0')} Min. gültig` : 'erneute Prüfung fällig';
+  const validity = status?.newerReportAvailable ? 'neue Berichte verfügbar' : current ? `noch ${Math.floor(remainingMinutes / 60)} Std. ${String(remainingMinutes % 60).padStart(2, '0')} Min. gültig` : 'erneute Prüfung fällig';
   const newReportAwaitingReview = risk.primaryDocumentsChanged === true;
   const reportVersionAvailable = status?.newerReportAvailable === true;
-  const publicationCheckUnverified = status?.publicationCheckVerified === false;
+  const publicationCheckUnverified = status?.freshnessSupported === true && status.publicationCheckVerified === false;
   const documents = (risk.primaryDocuments ?? []).filter(source => source && typeof source.url === 'string' && typeof source.title === 'string');
   return <section aria-label="Primärberichte" className="my-3 min-w-0 rounded border border-white/10 bg-slate-950/25 p-3">
     <div className="flex min-w-0 flex-wrap items-start gap-2">
-    <details className="group min-w-0 flex-1">
-      <summary className={`flex min-w-0 cursor-pointer list-none items-center gap-2 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${current && !excerptNeedsRefresh && !newReportAwaitingReview ? 'text-emerald-300' : 'text-amber-300'}`}>
+    <details className="group min-w-0 flex-1" onToggle={event => setExpanded(event.currentTarget.open)}>
+      <summary aria-controls={`primary-documents-details-${risk.key}`} className={`flex min-w-0 cursor-pointer list-none items-center gap-2 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${current && !excerptNeedsRefresh && !newReportAwaitingReview ? 'text-emerald-300' : 'text-amber-300'}`}>
         <Icon icon={current && !excerptNeedsRefresh && !newReportAwaitingReview ? 'tick-circle' : 'refresh'} size={14} aria-hidden="true" />
-        <span className="min-w-0 break-words">Berichte laden: {loading && forceReload ? 'wird ausgeführt'
+        <span className="min-w-0 break-words">Primärberichte: {loading && forceReload ? 'wird ausgeführt'
           : excerptNeedsRefresh ? 'neuer Auszug erforderlich'
             : reportVersionAvailable ? 'neuere Berichtsversion verfügbar · neu laden'
               : newReportAwaitingReview ? 'Berichte geladen · Risikoprüfung ausstehend'
-                : publicationCheckUnverified ? 'Berichtsstand nicht abgeglichen · neu laden'
-                  : current ? 'geladen · aktuell' : 'Aktualitätsprüfung fällig · neu laden'}</span>
+                : publicationCheckUnverified ? 'Aktualität prüfen'
+                  : current ? 'geladen · aktuell' : documents.length ? 'geladen · Aktualität offen' : 'keine Berichte geladen'}</span>
         <Icon icon="chevron-right" size={12} aria-hidden="true" className="ml-auto shrink-0 text-gray-500 transition-transform group-open:rotate-90" />
       </summary>
-      <div className="mt-2 min-w-0 space-y-2 border-t border-white/10 pt-2">
+    </details>
+    <div className="ml-auto flex flex-wrap gap-2">
+    <Button small icon="refresh" loading={checking} disabled={disabled || loading || checking || status?.freshnessSupported === false} aria-label="Aktualität der Primärberichte prüfen" onClick={onCheck}>
+      Aktualität prüfen
+    </Button>
+    <Button className="shrink-0" small icon={loading ? undefined : 'refresh'} disabled={disabled || loading} aria-label="Primärberichte neu laden" onClick={onReload}>
+      {loading ? <><Spinner size={14} /> Berichte werden geladen</> : 'Berichte neu laden'}
+    </Button>
+    </div>
+    </div>
+      <div id={`primary-documents-details-${risk.key}`} hidden={!expanded} className="mt-2 min-w-0 space-y-2 border-t border-white/10 pt-2">
         {newReportAwaitingReview
           ? <p className="m-0 text-xs text-amber-200">Eine neue Berichtsversion wurde geladen. Die inhaltliche Risikoprüfung steht noch aus; bitte „Risiken neu prüfen“ wählen.</p>
           : reportVersionAvailable
             ? <p className="m-0 text-xs text-amber-200">Eine neuere Berichtsversion ist verfügbar. Bitte die Berichte neu laden und danach die Risiken erneut prüfen.</p>
             : publicationCheckUnverified
-              ? <p className="m-0 text-xs text-amber-200">Der aktuelle Berichtsstand konnte nicht mit der Emittentenübersicht abgeglichen werden. Bitte die Berichte erneut laden.</p>
+              ? <p className="m-0 text-xs text-amber-200">Der aktuelle Berichtsstand konnte nicht mit der Emittentenübersicht abgeglichen werden. Bitte die Aktualität prüfen.</p>
+          : status?.freshnessSupported === false
+          ? <p className="m-0 text-xs text-gray-400">Ein automatischer Abgleich auf neue Berichte ist für dieses Asset noch nicht verfügbar.</p>
           : !Number.isFinite(loadedAt)
           ? <p className="m-0 text-xs text-amber-200">Kein gültiger Ladezeitpunkt der Berichtsauszüge. Bitte die Berichte neu laden; eine 24-Stunden-Prüffrist lässt sich nicht bestimmen.</p>
           : null}
@@ -148,11 +161,6 @@ export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onRel
           </div>
           : <p className="m-0 text-xs text-gray-400">Keine geladenen Primärberichte in der gespeicherten Prüfung.</p>}
       </div>
-    </details>
-    <Button className="ml-auto shrink-0" small intent="primary" icon={loading ? undefined : 'refresh'} disabled={disabled || loading} aria-label="Primärberichte neu laden" onClick={onReload}>
-      {loading ? <><Spinner size={14} /> Berichte werden geladen</> : 'Berichte neu laden'}
-    </Button>
-    </div>
   </section>;
 }
 const isBlockedRecommendation = (recommendation: Pick<AssetRecommendation, 'action' | 'executionBlocker'>) =>
@@ -531,6 +539,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [researchStatus, setResearchStatus] = useState<AssetResearchStatus[]>([]);
+  const [checkingPrimaryAsset, setCheckingPrimaryAsset] = useState<number | null>(null);
   const [primaryDocumentStatus, setPrimaryDocumentStatus] = useState<import('../../../../utils/portfolioAnalysis').PrimaryDocumentStatus[]>([]);
   const researchAssets = JSON.stringify(positions.map(({ id, name, isin, symbol, type }) => ({ id, name, isin, symbol, type })));
   useEffect(() => {
@@ -694,6 +703,26 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
           : 'Forecast aktualisiert. Die bestehende KI-Einzelanalyse wurde beibehalten.');
       }
     });
+  }
+
+  async function checkPrimaryFreshness(assetId: number) {
+    if (busy) return;
+    setBusy(true);
+    setCheckingPrimaryAsset(assetId);
+    try {
+      const asset = positions.find(position => position.id === assetId);
+      if (!asset) throw new Error('Das Asset ist nicht mehr im Portfolio vorhanden.');
+      if (!window.API.checkPortfolioPrimaryDocumentFreshness) throw new Error('Bitte FinPal neu starten, um die Aktualität zu prüfen.');
+      const status = await window.API.checkPortfolioPrimaryDocumentFreshness({ id: asset.id, name: asset.name, isin: asset.isin, symbol: asset.symbol, type: asset.type });
+      if (alive.current) {
+        setPrimaryDocumentStatus(previous => [...previous.filter(item => item.assetId !== assetId), status]);
+        setNow(Date.now());
+      }
+    } catch (e) {
+      if (alive.current) setError(e instanceof Error ? e.message : 'Die Aktualitätsprüfung ist fehlgeschlagen.');
+    } finally {
+      if (alive.current) { setCheckingPrimaryAsset(null); setBusy(false); }
+    }
   }
 
   function refreshRisk(assetId: number, documentsOnly = false) {
@@ -972,14 +1001,14 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                       </div>}
                     </div>
                   </details>
-                  <Button small intent="primary" icon="refresh" disabled={busy || !positions.some(position => position.id === rec.assetId)}
+                  <Button small icon="refresh" disabled={busy || !positions.some(position => position.id === rec.assetId)}
                     aria-label={`Online-Recherche für Asset ${rec.assetId} neu laden`} onClick={() => refreshResearch(rec.assetId)}>
                     Recherche neu laden
                   </Button>
                 </div>
               </section>
               <RiskReview risk={risk} openSource={openSource}
-                primaryDocumentsStep={<PrimaryDocumentsIndicator risk={risk} now={now} status={primaryDocumentStatus.find(item => item.assetId === rec.assetId)} openSource={openSource} onReload={() => refreshRisk(rec.assetId, true)}
+                primaryDocumentsStep={<PrimaryDocumentsIndicator risk={risk} now={now} status={primaryDocumentStatus.find(item => item.assetId === rec.assetId)} openSource={openSource} onReload={() => refreshRisk(rec.assetId, true)} onCheck={() => checkPrimaryFreshness(rec.assetId)} checking={checkingPrimaryAsset === rec.assetId}
                   disabled={busy || !positions.some(position => position.id === rec.assetId)}
                   loading={assetProgress?.refreshingRisk === true && progress?.activeRiskStep === 'documents'
                     && progress?.documentsRefreshForced === true}

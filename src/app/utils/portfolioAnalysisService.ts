@@ -377,10 +377,22 @@ export class PortfolioAnalysisService {
       const risk = saved?.report.fundamentalRisks?.find(item => item.key === String(asset.id));
       const sources = position ? risk?.primaryDocuments ?? [] : [];
       const status = this.primaryRiskResearch.cachedStatus(asset, sources);
-      const publication = await this.primaryRiskResearch.lufthansaReportFreshness(asset, sources);
+      const publication = this.primaryRiskResearch.publicationStatus(asset, sources);
       return { assetId: asset.id, ...status, ...publication,
-        needsRefresh: status.needsRefresh || publication.newerReportAvailable || !publication.verified };
+        needsRefresh: status.needsRefresh || publication.newerReportAvailable };
     }));
+  }
+  async checkPrimaryDocumentFreshness(asset: ResearchAsset): Promise<PrimaryDocumentStatus> {
+    const saved = this.getLastResult();
+    if (!saved || !asset || !Number.isInteger(asset.id) || ![asset.name, asset.isin, asset.symbol, asset.type].every(value => typeof value === 'string' && value.length <= 300))
+      throw new Error('Die Asset-Kennung oder gespeicherte Analyse ist ungültig.');
+    const savedRequest = JSON.parse(fs.readFileSync(this.resultFile, 'utf8')).request as PortfolioAnalysisRequest;
+    const position = savedRequest.positions.find(item => item.id === asset.id && item.type === asset.type && item.isin.trim().toUpperCase() === asset.isin.trim().toUpperCase());
+    if (!position) throw new Error('Das Asset wurde seit der gespeicherten Analyse geändert.');
+    const sources = saved.report.fundamentalRisks?.find(item => item.key === String(asset.id))?.primaryDocuments ?? [];
+    const publication = await this.primaryRiskResearch.checkPublicationFreshness(position, sources);
+    const status = this.primaryRiskResearch.cachedStatus(position, sources);
+    return { assetId: asset.id, ...status, ...publication, needsRefresh: status.needsRefresh || publication.newerReportAvailable };
   }
   constructor(dataPath: string, private readonly requestFetch: typeof fetch = fetch, private readonly chatGptAuth?: ChatGptAuth,
     private readonly marketForecastProvider?: MarketForecastProvider,
@@ -732,7 +744,9 @@ export class PortfolioAnalysisService {
     const oldRisk = previous.report.fundamentalRisks?.find(item => item.key === String(asset.id));
     const oldSources = oldRisk?.primaryDocuments ?? [];
     const publication = await this.primaryRiskResearch.lufthansaReportFreshness(position, oldSources);
-    const documentsCurrent = !this.primaryRiskResearch.cachedStatus(position, oldSources).needsRefresh
+    const checkedPublication = this.primaryRiskResearch.publicationStatus(position, oldSources);
+    const documentsCurrent = (checkedPublication.publicationCheckVerified && !checkedPublication.newerReportAvailable
+      || !this.primaryRiskResearch.cachedStatus(position, oldSources).needsRefresh)
       && !publication.newerReportAvailable && publication.verified;
     const reusedDocuments = !documentsOnly && documentsCurrent
       ? this.primaryRiskResearch.reuseCached(position, oldRisk?.primaryDocuments ?? []) : null;

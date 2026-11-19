@@ -304,16 +304,21 @@ it('shows a due report reload from the document load time even after a recent ri
   const risk: import('../../../../utils/robustForecastModel').FundamentalRiskAssessment = { key: '1', status: 'assessed', materialRisks: [], rationale: 'Geprüft.', sources: [],
     primaryDocumentsCheckedAt: new Date(loaded + 23 * 60 * 60 * 1000).toISOString() };
   const props = { risk, now: loaded + 24 * 60 * 60 * 1000, openSource: jest.fn(), onReload: jest.fn(),
-    disabled: false, loading: false, forceReload: false };
+    disabled: false, loading: false, forceReload: false, onCheck: jest.fn() };
   const { rerender } = render(<PrimaryDocumentsIndicator {...props}
     status={{ assetId: 1, loadedAt: new Date(loaded).toISOString(), freshnessCheckedAt: new Date(loaded).toISOString(), needsRefresh: false }} />);
-  expect(screen.getByText(/Berichte laden: Aktualitätsprüfung fällig/)).toBeInTheDocument();
+  expect(screen.getByText(/Primärberichte: keine Berichte geladen/)).toBeInTheDocument();
   expect(screen.getByText(/^Aktualität zuletzt geprüft:/)).toHaveTextContent('erneute Prüfung fällig');
   expect(screen.getByText(/^Berichte zuletzt geladen:/).tagName).toBe('P');
   expect(screen.getByText(/^Risiken zuletzt geprüft:/).tagName).toBe('P');
+  expect(screen.getByRole('button', { name: 'Aktualität der Primärberichte prüfen' })).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Primärberichte neu laden' })).toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Aktualität der Primärberichte prüfen' }));
+  expect(props.onCheck).toHaveBeenCalledTimes(1);
+  expect(props.onReload).not.toHaveBeenCalled();
   rerender(<PrimaryDocumentsIndicator {...props} now={loaded + 60 * 60 * 1000}
     status={{ assetId: 1, loadedAt: new Date(loaded).toISOString(), freshnessCheckedAt: new Date(loaded + 60 * 60 * 1000).toISOString(), needsRefresh: false }} />);
-  expect(screen.getByText('Berichte laden: geladen · aktuell')).toBeInTheDocument();
+  expect(screen.getByText('Primärberichte: geladen · aktuell')).toBeInTheDocument();
   expect(screen.getByText(/^Aktualität zuletzt geprüft:/)).toHaveTextContent('noch 24 Std. 00 Min. gültig');
   rerender(<PrimaryDocumentsIndicator {...props} now={loaded + 2 * 60 * 60 * 1000}
     status={{ assetId: 1, loadedAt: new Date(loaded).toISOString(), freshnessCheckedAt: new Date(loaded + 60 * 60 * 1000).toISOString(), needsRefresh: false }} />);

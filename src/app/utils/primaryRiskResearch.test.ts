@@ -21,6 +21,34 @@ jest.mock('pdf-parse', () => ({ PDFParse: class {
   async destroy() { /* No native resources in this fixture. */ }
 } }));
 
+it('checks SEC publication changes without downloading reports and persists only successful checks', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-publication-check-'));
+  const file = path.join(folder, 'documents.json');
+  let now = Date.parse('2026-11-19T08:00:00Z');
+  const position = { isin: 'US5801351017', type: 'Stock' as const };
+  const source = { title: 'SEC 10-Q', url: 'https://www.sec.gov/Archives/edgar/data/63908/000006390826000001/report.htm' };
+  let accession = '0000063908-26-000001';
+  const fetcher = jest.fn(async (_url: RequestInfo | URL) => new Response(JSON.stringify({ filings: { recent: {
+    form: ['10-Q'], accessionNumber: [accession], primaryDocument: ['report.htm'], reportDate: ['2026-09-30'],
+  } } })));
+  try {
+    const research = new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now);
+    expect(await research.checkPublicationFreshness(position, [source])).toMatchObject({ publicationCheckVerified: true, newerReportAvailable: false, freshnessCheckedAt: new Date(now).toISOString() });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(String(fetcher.mock.calls[0]?.[0] ?? '')).not.toContain('/Archives/');
+    now += 3600000;
+    accession = '0000063908-26-000002';
+    const restarted = new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now);
+    expect(restarted.publicationStatus(position, [source])).toMatchObject({ publicationCheckVerified: true, newerReportAvailable: false });
+    expect(await restarted.checkPublicationFreshness(position, [source])).toMatchObject({ newerReportAvailable: true, freshnessCheckedAt: new Date(now).toISOString() });
+    const failed = new PrimaryRiskResearch(file, jest.fn().mockResolvedValue(new Response('', { status: 503 })), () => now + 1000);
+    await expect(failed.checkPublicationFreshness(position, [source])).rejects.toThrow();
+    expect(new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now + 1000).publicationStatus(position, [source]))
+      .toMatchObject({ newerReportAvailable: true, freshnessCheckedAt: new Date(now).toISOString() });
+    expect(restarted.publicationStatus(position, [{ ...source, url: source.url + '?changed' }]).freshnessCheckedAt).toBeNull();
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
 it('loads and persists Bitcoin network documentation without requiring an ISIN or annual report', async () => {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-bitcoin-primary-'));
   let now = Date.parse('2026-10-30T10:00:00Z');

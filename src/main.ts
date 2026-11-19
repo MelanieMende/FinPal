@@ -297,6 +297,8 @@ ipcMain.handle('portfolio-ai:chatgpt-models', () => chatGptAuth.models());
 ipcMain.handle('portfolio-ai:last-result', () => portfolioAnalysis.getLastResult());
 ipcMain.handle('portfolio-ai:primary-document-status', (_event, assets: import('./app/utils/portfolioAnalysis').ResearchAsset[]) =>
   portfolioAnalysis.getPrimaryDocumentStatus(assets));
+ipcMain.handle('portfolio-ai:check-primary-freshness', (_event, asset: import('./app/utils/portfolioAnalysis').ResearchAsset) =>
+  portfolioAnalysis.checkPrimaryDocumentFreshness(asset));
 ipcMain.handle('portfolio-ai:forget-result', () => { portfolioAnalysis.forgetLastResult(); return true; });
 ipcMain.handle('portfolio-ai:analyze', (event, request: PortfolioAnalysisRequest, snapshot?: string) => portfolioAnalysis.analyze(request, progress => {
   if (!event.sender.isDestroyed()) event.sender.send('portfolio-ai:progress', progress);

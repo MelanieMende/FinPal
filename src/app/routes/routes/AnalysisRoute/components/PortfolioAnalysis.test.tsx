@@ -177,6 +177,15 @@ it('marks an incomplete risk review red and a material risk without open points 
   expect(within(materialReview).getByText('Wesentliche Risiken')).toBeInTheDocument();
 });
 
+it('shows a concrete data blocker in the open risk panel without expanding details', () => {
+  const reason = 'Die ungeklärte Verwahrung verhindert die Anlageentscheidung.';
+  render(<RiskReview risk={{ key: '1', status: 'unknown', materialRisks: [], sources: [],
+    decisionBlocker: { flag: 'custody', reason }, rationale: `Konkreter Datenblocker: ${reason}` }} openSource={jest.fn()} />);
+  const panel = screen.getByRole('region', { name: 'Unternehmens- und Produktrisiken' });
+  expect(within(panel).getByText('Konkreter Datenblocker')).toBeInTheDocument();
+  expect(within(panel).getByText(`Konkreter Datenblocker: ${reason}`)).toBeVisible();
+});
+
 it('shows Munich Re going-concern uncertainty as reviewed residual uncertainty', () => {
   render(<RiskReview risk={{ key: '11', status: 'unknown', decisionReadiness: 'reviewed-uncertainty', materialRisks: [],
     rationale: 'Fortführung: offen (Verfügbare Primärberichte geprüft: Eine konkrete unternehmensbezogene Aussage zu wesentlichen Fortführungsunsicherheiten fehlt. Allgemeine Prüferpflichten sind keine Entwarnung.)',
@@ -308,7 +317,7 @@ it('shows a due report reload from the document load time even after a recent ri
   const { rerender } = render(<PrimaryDocumentsIndicator {...props}
     status={{ assetId: 1, loadedAt: new Date(loaded).toISOString(), freshnessCheckedAt: new Date(loaded).toISOString(), needsRefresh: false }} />);
   expect(screen.getByText(/Primärberichte: keine Berichte geladen/)).toBeInTheDocument();
-  expect(screen.getByText(/^Aktualität zuletzt geprüft:/)).toHaveTextContent('erneute Prüfung fällig');
+  expect(screen.getByText(/^Aktualität zuletzt geprüft:/)).toHaveTextContent('erneute Prüfung bei Analyse fällig');
   expect(screen.getByText(/^Berichte zuletzt geladen:/).tagName).toBe('P');
   expect(screen.getByText(/^Risiken zuletzt geprüft:/).tagName).toBe('P');
   expect(screen.getByRole('button', { name: 'Aktualität der Primärberichte prüfen' })).toBeInTheDocument();
@@ -319,11 +328,19 @@ it('shows a due report reload from the document load time even after a recent ri
   rerender(<PrimaryDocumentsIndicator {...props} now={loaded + 60 * 60 * 1000}
     status={{ assetId: 1, loadedAt: new Date(loaded).toISOString(), freshnessCheckedAt: new Date(loaded + 60 * 60 * 1000).toISOString(), needsRefresh: false }} />);
   expect(screen.getByText('Primärberichte: geladen · aktuell')).toBeInTheDocument();
-  expect(screen.getByText(/^Aktualität zuletzt geprüft:/)).toHaveTextContent('noch 24 Std. 00 Min. gültig');
+  expect(screen.getByText(/^Aktualität zuletzt geprüft:/)).toHaveTextContent('erneute Prüfung bei Analyse in 24 Std. 00 Min.');
   rerender(<PrimaryDocumentsIndicator {...props} now={loaded + 2 * 60 * 60 * 1000}
     status={{ assetId: 1, loadedAt: new Date(loaded).toISOString(), freshnessCheckedAt: new Date(loaded + 60 * 60 * 1000).toISOString(), needsRefresh: false }} />);
-  expect(screen.getByText(/^Aktualität zuletzt geprüft:/)).toHaveTextContent('noch 23 Std. 00 Min. gültig');
+  expect(screen.getByText(/^Aktualität zuletzt geprüft:/)).toHaveTextContent('erneute Prüfung bei Analyse in 23 Std. 00 Min.');
   expect(screen.queryByText(/Nach 24 Stunden/)).not.toBeInTheDocument();
+  rerender(<PrimaryDocumentsIndicator {...props} now={loaded + 2 * 60 * 60 * 1000}
+    status={{ assetId: 1, loadedAt: new Date(loaded).toISOString(), freshnessCheckedAt: new Date(loaded + 60 * 60 * 1000).toISOString(), needsRefresh: true, newerReportAvailable: true, publicationCheckVerified: true, freshnessCheckSucceeded: true }} />);
+  expect(screen.getByText(/^Aktualität zuletzt geprüft:/)).toHaveTextContent('erneute Prüfung bei Analyse in 23 Std. 00 Min.');
+  expect(screen.getByText(/neuere Berichtsversion verfügbar/)).toBeInTheDocument();
+  rerender(<PrimaryDocumentsIndicator {...props} now={loaded + 2 * 60 * 60 * 1000}
+    status={{ assetId: 1, loadedAt: new Date(loaded).toISOString(), freshnessCheckedAt: new Date(loaded + 60 * 60 * 1000).toISOString(), needsRefresh: true, freshnessCheckSucceeded: false, publicationCheckVerified: false, freshnessSupported: true }} />);
+  expect(screen.getByText(/^Aktualität zuletzt geprüft:/)).toHaveTextContent('Prüfung fehlgeschlagen');
+
 });
 
 it('restores an executed 50 EUR sale as Done in both views and removes its proceeds from the remaining funding plan', async () => {
@@ -482,7 +499,7 @@ it('orders asset analysis by workflow and replaces quote, research, risk and for
   expect(forecast).toHaveTextContent(/Analysten-Kursziel\s*60 EUR/);
 
   act(() => { store.dispatch(analyzePortfolio.pending('refresh', { request, snapshot })); });
-  expect(store.getState().portfolioAnalysis.progress?.stage).toBe('preparing');
+  expect(store.getState().portfolioAnalysis.progress?.stage).toBe('prices');
   act(() => { store.dispatch(analysisProgressReceived({ requestId: 'refresh', progress: {
     stage: 'prices', activeAssetId: 1, lastActivityAt: Date.now(),
   } })); });
@@ -682,7 +699,7 @@ it('starts a single asset refresh, keeps existing results visible and preserves 
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Asset 1 neu analysieren' })); });
   expect(window.API.analyzePortfolio).toHaveBeenLastCalledWith(expect.objectContaining({ targetAssetId: 1, positions: expect.arrayContaining([expect.objectContaining({ id: 1 }), expect.objectContaining({ id: 2 })]) }), expect.any(String));
   expect(screen.getByText('Begründung')).toBeInTheDocument();
-  expect(screen.getByTestId('asset-reload-status-1')).toHaveTextContent('KI-Auswertung wird vorbereitet');
+  expect(screen.getByTestId('asset-reload-status-1')).toHaveTextContent('Kursaktualisierung läuft');
   expect(screen.queryByTestId('asset-reload-status-2')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Asset 2 neu analysieren' })).toBeDisabled();
   await act(async () => { reject(new Error('Einzelanalyse fehlgeschlagen')); });
@@ -704,7 +721,7 @@ it('keeps asset recommendation cards visible during a full rerun and labels the 
   expect(store.getState().portfolioAnalysis.result).toEqual(original);
   expect(screen.getByText('Begründung')).toBeInTheDocument();
   expect(screen.getByText(/Bisherige Analyse vom/)).toBeInTheDocument();
-  expect(screen.getByTestId('asset-reload-status-1')).toHaveTextContent('KI-Auswertung wird vorbereitet');
+  expect(screen.getByTestId('asset-reload-status-1')).toHaveTextContent('Kursaktualisierung läuft');
   act(() => progressCallback({ stage: 'research', activeAssetId: 2, researchCompleted: 0, researchTotal: 2, lastActivityAt: Date.now() }));
   expect(screen.getByTestId('asset-research-loading-2')).toHaveTextContent('Onlinequellen werden gesucht');
   act(() => progressCallback({ stage: 'risk-review', activeAssetId: 1, activeRiskStep: 'assessment',
@@ -819,7 +836,7 @@ it('shows real progress, elapsed time and waiting time until the request finishe
   jest.useFakeTimers();
   try {
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
-    expect(screen.getByRole('status')).toHaveTextContent('KI-Verbindung wird vorbereitet');
+    expect(screen.getByRole('status')).toHaveTextContent('Kurse werden aktualisiert');
     act(() => progressCallback({ stage: 'research', lastActivityAt: Date.now() }));
     expect(screen.getByRole('status')).toHaveTextContent('Online-Recherche wird ausgeführt');
     act(() => jest.advanceTimersByTime(65000));
@@ -948,7 +965,7 @@ it('does not replace a newly started analysis with a delayed startup restore', a
   await act(async () => restore({ report: savedReport, snapshot: 'old-snapshot', provider: 'chatgpt' }));
   expect(store.getState().portfolioAnalysis.requestId).toBe('new-request');
   expect(store.getState().portfolioAnalysis.result).toBeNull();
-  expect(store.getState().portfolioAnalysis.progress?.stage).toBe('preparing');
+  expect(store.getState().portfolioAnalysis.progress?.stage).toBe('prices');
 });
 
 
@@ -1058,7 +1075,7 @@ it('waits for quotes and sends the refreshed holdings and snapshot to the analys
   const { store, unmount } = render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets: held } });
   await open(); fillProfile();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
-  expect(screen.getByRole('status')).toHaveTextContent('KI-Verbindung wird vorbereitet');
+  expect(screen.getByRole('status')).toHaveTextContent('Kurse werden aktualisiert');
   expect(window.API.analyzePortfolio!).not.toHaveBeenCalled();
   await act(async () => { resolveQuote({ source: 'yahoo-finance', price: { regularMarketPrice: 60, currency: 'EUR', regularMarketTime: '2026-10-08T08:05:52Z' } }); });
   expect(window.API.analyzePortfolio!).toHaveBeenCalledTimes(1);

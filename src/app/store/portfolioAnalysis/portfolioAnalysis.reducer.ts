@@ -228,7 +228,7 @@ const slice = createSlice({
       state.targetAssetId = action.meta.arg.request.targetAssetId ?? null;
       state.restoreBlocked = true;
       state.startedAt = Date.now();
-      state.progress = { stage: 'preparing', lastActivityAt: state.startedAt };
+      state.progress = { stage: 'prices', lastActivityAt: state.startedAt };
       state.requestId = action.meta.requestId;
       startLog(state, action.meta.arg.request, false);
       state.provider = action.meta.arg.request.provider;

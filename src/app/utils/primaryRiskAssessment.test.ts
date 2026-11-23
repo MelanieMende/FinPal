@@ -29,6 +29,19 @@ const assessment = {
   ],
 };
 
+it('accepts only a concrete data blocker tied to an unknown check', () => {
+  const unknown = { ...assessment, checks: assessment.checks.map(check => check.flag === 'going-concern'
+    ? { ...check, finding: 'unknown', reason: 'Entscheidende Angabe fehlt.', documentIndex: null, quote: '' } : check),
+    decisionBlocker: { flag: 'going-concern', reason: 'Die offene Fortführungsangabe verhindert die Einschätzung der Anlageentscheidung.' } };
+  const result = validateRiskAssessment(position, set, unknown);
+  expect(result.decisionBlocker).toEqual(unknown.decisionBlocker);
+  expect(riskForModel(result)).toMatchObject({ decisionBlocker: unknown.decisionBlocker });
+  expect(riskForModel({ ...result, checks: result.checks.map(check => check.flag === 'going-concern' ? { ...check, finding: 'no-risk' } : check) }).decisionBlocker).toBeUndefined();
+  expect(validateRiskAssessment(position, set, { ...unknown, decisionBlocker: { flag: 'financing', reason: unknown.decisionBlocker.reason } }).decisionBlocker).toBeUndefined();
+  expect(validateRiskAssessment(position, set, { ...unknown, decisionBlocker: null }).decisionBlocker).toBeUndefined();
+  expect(validateRiskAssessment(position, set, { ...unknown, checks: [], decisionBlocker: unknown.decisionBlocker }).decisionBlocker).toBeUndefined();
+});
+
 it('requires document text for every claimed finding and periodized metric', () => {
   const record = validateRiskAssessment(position, set, assessment);
   expect(record.status).toBe('assessed');

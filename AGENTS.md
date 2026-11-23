@@ -3,6 +3,11 @@
 Ziel ist es, FinPal zu einem umfassenden Tool zur Analyse der eigenen Finanzen auszubauen.
 Es soll sich wie ein erfahrener Finanz- und Steuerberater verhalten, der dabei hilft, die eigenen Finanzen zu optimieren, und Analgetipps gibt, um das Vermögen der Familie zu erhalten und möglichst zu vergrößern. Dabei ist es das Ziel, so früh wie möglich nicht mehr auf das Geld aus angestellter Arbeit angewiesen zu sein.
 
+# Development
+
+Nicht eigenmächtig hardcoden, oder Ausnahmen einbauen, ohne explizite Freigabe von mir.
+Immer zunächst prüfen, ob ein Problem generisch gelöst werden kann.
+
 # UI-Qualität
 
 - Eingabefelder, Auswahlfelder und Buttons dürfen sich nicht überlappen oder über ihre Container hinausragen. Formulare an der verfügbaren Containerbreite ausrichten, auch neben der Navigation; lange Beschriftungen und Werte berücksichtigen.

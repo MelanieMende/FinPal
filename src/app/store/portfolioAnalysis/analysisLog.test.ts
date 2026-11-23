@@ -7,6 +7,14 @@ const request: PortfolioAnalysisRequest = {
   positions: [{ id: 1, name: 'Testwert', symbol: 'TEST', isin: '', type: 'Stock', shares: 1, price: 10, currency: 'EUR', costBasis: null, dividendsEarned: 0, realizedGainLoss: 0 }],
 };
 
+it('records quote refresh and online research before AI connection preparation', () => {
+  let state = reducer(undefined, analyzePortfolio.pending('run', { request, snapshot: '' }));
+  expect(state.log?.entries.map(entry => entry.progress?.stage).filter(Boolean)).toEqual(['prices']);
+  state = reducer(state, analysisProgressReceived({ requestId: 'run', progress: { stage: 'research', lastActivityAt: 100 } }));
+  state = reducer(state, analysisProgressReceived({ requestId: 'run', progress: { stage: 'preparing', lastActivityAt: 101 } }));
+  expect(state.log?.entries.map(entry => entry.progress?.stage).filter(Boolean)).toEqual(['prices', 'research', 'preparing']);
+});
+
 it('records distinct progress, ignores heartbeats and records failures without discarding the log', () => {
   let state = reducer(undefined, analyzePortfolio.pending('run', { request, snapshot: '' }));
   state = reducer(state, analysisProgressReceived({ requestId: 'run', progress: { stage: 'risk-review', activeAssetId: 1, activeRiskStep: 'download', lastActivityAt: 100 } }));

@@ -8,6 +8,7 @@ import extract from 'extract-zip';
 import { TradeRepublicSessionStore } from './tradeRepublicSession';
 import { tradeRepublicTradingWorker } from './tradeRepublicTradingWorker';
 import { tradeRepublicPortfolioExport } from './tradeRepublicPortfolioExport';
+import { tradeRepublicTransactionExport } from './tradeRepublicTransactionExport';
 import { TradeRepublicContractDocumentStore } from './tradeRepublicContractDocuments';
 
 const UV_VERSION = '0.11.30';
@@ -122,6 +123,12 @@ export function parsePytrJsonLines(contents: string): TradeRepublicParseResult {
       ...(signedValue !== 0 ? { amount: signedValue } : {}),
       reason,
     });
+    if (row.Unclassified === true) {
+      unsupported(row.MissingTradeDetails === true
+        ? 'Stückzahl, Entgelt oder Betrag der Ausführung fehlt in den auswertbaren Brokerdaten.'
+        : 'Trade Republic hat ein Ereignis geliefert, das pytr nicht als Buchung zuordnen konnte.');
+      continue;
+    }
     const cashType: TradeRepublicCashRecord['type'] | null = rawType === 'deposit' ? 'Deposit'
       : rawType === 'interest' ? 'Interest'
       : rawType === 'tax refund' ? 'Tax Refund' : null;
@@ -152,7 +159,11 @@ export function parsePytrJsonLines(contents: string): TradeRepublicParseResult {
       unsupported(reason);
       continue;
     }
-    const pricePerShare = type === 'Dividend' || type === 'IPO'
+    const executionPrice = numberValue(row.ExecutionPrice);
+    const reconstructedTotal = type === 'Sell' ? executionPrice * shares - fee - tax : executionPrice * shares + fee + tax;
+    const pricePerShare = executionPrice > 0 && Math.abs(reconstructedTotal - totalAmount) < 0.011
+      ? executionPrice
+      : type === 'Dividend' || type === 'IPO'
       ? 0
       : type === 'Sell'
         ? Math.max(0, (totalAmount + fee + tax) / shares)
@@ -265,8 +276,10 @@ export class TradeRepublicSync {
     try {
       const isolatedHome = this.prepareIsolatedProfile(login, tempDir);
       const runner = await this.ensureRunner();
+      const transactionHelper = path.join(tempDir, 'transactions-with-review.py');
+      fs.writeFileSync(transactionHelper, tradeRepublicTransactionExport, { mode: 0o600 });
       await this.runPytrCommand(runner, [
-        'pytr', 'export_transactions', '--lang', 'en', '--format', 'json', '--no-date-with-time', '--sort',
+        '--with', 'pytr', 'python', transactionHelper, 'export_transactions', '--lang', 'en', '--format', 'json', '--no-date-with-time', '--sort',
         '--store_credentials', '--v2', '--outputdir', path.dirname(outputFile), outputFile,
       ], isolatedHome, outputFile);
       const result = parsePytrJsonLines(fs.readFileSync(outputFile, 'utf8'));

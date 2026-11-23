@@ -210,7 +210,7 @@ export interface PortfolioAnalysisProgress {
 
 export type ResearchAsset = Pick<AnalysisPosition, 'id' | 'name' | 'isin' | 'symbol' | 'type'>;
 export type PrimaryDocumentStatus = { assetId: number; loadedAt: string | null; freshnessCheckedAt?: string | null; needsRefresh: boolean;
-  newerReportAvailable?: boolean; publicationCheckVerified?: boolean; freshnessSupported?: boolean };
+  newerReportAvailable?: boolean; publicationCheckVerified?: boolean; freshnessSupported?: boolean; freshnessDue?: boolean; freshnessCheckSucceeded?: boolean | null };
 export interface AssetResearchStatus {
   assetId: number;
   fetchedAt: string | null;

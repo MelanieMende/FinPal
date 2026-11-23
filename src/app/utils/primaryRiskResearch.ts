@@ -467,7 +467,8 @@ function secUrls(cik: string, value: SecSubmission): { url: string; title: strin
 
 export class PrimaryRiskResearch {
   private readonly cache = new Map<string, RiskDocument>();
-  private readonly freshnessChecks = new Map<string, { sources: string[]; checkedAt: number; newerReportAvailable: boolean }>();
+  private readonly freshnessChecks = new Map<string, { sources: string[]; checkedAt: number; newerReportAvailable: boolean; succeeded?: boolean }>();
+  private readonly freshnessInFlight = new Map<string, Promise<ReturnType<PrimaryRiskResearch['publicationStatus']>>>();
   private readonly submissions = new Map<string, { fetchedAt: number; filings: ReturnType<typeof secUrls> }>();
   private readonly cikCache = new Map<string, { fetchedAt: number; cik: string | null }>();
   private lufthansaReportIndexCache?: { fetchedAt: number; latestPeriod: string | null; verified: boolean };
@@ -479,7 +480,8 @@ export class PrimaryRiskResearch {
       const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
       if (saved.version === 3 && Array.isArray(saved.freshnessChecks)) for (const entry of saved.freshnessChecks) {
         if (typeof entry?.isin === 'string' && Array.isArray(entry.sources) && entry.sources.every((source: unknown) => typeof source === 'string')
-          && Number.isFinite(entry.checkedAt) && typeof entry.newerReportAvailable === 'boolean') this.freshnessChecks.set(entry.isin, entry);
+          && Number.isFinite(entry.checkedAt) && typeof entry.newerReportAvailable === 'boolean'
+          && (entry.succeeded === undefined || typeof entry.succeeded === 'boolean')) this.freshnessChecks.set(entry.isin, entry);
       }
       if (saved.version === 3 && Array.isArray(saved.documents)) for (const doc of saved.documents.slice(-120)) {
         if (doc && typeof doc.source?.url === 'string' && typeof doc.excerpt === 'string' && typeof doc.hash === 'string'
@@ -538,34 +540,56 @@ export class PrimaryRiskResearch {
     const urls = sources.map(source => source.url).sort();
     const saved = this.freshnessChecks.get(isin);
     const matching = saved && JSON.stringify(saved.sources) === JSON.stringify(urls) ? saved : undefined;
-    return { freshnessSupported: supported, freshnessCheckedAt: matching ? new Date(matching.checkedAt).toISOString() : null,
-      newerReportAvailable: matching?.newerReportAvailable ?? false,
-      publicationCheckVerified: !!matching && matching.checkedAt <= this.now() && this.now() - matching.checkedAt < DAY };
+    const fresh = !!saved && saved.checkedAt <= this.now() && this.now() - saved.checkedAt < DAY;
+    const succeeded = saved ? saved.succeeded !== false : null;
+    return { freshnessSupported: supported, freshnessCheckedAt: saved ? new Date(saved.checkedAt).toISOString() : null,
+      freshnessCheckSucceeded: succeeded, freshnessDue: !fresh,
+      newerReportAvailable: !!matching && matching.newerReportAvailable,
+      publicationCheckVerified: !!matching && succeeded === true && fresh };
   }
   async checkPublicationFreshness(position: Pick<AnalysisPosition, 'isin' | 'type'>, sources: AnalysisSource[]) {
     const isin = position.isin.trim().toUpperCase();
-    if (!sources.length) throw new Error('Keine gespeicherten Berichte zum Abgleich vorhanden.');
-    let newerReportAvailable: boolean;
-    if (isin === 'DE0008232125') {
-      const result = await this.lufthansaReportFreshness(position, sources, true);
-      if (!result.verified) throw new Error('Die Berichtsübersicht konnte nicht zuverlässig geprüft werden.');
-      newerReportAvailable = result.newerReportAvailable;
-    } else {
-      const cik = position.type === 'Stock' ? SEC_CIK_BY_ISIN[isin] : undefined;
-      if (!cik) throw new Error('Für dieses Asset ist noch keine automatische Prüfung auf neue Berichte verfügbar.');
-      const response = await this.requestFetch(`https://data.sec.gov/submissions/CIK${cik}.json`, {
-        headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' }, signal: AbortSignal.timeout(10000),
-      });
-      if (!response.ok) throw new Error('Das SEC-Einreichungsverzeichnis konnte nicht geprüft werden.');
-      const filings = secUrls(cik, await response.json());
-      if (!filings.length) throw new Error('Keine zuverlässig zugeordneten SEC-Berichte gefunden.');
-      const known = new Set(sources.map(source => source.url));
-      newerReportAvailable = filings.some(filing => !known.has(filing.url));
-    }
-    this.freshnessChecks.set(isin, { sources: sources.map(source => source.url).sort(), checkedAt: this.now(), newerReportAvailable });
-    this.save();
-    return this.publicationStatus(position, sources);
+    const pending = this.freshnessInFlight.get(isin);
+    if (pending) { await pending; return this.publicationStatus(position, sources); }
+    const task = this.performPublicationFreshness(position, sources);
+    this.freshnessInFlight.set(isin, task);
+    try { return await task; } finally { this.freshnessInFlight.delete(isin); }
   }
+  private async performPublicationFreshness(position: Pick<AnalysisPosition, 'isin' | 'type'>, sources: AnalysisSource[]) {
+    const isin = position.isin.trim().toUpperCase();
+    if (!sources.length) throw new Error('Keine gespeicherten Berichte zum Abgleich vorhanden.');
+    const supported = this.publicationStatus(position, sources).freshnessSupported;
+    if (!supported) throw new Error('Für dieses Asset ist noch keine automatische Prüfung auf neue Berichte verfügbar.');
+    try {
+      let newerReportAvailable: boolean;
+      if (isin === 'DE0008232125') {
+        const result = await this.lufthansaReportFreshness(position, sources, true);
+        if (!result.verified) throw new Error('Die Berichtsübersicht konnte nicht zuverlässig geprüft werden.');
+        newerReportAvailable = result.newerReportAvailable;
+      } else {
+        const cik = SEC_CIK_BY_ISIN[isin];
+        const response = await this.requestFetch(`https://data.sec.gov/submissions/CIK${cik}.json`, {
+          headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' }, signal: AbortSignal.timeout(10000),
+        });
+        if (!response.ok) throw new Error('Das SEC-Einreichungsverzeichnis konnte nicht geprüft werden.');
+        const filings = secUrls(cik, await response.json());
+        if (!filings.length) throw new Error('Keine zuverlässig zugeordneten SEC-Berichte gefunden.');
+        const known = new Set(sources.map(source => source.url));
+        newerReportAvailable = filings.some(filing => !known.has(filing.url));
+      }
+      this.freshnessChecks.set(isin, { sources: sources.map(source => source.url).sort(), checkedAt: this.now(), newerReportAvailable, succeeded: true });
+      this.save();
+      return this.publicationStatus(position, sources);
+    } catch (error) {
+      const prior = this.freshnessChecks.get(isin);
+      const currentSources = sources.map(source => source.url).sort();
+      const previousFinding = prior && JSON.stringify(prior.sources) === JSON.stringify(currentSources) && prior.newerReportAvailable;
+      this.freshnessChecks.set(isin, { sources: currentSources, checkedAt: this.now(), newerReportAvailable: !!previousFinding, succeeded: false });
+      try { this.save(); } catch { /* The failed attempt remains visible during this run. */ }
+      throw error;
+    }
+  }
+
   async lufthansaReportFreshness(position: Pick<AnalysisPosition, 'isin'>, sources: AnalysisSource[], force = false): Promise<{ newerReportAvailable: boolean; verified: boolean }> {
     if (position.isin.trim().toUpperCase() !== 'DE0008232125') return { newerReportAvailable: false, verified: true };
     if (!sources.length) return { newerReportAvailable: false, verified: false };

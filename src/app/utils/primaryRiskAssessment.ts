@@ -68,6 +68,7 @@ export interface PrimaryRiskRecord {
   checkedAt: number;
   status: 'assessed' | 'unknown';
   checks: RiskCheck[];
+  decisionBlocker?: { flag: RiskCheckName; reason: string };
   metrics: RiskMetric[];
   gaps: string[];
   sources: AnalysisSource[];
@@ -80,11 +81,12 @@ export const riskAssessmentSchema = (position: Pick<AnalysisPosition, 'isin' | '
       properties: { flag: { type: 'string', enum: riskChecksForPosition(position) }, finding: { type: 'string', enum: ['risk', 'no-risk', 'unknown'] },
         reason: { type: 'string' }, documentIndex: { type: ['integer', 'null'] }, quote: { type: 'string' } },
       required: ['flag', 'finding', 'reason', 'documentIndex', 'quote'] } },
+    decisionBlocker: { anyOf: [{ type: 'null' }, { type: 'object', additionalProperties: false, properties: { flag: { type: 'string', enum: riskChecksForPosition(position) }, reason: { type: 'string' } }, required: ['flag', 'reason'] }] },
     metrics: { type: 'array', maxItems: 20, items: { type: 'object', additionalProperties: false,
       properties: { name: { type: 'string', enum: ['net-income', 'operating-margin', 'cash', 'debt-maturities', 'combined-ratio', 'solvency-ratio'] }, value: { type: 'number' }, unit: { type: 'string' }, period: { type: 'string' },
         documentIndex: { type: 'integer' }, quote: { type: 'string' } },
       required: ['name', 'value', 'unit', 'period', 'documentIndex', 'quote'] } },
-  }, required: ['checks', 'metrics'],
+  }, required: ['checks', 'metrics', 'decisionBlocker'],
 });
 
 const normalized = (value: string) => value.replace(/\s+/g, ' ').trim().toLowerCase();
@@ -641,7 +643,7 @@ function qualifyMcdRegulatoryRisk(position: AnalysisPosition, check: RiskCheck, 
 }
 export function riskFingerprint(position: AnalysisPosition, set: RiskDocumentSet): string {
   return createHash('sha256').update(JSON.stringify({ policy: RISK_POLICY, isin: riskInstrumentId(position),
-    type: position.type, ...(position.isin.trim().toUpperCase() === 'US5801351017' ? { mcdReviewVersion: 2 } : {}),
+    type: position.type, decisionBlockerVersion: 1, ...(position.isin.trim().toUpperCase() === 'US5801351017' ? { mcdReviewVersion: 2 } : {}),
     ...(position.isin.trim().toUpperCase() === 'DE0008430026' ? { munichReviewVersion: 4 } : {}),
     ...(position.isin.trim().toUpperCase() === 'US84615Q1031' ? { spaceXReviewVersion: 4 } : {}),
     ...(position.type === 'Crypto' ? { cryptoReviewVersion: 1 } : {}),
@@ -677,7 +679,7 @@ function legacyMcdFingerprint(position: AnalysisPosition, set: RiskDocumentSet):
       .sort((a, b) => String(a[0]).localeCompare(String(b[0]))) })).digest('hex');
 }
 export function validateRiskAssessment(position: AnalysisPosition, set: RiskDocumentSet, response: unknown, now = Date.now(), key = String(position.id)): PrimaryRiskRecord {
-  const value = response && typeof response === 'object' ? response as { checks?: unknown; metrics?: unknown } : {};
+  const value = response && typeof response === 'object' ? response as { checks?: unknown; metrics?: unknown; decisionBlocker?: unknown } : {};
   const input = Array.isArray(value.checks) ? value.checks : [];
   const gaps = [...set.gaps];
   const checks = riskChecksForPosition(position).map(flag => {
@@ -698,6 +700,15 @@ export function validateRiskAssessment(position: AnalysisPosition, set: RiskDocu
       documentIndex: qualified.finding === 'unknown' && qualified === check ? null : qualified.documentIndex,
       quote: qualified.finding === 'unknown' && qualified === check ? '' : qualified.quote.trim() };
   });
+  const proposedBlocker = value.decisionBlocker && typeof value.decisionBlocker === 'object'
+    ? value.decisionBlocker as { flag?: unknown; reason?: unknown } : null;
+  const blockerCheck = checks.find(check => check.flag === proposedBlocker?.flag && check.finding === 'unknown');
+  const originalBlockerChecks = input.filter(item => item && typeof item === 'object' && (item as RiskCheck).flag === proposedBlocker?.flag);
+  const decisionBlocker = blockerCheck && originalBlockerChecks.length === 1
+    && (originalBlockerChecks[0] as RiskCheck).finding === 'unknown'
+    && typeof (originalBlockerChecks[0] as RiskCheck).reason === 'string' && !!(originalBlockerChecks[0] as RiskCheck).reason.trim()
+    && typeof proposedBlocker?.reason === 'string' && proposedBlocker.reason.trim().length >= 20
+    ? { flag: blockerCheck.flag, reason: proposedBlocker.reason.trim().slice(0, 700) } : undefined;
   if (isBitcoinResearchPosition(position) && set.documents.some(document =>
     document.identity === 'bitcoin-mining-pools' && document.source.url === bitcoinMiningPoolSource.url)
     && checks.find(check => check.flag === 'concentration')?.finding !== 'unknown')
@@ -733,10 +744,13 @@ export function validateRiskAssessment(position: AnalysisPosition, set: RiskDocu
     gaps.push('Neueste Primärberichte konnten nicht verlässlich abgeglichen werden.');
   return { key, isin: riskInstrumentId(position), fingerprint: riskFingerprint(position, set), documentsFingerprint: primaryDocumentsFingerprint(set),
     ...(isSpaceX(position) ? { excerptVersion: set.documents.find(spaceXQuarter)?.excerptVersion } : {}),
+    ...(decisionBlocker ? { decisionBlocker } : {}),
     checkedAt: now, status: gaps.length ? 'unknown' : 'assessed', checks, metrics, gaps: [...new Set(gaps)],
     sources: set.documents.map(doc => doc.source) };
 }
 export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessment {
+  const decisionBlocker = record.decisionBlocker && record.checks.some(check => check.flag === record.decisionBlocker!.flag && check.finding === 'unknown')
+    ? record.decisionBlocker : undefined;
   const findings = { risk: 'Risiko belegt', 'no-risk': 'kein wesentliches Risiko belegt', unknown: 'offen' };
   const metricLabels: Record<string, string> = { 'net-income': 'Periodengewinn', 'operating-margin': 'operative Marge', cash: 'Liquidität', 'debt-maturities': 'Fälligkeiten', 'combined-ratio': 'Combined Ratio', 'solvency-ratio': 'Solvenzquote' };
   const reviewedBitcoinStructuralRisk = (check: RiskCheck) => record.isin === 'BTC' && check.finding === 'risk' && (
@@ -878,7 +892,7 @@ export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessme
   const checkedUnknown = new Set(record.checks.filter(check => check.finding === 'unknown').map(check => check.flag));
   const gaps = record.sources.length ? record.gaps.filter(gap => !checkedUnknown.has(gap.split(':', 1)[0] as RiskCheckName))
     : record.gaps.filter(gap => !/^(?:loss-making|low-margin|underwriting|solvency|financing|going-concern|regulatory|net-income|operating-margin|combined-ratio|solvency-ratio|cash|debt-maturities):/.test(gap));
-  const lines = [...details, ...metrics, ...gaps];
+  const lines = [...(decisionBlocker ? [`Konkreter Datenblocker: ${decisionBlocker.reason}`] : []), ...details, ...metrics, ...gaps];
   const visible: string[] = [];
   for (const line of lines) {
     if ([...visible, line].join('\n').length > 2900) break;
@@ -889,8 +903,9 @@ export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessme
     primaryDocumentsCheckedAt: new Date(record.checkedAt).toISOString(), primaryDocuments: record.sources,
     ...(record.isin === 'US84615Q1031' && record.excerptVersion ? { primaryExcerptVersion: record.excerptVersion } : {}),
     ...(record.documentsFingerprint ? { primaryDocumentsFingerprint: record.documentsFingerprint, primaryDocumentsFingerprintVersion: 2 as const } : {}),
-    ...(reviewedMunichUncertainty || reviewedMondelezUncertainty || reviewedMcdUncertainty || reviewedNovoUncertainty || reviewedLufthansaUncertainty || reviewedBitcoinUncertainty || reviewedApolloUncertainty
+    ...(!decisionBlocker && (reviewedMunichUncertainty || reviewedMondelezUncertainty || reviewedMcdUncertainty || reviewedNovoUncertainty || reviewedLufthansaUncertainty || reviewedBitcoinUncertainty || reviewedApolloUncertainty)
       ? { decisionReadiness: 'reviewed-uncertainty' as const } : {}),
+    ...(decisionBlocker ? { decisionBlocker } : {}),
     materialRisks, ...(structuralRisks.length ? { structuralRisks } : {}), rationale: visible.join('\n'), sources: record.sources };
 }
 

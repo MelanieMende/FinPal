@@ -37,6 +37,16 @@ it('preserves explicit instrument types from portfolio exports without inventing
 });
 
 describe('parsePytrJsonLines', () => {
+  it('preserves a broker execution price when it agrees with the settlement total', () => {
+    const row = { Date: '2026-11-19', Type: 'Buy', Value: -76.66, Note: 'Example', ISIN: 'US03703U1079', Shares: 1, Fees: 1, ExecutionPrice: 75.659514 };
+    expect(parsePytrJsonLines(JSON.stringify(row)).records[0]).toEqual(expect.objectContaining({ type: 'Buy', shares: 1, fee: 1, pricePerShare: 75.659514 }));
+    expect(parsePytrJsonLines(JSON.stringify({ ...row, ExecutionPrice: 40 })).records[0].pricePerShare).toBeCloseTo(75.66);
+  });
+  it('keeps unclassified timeline events for review even if their broker type contains buy', () => {
+    const result = parsePytrJsonLines(JSON.stringify({ Unclassified: true, Date: '2026-11-19', Type: 'UNKNOWN_BUY_EVENT', Value: -76.66, Note: 'Asset', ISIN: 'US03703U1079' }));
+    expect(result.records).toEqual([]);
+    expect(result.unsupportedRecords).toEqual([expect.objectContaining({ type: 'UNKNOWN_BUY_EVENT', isin: 'US03703U1079', reason: expect.stringContaining('pytr') })]);
+  });
   it('maps supported pytr rows to FinPal transactions', () => {
     const input = [
       JSON.stringify({ Date: '2026-08-20', Type: 'Buy', Value: -101, Note: 'ACME order', ISIN: 'US0378331005', Shares: 2, Fees: 1, Taxes: 0 }),

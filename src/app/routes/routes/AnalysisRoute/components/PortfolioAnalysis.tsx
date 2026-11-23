@@ -58,7 +58,9 @@ function assetReloadStatus(progress: PortfolioAnalysisProgress | null, targetAss
   switch (progress.stage) {
     case 'prices': return progress.activeAssetId === assetId
       ? { message: 'Aktueller Kurs wird neu geladen', refreshingPrice: true, refreshingForecast: false, refreshingResearch: false, refreshingRisk: false }
-      : null;
+      : progress.activeAssetId === undefined
+        ? { message: 'Kursaktualisierung läuft', refreshingPrice: false, refreshingForecast: false, refreshingResearch: false, refreshingRisk: false }
+        : null;
     case 'forecast': return { message: 'Forecast und Zielgewichtung werden neu berechnet', refreshingPrice: false, refreshingForecast: true, refreshingResearch: false, refreshingRisk: false };
     case 'research': return { message: progress.activeAssetId === assetId ? 'Onlinequellen werden gesucht'
       : researchReusable ? 'Gespeicherte Online-Recherche wird wiederverwendet' : 'Online-Suche steht noch aus',
@@ -110,7 +112,8 @@ export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onRel
   const current = !!status && status.publicationCheckVerified !== false && !status.newerReportAvailable && Number.isFinite(freshnessCheckedAt) && freshnessCheckedAt <= now
     && now - freshnessCheckedAt < 24 * 60 * 60 * 1000;
   const remainingMinutes = Math.max(0, Math.ceil((freshnessCheckedAt + 24 * 60 * 60 * 1000 - now) / 60000));
-  const validity = status?.newerReportAvailable ? 'neue Berichte verfügbar' : current ? `noch ${Math.floor(remainingMinutes / 60)} Std. ${String(remainingMinutes % 60).padStart(2, '0')} Min. gültig` : 'erneute Prüfung fällig';
+  const checkWithinWindow = Number.isFinite(freshnessCheckedAt) && freshnessCheckedAt <= now && now - freshnessCheckedAt < 24 * 60 * 60 * 1000;
+  const validity = checkWithinWindow ? `erneute Prüfung bei Analyse in ${Math.floor(remainingMinutes / 60)} Std. ${String(remainingMinutes % 60).padStart(2, '0')} Min.` : 'erneute Prüfung bei Analyse fällig';
   const newReportAwaitingReview = risk.primaryDocumentsChanged === true;
   const reportVersionAvailable = status?.newerReportAvailable === true;
   const publicationCheckUnverified = status?.freshnessSupported === true && status.publicationCheckVerified === false;
@@ -144,14 +147,14 @@ export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onRel
           : reportVersionAvailable
             ? <p className="m-0 text-xs text-amber-200">Eine neuere Berichtsversion ist verfügbar. Bitte die Berichte neu laden und danach die Risiken erneut prüfen.</p>
             : publicationCheckUnverified
-              ? <p className="m-0 text-xs text-amber-200">Der aktuelle Berichtsstand konnte nicht mit der Emittentenübersicht abgeglichen werden. Bitte die Aktualität prüfen.</p>
+              ? <p className="m-0 text-xs text-amber-200">{status?.freshnessCheckSucceeded === false ? 'Der letzte Abgleich ist fehlgeschlagen. Eine manuelle Wiederholung ist möglich.' : 'Für diese Berichte liegt kein gültiger Abgleich vor. Bitte die Aktualität prüfen.'}</p>
           : status?.freshnessSupported === false
           ? <p className="m-0 text-xs text-gray-400">Ein automatischer Abgleich auf neue Berichte ist für dieses Asset noch nicht verfügbar.</p>
           : !Number.isFinite(loadedAt)
           ? <p className="m-0 text-xs text-amber-200">Kein gültiger Ladezeitpunkt der Berichtsauszüge. Bitte die Berichte neu laden; eine 24-Stunden-Prüffrist lässt sich nicht bestimmen.</p>
           : null}
         <div className="text-xs text-gray-400">
-          <p className="m-0">Aktualität zuletzt geprüft: {Number.isFinite(freshnessCheckedAt) ? <>{formatSyncTime(new Date(freshnessCheckedAt).toISOString())} · {validity}</> : 'nicht verfügbar'}</p>
+          <p className="m-0">Aktualität zuletzt geprüft: {Number.isFinite(freshnessCheckedAt) ? <>{formatSyncTime(new Date(freshnessCheckedAt).toISOString())} · {status?.freshnessCheckSucceeded === false ? 'Prüfung fehlgeschlagen · ' : ''}{validity}</> : status?.freshnessSupported === false ? 'automatischer Abgleich nicht verfügbar' : 'noch nicht erfolgreich geprüft'}</p>
           <p className="m-0">Berichte zuletzt geladen: {Number.isFinite(loadedAt) ? formatSyncTime(new Date(loadedAt).toISOString()) : 'nicht verfügbar'}</p>
           <p className="m-0">Risiken zuletzt geprüft: {Number.isFinite(checkedAt) ? formatSyncTime(new Date(checkedAt).toISOString()) : 'nicht verfügbar'}</p>
         </div>
@@ -197,7 +200,7 @@ export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, c
   const explicitFinding = (line: string) => /:\s*(?:Risiko belegt|kein wesentliches Risiko belegt)\s*\(/i.test(line);
   const open = lines.filter(line => !materialFindings.includes(line) && !metrics.includes(line) && !reviewedResidual.includes(line)
     && !isStructuralFinding(line) && !explicitFinding(line)
-    && (/: offen\b/i.test(line) || /keine .*textstelle|nicht (?:belegt|gefunden|verfügbar)|fehlt|ungeklärt/i.test(line)));
+    && (/^Konkreter Datenblocker:/i.test(line) || /: offen\b/i.test(line) || /keine .*textstelle|nicht (?:belegt|gefunden|verfügbar)|fehlt|ungeklärt/i.test(line)));
   const verified = lines.filter(line => !materialFindings.includes(line) && !metrics.includes(line)
     && !reviewedResidual.includes(line) && !open.includes(line));
   const hasMaterial = risk.materialRisks.length > 0;
@@ -209,7 +212,7 @@ export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, c
     title: 'Neue Risikoprüfung erforderlich',
   } : requiresManualReview ? {
     border: 'border-red-400/35', background: 'bg-red-500/5', text: 'text-red-300', icon: 'error' as const,
-    title: 'Geprüft · offene Punkte',
+    title: risk.decisionBlocker ? 'Konkreter Datenblocker' : 'Geprüft · offene Punkte',
   } : hasMaterial ? {
     border: 'border-amber-400/30', background: 'bg-amber-500/5', text: 'text-amber-200', icon: 'warning-sign' as const,
     title: 'Wesentliche Risiken',
@@ -552,7 +555,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
       } catch { if (!cancelled) setPrimaryDocumentStatus([]); }
     };
     void refresh();
-    const timer = window.setInterval(() => { void refresh(); }, 60 * 60 * 1000);
+    const timer = window.setInterval(() => { void refresh(); }, 60 * 1000);
     return () => { cancelled = true; window.clearInterval(timer); };
   }, [researchAssets, result]);
   useEffect(() => {
@@ -719,6 +722,13 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
         setNow(Date.now());
       }
     } catch (e) {
+      const asset = positions.find(position => position.id === assetId);
+      if (asset && window.API.getPortfolioPrimaryDocumentStatus) {
+        try {
+          const statuses = await window.API.getPortfolioPrimaryDocumentStatus([{ id: asset.id, name: asset.name, isin: asset.isin, symbol: asset.symbol, type: asset.type }]);
+          if (alive.current && statuses.length) { setPrimaryDocumentStatus(previous => [...previous.filter(item => item.assetId !== assetId), ...statuses]); setNow(Date.now()); }
+        } catch { /* Preserve the last visible status if it cannot be refreshed. */ }
+      }
       if (alive.current) setError(e instanceof Error ? e.message : 'Die Aktualitätsprüfung ist fehlgeschlagen.');
     } finally {
       if (alive.current) { setCheckingPrimaryAsset(null); setBusy(false); }

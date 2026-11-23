@@ -21,7 +21,7 @@ jest.mock('pdf-parse', () => ({ PDFParse: class {
   async destroy() { /* No native resources in this fixture. */ }
 } }));
 
-it('checks SEC publication changes without downloading reports and persists only successful checks', async () => {
+it('records successful and failed SEC checks without downloading reports', async () => {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-publication-check-'));
   const file = path.join(folder, 'documents.json');
   let now = Date.parse('2026-11-19T08:00:00Z');
@@ -44,8 +44,9 @@ it('checks SEC publication changes without downloading reports and persists only
     const failed = new PrimaryRiskResearch(file, jest.fn().mockResolvedValue(new Response('', { status: 503 })), () => now + 1000);
     await expect(failed.checkPublicationFreshness(position, [source])).rejects.toThrow();
     expect(new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now + 1000).publicationStatus(position, [source]))
-      .toMatchObject({ newerReportAvailable: true, freshnessCheckedAt: new Date(now).toISOString() });
-    expect(restarted.publicationStatus(position, [{ ...source, url: source.url + '?changed' }]).freshnessCheckedAt).toBeNull();
+      .toMatchObject({ newerReportAvailable: true, freshnessCheckedAt: new Date(now + 1000).toISOString(), freshnessCheckSucceeded: false, publicationCheckVerified: false });
+    expect(restarted.publicationStatus(position, [{ ...source, url: source.url + '?changed' }])).toMatchObject({ freshnessCheckedAt: new Date(now).toISOString(), publicationCheckVerified: false });
+    expect(new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now + 1000 + 86400000).publicationStatus(position, [source]).freshnessDue).toBe(true);
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });
 

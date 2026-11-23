@@ -12,6 +12,23 @@ const request = (): PortfolioAnalysisRequest => ({ provider: 'api', priceUpdated
     { id: 33, name: 'JinkoSolar', type: 'Stock', isin: '', symbol: 'JKS', shares: 2, price: 8.61, currency: 'EUR', costBasis: null, dividendsEarned: 0, realizedGainLoss: 0 }],
 });
 
+it('excludes a concretely blocked holding from forecasts while keeping its value and other holdings in the partial portfolio', () => {
+  const r = request();
+  const f = [robustReturnForecastFixture('31', { referencePrice: r.positions[0].price!, currency: 'EUR' }),
+    robustReturnForecastFixture('33', { referencePrice: r.positions[1].price!, targetPrice: 100, annualVolatilityPercent: 10, currency: 'EUR',
+      uncertainty: { method: 'analyst-consensus', analystCount: 30, targetLowPrice: 99, targetHighPrice: 101 } })];
+  const risk: import('./robustForecastModel').FundamentalRiskAssessment = { key: '31', status: 'unknown', materialRisks: [], rationale: 'Datenlücke.', sources: [],
+    decisionBlocker: { flag: 'custody', reason: 'Die tatsächliche Verwahrung ist unklar und verhindert eine Anlageentscheidung.' } };
+  const eligible: import('./robustForecastModel').FundamentalRiskAssessment = { key: '33', status: 'assessed', materialRisks: [], rationale: 'Geprüft.', sources: [{ title: 'Bericht', url: 'https://example.com/report' }] };
+  const plan = buildRobustForecastAllocation(r, f, [], undefined, undefined, [], [risk, eligible]);
+  expect(plan.optimization!.forecasts.map(item => item.key)).not.toContain('31');
+  expect(plan.optimization!.forecasts.map(item => item.key)).toContain('33');
+  expect(plan.positions.find(item => item.key === '31')).toMatchObject({ action: 'Prüfen', amountEUR: null, currentValueEUR: expect.any(Number), reason: expect.stringContaining('Verwahrung') });
+  expect(plan.optimization!.robust!.scenarioTrades.some(trade => trade.key === '31')).toBe(false);
+  expect(plan.optimization!.inputs.some(input => input.key === '33')).toBe(true);
+  expect(plan.optimization!.robust!.scenarioTrades.some(trade => trade.key === '33' && trade.action === 'Kaufen')).toBe(true);
+});
+
 it('includes a reviewed ETF with a local forecast in joint optimization without bypassing the risk gates', () => {
   const r = request(); r.positions = [{ ...r.positions[1], id: 1, price: 50, shares: 20 }]; r.profile.buyBudget = 1000;
   const f = etfReturnForecastFixture('new:IE00BF4RFH31');

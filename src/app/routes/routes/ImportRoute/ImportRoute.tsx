@@ -62,7 +62,7 @@ export default function ImportRoute() {
         record.totalAmount,
     ]);
     useEffect(() => {
-        if (pendingRecords.length > 0) return;
+        if (pendingRecords.length > 0) { setPendingCacheReady(true); return; }
         try {
             const storedRecords = JSON.parse(localStorage.getItem(pendingImportStorageKey) || '[]');
             if (Array.isArray(storedRecords) && storedRecords.length > 0) dispatch(setPendingRecords(storedRecords));
@@ -93,6 +93,7 @@ export default function ImportRoute() {
     const isDuplicate = (record: typeof pendingRecords[number], assetID?: number) => {
         if (record.type === 'IPO' && assetID) {
             const asset = assets.find(candidate => candidate.ID === assetID);
+            if (asset && asset.type !== 'IPO' && (asset.current_shares ?? 0) > 0) return true;
             return asset?.type === 'IPO' && asset.reserved_since === record.date
                 && Math.abs((asset.reserved_amount || 0) - record.totalAmount) < 0.005;
         }
@@ -190,10 +191,22 @@ export default function ImportRoute() {
             }
             // Persist before updating Redux so a renderer reload between both
             // operations cannot lose an otherwise successful broker response.
-			if (result.records.length > 0) {
-				localStorage.setItem(pendingImportStorageKey, JSON.stringify(result.records));
-				dispatch(setPendingRecords(result.records));
-			}
+            const merged = [...pendingRecords];
+            const counts = new Map<string, number>();
+            for (const record of pendingRecords) {
+                const key = recordMappingKey(record);
+                counts.set(key, (counts.get(key) ?? 0) + 1);
+            }
+            const seen = new Map<string, number>();
+            for (const record of result.records) {
+                const key = recordMappingKey(record);
+                const occurrence = (seen.get(key) ?? 0) + 1;
+                seen.set(key, occurrence);
+                if (occurrence > (counts.get(key) ?? 0)) merged.push(record);
+            }
+            if (merged.length) localStorage.setItem(pendingImportStorageKey, JSON.stringify(merged));
+            else localStorage.removeItem(pendingImportStorageKey);
+            dispatch(setPendingRecords(merged));
             setUnsupportedRecords(nextUnsupportedRecords);
             if (nextUnsupportedRecords.length > 0) localStorage.setItem(unsupportedImportStorageKey, JSON.stringify(nextUnsupportedRecords));
             else localStorage.removeItem(unsupportedImportStorageKey);
@@ -402,7 +415,7 @@ export default function ImportRoute() {
                         )}
                         <div className="flex gap-2 justify-end flex-wrap">
                             {trStatus?.hasSavedCredentials && <Button minimal intent={Intent.DANGER} onClick={forgetTradeRepublicCredentials}>Zugangsdaten löschen</Button>}
-                            <Button icon="refresh" intent={Intent.SUCCESS} loading={syncingTr} disabled={syncingTr} onClick={handleTradeRepublicSync}>
+                            <Button icon="refresh" intent={Intent.SUCCESS} loading={syncingTr} disabled={syncingTr || !pendingCacheReady} onClick={handleTradeRepublicSync}>
                                 Jetzt synchronisieren
                             </Button>
                         </div>

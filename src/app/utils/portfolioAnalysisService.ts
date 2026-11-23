@@ -647,9 +647,17 @@ export class PortfolioAnalysisService {
     if (this.running) throw new Error('Eine Portfolio-Analyse oder Forecast-Aktualisierung läuft bereits.');
     const previous = this.getLastResult();
     if (!previous) throw new Error('Für die Forecast-Aktualisierung ist zuerst eine gespeicherte Analyse erforderlich.');
+    const savedRequest = JSON.parse(fs.readFileSync(this.resultFile, 'utf8')).request as PortfolioAnalysisRequest;
+    const blockedPositions = positions.filter(position => savedRequest.positions.some(saved => saved.id === position.id && saved.type === position.type
+      && saved.isin.trim().toUpperCase() === position.isin.trim().toUpperCase())
+      && previous.report.fundamentalRisks?.some(risk => risk.key === String(position.id) && !!risk.decisionBlocker));
+    if (assetId !== undefined && blockedPositions.length)
+      throw new Error(`Für ${positions[0].name} ist ein konkreter Datenblocker gespeichert. Bitte zuerst die Risikoprüfung klären.`);
+    const eligiblePositions = positions.filter(position => !blockedPositions.includes(position));
+    if (!eligiblePositions.length) throw new Error('Alle ausgewählten Assets sind durch konkrete Datenblocker ausgeschlossen.');
     this.running = true;
     try {
-      const attempts = await Promise.all(positions.map(async position => ({ assetId: position.id,
+      const attempts = await Promise.all(eligiblePositions.map(async position => ({ assetId: position.id,
         forecast: await this.marketForecastProvider!(position, { forceRefresh: true }).catch((): null => null),
       })));
       const refreshedForecasts = attempts.map(attempt => attempt.forecast).filter((forecast): forecast is ReturnForecast => !!forecast);
@@ -667,7 +675,7 @@ export class PortfolioAnalysisService {
       report.fundingCheck = checkPortfolioFunding(cleanRequest, report);
       this.saveLastResult(report, cleanRequest, snapshot || previous.snapshot);
       return { report, refreshedAssetIds: attempts.filter(attempt => !!attempt.forecast).map(attempt => attempt.assetId),
-        unavailableAssetIds: attempts.filter(attempt => !attempt.forecast).map(attempt => attempt.assetId) };
+        unavailableAssetIds: [...blockedPositions.map(position => position.id), ...attempts.filter(attempt => !attempt.forecast).map(attempt => attempt.assetId)] };
     } finally {
       this.running = false;
     }
@@ -826,10 +834,14 @@ export class PortfolioAnalysisService {
         || oldRisk.decisionReadiness !== updatedRisk.decisionReadiness
         || JSON.stringify(oldRisk.materialRisks) !== JSON.stringify(updatedRisk.materialRisks)
         || oldRisk.rationale !== updatedRisk.rationale;
-      const recommendations = previous.report.recommendations.map(rec => rec.assetId !== asset.id || !changed ? rec : {
-        ...rec, action: 'Prüfen' as const, plannedAmountEUR: null,
-        rationale: 'Die Unternehmens- und Produktrisiken wurden nach dieser Empfehlung aktualisiert. Bitte das Asset für eine neue Entscheidung erneut analysieren.',
-        warnings: [...new Set([...(rec.warnings ?? []), 'Die bisherige Anlageempfehlung wurde wegen einer neu geladenen Risikoprüfung zurückgestellt.'])],
+      const recommendations = previous.report.recommendations.map(rec => {
+        if (rec.assetId !== asset.id) return rec;
+        if (updatedRisk.decisionBlocker) return { ...rec, action: 'Prüfen' as const, plannedAmountEUR: null,
+          executionBlocker: 'independent' as const, orderRecommendation: null,
+          rationale: `Konkreter Datenblocker: ${updatedRisk.decisionBlocker.reason}` };
+        return !changed ? rec : { ...rec, action: 'Prüfen' as const, plannedAmountEUR: null,
+          rationale: 'Die Unternehmens- und Produktrisiken wurden nach dieser Empfehlung aktualisiert. Bitte das Asset für eine neue Entscheidung erneut analysieren.',
+          warnings: [...new Set([...(rec.warnings ?? []), 'Die bisherige Anlageempfehlung wurde wegen einer neu geladenen Risikoprüfung zurückgestellt.'])] };
       });
       const fundamentalRisks = [...(previous.report.fundamentalRisks ?? []).filter(item => item.key !== updatedRisk.key), updatedRisk];
       const sources = [...new Map([...previous.report.sources, ...record.sources].map(source => [source.url, source])).values()];
@@ -855,7 +867,10 @@ export class PortfolioAnalysisService {
   async analyze(request: PortfolioAnalysisRequest, onProgress?: (progress: PortfolioAnalysisProgress) => void, snapshot = ''): Promise<PortfolioAnalysisResult> {
     validateAnalysisRequest(request);
     const contextRequest = request;
-    const previous = request.targetAssetId === undefined ? null : this.getLastResult();
+    const savedForPublication = this.getLastResult();
+    const savedPublicationRequest = savedForPublication
+      ? JSON.parse(fs.readFileSync(this.resultFile, 'utf8')).request as PortfolioAnalysisRequest : null;
+    const previous = request.targetAssetId === undefined ? null : savedForPublication;
     if (request.targetAssetId !== undefined) {
       if (!previous?.report.recommendations.some(rec => rec.assetId === request.targetAssetId)) {
         throw new Error('Bitte zuerst eine Portfolio-Analyse erstellen.');
@@ -1044,9 +1059,38 @@ export class PortfolioAnalysisService {
         activeRiskStep = 'documents';
         notify(true);
         const sourceHints = this.researchCache.findForSecurity(securities[positionIndex], true)?.sources ?? [];
-        const set = await this.primaryRiskResearch.collect(position, controller.signal, sourceHints, false, step => {
+        const savedPosition = savedPublicationRequest?.positions.find(item => item.id === position.id && item.type === position.type
+          && item.isin.trim().toUpperCase() === position.isin.trim().toUpperCase()
+          && (position.isin.trim() || item.symbol.trim().toUpperCase() === position.symbol.trim().toUpperCase()));
+        const savedSources = savedPosition ? savedForPublication?.report.fundamentalRisks?.find(risk => risk.key === String(position.id))?.primaryDocuments ?? [] : [];
+        let publication = this.primaryRiskResearch.publicationStatus(position, savedSources);
+        let publicationFailed = false;
+        if (savedSources.length && publication.freshnessSupported && publication.freshnessDue) {
+          try {
+            publication = await this.primaryRiskResearch.checkPublicationFreshness(position, savedSources);
+            logEvent(publication.newerReportAvailable ? 'Aktualität geprüft: Neue Berichte verfügbar.' : 'Aktualität geprüft: Keine neueren Berichte gefunden.', position.id);
+          } catch {
+            if (controller.signal.aborted) throw controller.signal.reason;
+            publicationFailed = true;
+            logEvent('Aktualität konnte nicht zuverlässig geprüft werden.', position.id);
+          }
+        }
+        const reusable = publication.publicationCheckVerified && !publication.newerReportAvailable
+          ? this.primaryRiskResearch.reuseCached(position, savedSources) : null;
+        const set = reusable ?? await this.primaryRiskResearch.collect(position, controller.signal, sourceHints, false, step => {
           activeRiskStep = step; notify(true);
         });
+        const currentSources = set.documents.map(document => document.source);
+        const currentPublication = this.primaryRiskResearch.publicationStatus(position, currentSources);
+        if (!publicationFailed && currentSources.length && currentPublication.freshnessSupported && currentPublication.freshnessDue) {
+          try {
+            const checked = await this.primaryRiskResearch.checkPublicationFreshness(position, currentSources);
+            logEvent(checked.newerReportAvailable ? 'Aktualität geprüft: Neue Berichte verfügbar.' : 'Aktualität geprüft: Keine neueren Berichte gefunden.', position.id);
+          } catch {
+            if (controller.signal.aborted) throw controller.signal.reason;
+            logEvent('Aktualität konnte nicht zuverlässig geprüft werden.', position.id);
+          }
+        }
         logEvent(`Primärbericht-Prüfung: ${set.documents.length} Dokumente verfügbar${set.discoveryChecked ? '' : '; Dokumentensuche nicht abgeschlossen'}.`, position.id);
         addRiskReviewContext(position, set, request.investorContext);
         let record = this.primaryRiskCache.get(position, set);
@@ -1083,7 +1127,7 @@ export class PortfolioAnalysisService {
         notify(true);
       }
       const verifiedFundamentals = primaryRiskRecords.map(riskForModel);
-      const marketForecasts = this.marketForecastProvider ? (await Promise.all(request.positions.map(position =>
+      const marketForecasts = this.marketForecastProvider ? (await Promise.all(request.positions.filter(position => !verifiedFundamentals.some(risk => risk.key === String(position.id) && risk.decisionBlocker)).map(position =>
         this.marketForecastProvider!(position, { forceRefresh: request.refreshMarketForecasts === true }).catch((): null => null))))
         .filter((forecast): forecast is ReturnForecast => !!forecast) : [];
       const sources = [...new Map([...researchResults.flatMap(result => result.sources), ...cachedDiscovery.flatMap(result => result.sources), ...deterministicResearch.flatMap(result => result.sources),
@@ -1098,7 +1142,7 @@ export class PortfolioAnalysisService {
         id: position.id, name: position.name, isin: position.isin, symbol: position.symbol, type: position.type,
         currency: position.currency, marketValueEUR: buildTradeEconomics(position).marketValueEUR,
       }));
-      const initialAllocation = buildForecastAllocation(contextRequest, marketForecasts, [], previous?.report, undefined, reviewedUnavailableKeys);
+      const initialAllocation = buildForecastAllocation(contextRequest, marketForecasts, [], previous?.report, undefined, reviewedUnavailableKeys, verifiedFundamentals);
       const portfolioInput = { ...request };
       delete portfolioInput.refreshMarketForecasts;
       const analysisInput = {
@@ -1162,6 +1206,11 @@ export class PortfolioAnalysisService {
         try {
           const phaseInput = phase === 0 && parsed && typeof parsed === 'object' ? { ...parsed, newAssetRecommendations: [] } : parsed;
           validated = validateAnalysisResult(phaseInput, request, sources, true);
+          validated.recommendations = validated.recommendations.map(recommendation => {
+            const blocker = verifiedFundamentals.find(risk => risk.key === String(recommendation.assetId))?.decisionBlocker;
+            return blocker ? { ...recommendation, action: 'Prüfen' as const, executionBlocker: 'independent' as const,
+              plannedAmountEUR: null, orderRecommendation: null, rationale: `Konkreter Datenblocker: ${blocker.reason}` } : recommendation;
+          });
           const unchecked = (validated.newAssetRecommendations ?? []).filter(candidate => !candidateQuotes.has(allocationCandidateKey(candidate)));
           let receivedCandidateQuote = false;
           if (this.candidateMarketQuoteProvider && unchecked.length) {
@@ -1223,6 +1272,11 @@ export class PortfolioAnalysisService {
             researchCompleted++; activeRiskStep = undefined; activeCandidateName = undefined; notify(true);
           }
           stage = 'validating'; notify(true);
+          validated.newAssetRecommendations = validated.newAssetRecommendations.map(candidate => {
+            const blocker = candidateRiskRecords.get(allocationCandidateKey(candidate))?.decisionBlocker;
+            return blocker ? { ...candidate, action: 'Prüfen' as const, plannedAmountEUR: null,
+              orderRecommendation: null, rationale: `Konkreter Datenblocker: ${blocker.reason}` } : candidate;
+          });
           const candidateFundamentals = validated.newAssetRecommendations.map(candidate => {
             const record = candidateRiskRecords.get(allocationCandidateKey(candidate));
             return record ? riskForModel(record) : {
@@ -1236,7 +1290,7 @@ export class PortfolioAnalysisService {
             .sort((a, b) => Number(a.status === 'assessed') - Number(b.status === 'assessed'))
             .concat(verifiedFundamentals, candidateFundamentals).map(risk => [risk.key, risk])).values()];
           if (this.marketForecastProvider && this.candidateMarketQuoteProvider) {
-            const uncheckedModels = validated.newAssetRecommendations.filter(candidate => candidate.type === 'ETF' && !candidateForecasts.has(allocationCandidateKey(candidate)));
+            const uncheckedModels = validated.newAssetRecommendations.filter(candidate => candidate.type === 'ETF' && !candidateRiskRecords.get(allocationCandidateKey(candidate))?.decisionBlocker && !candidateForecasts.has(allocationCandidateKey(candidate)));
             const models = await Promise.all(uncheckedModels.map(async candidate => {
               const key = allocationCandidateKey(candidate);
               const position = candidateForecastPosition(candidate, candidateQuotes.get(key));

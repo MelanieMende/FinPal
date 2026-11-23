@@ -15,6 +15,7 @@ export interface FundamentalRiskAssessment {
   primaryExcerptVersion?: number;
   primaryDocumentsChanged?: boolean;
   decisionReadiness?: 'reviewed-uncertainty';
+  decisionBlocker?: { flag: string; reason: string };
   materialRisks: string[];
   structuralRisks?: string[];
   rationale: string;
@@ -151,18 +152,21 @@ export function readFundamentalRisks(value: unknown, sources: AnalysisSource[]):
     }) } : {}),
     ...(v.decisionReadiness === 'reviewed-uncertainty' && v.sourceIndexes.length > 0
       ? { decisionReadiness: 'reviewed-uncertainty' as const } : {}),
+    ...(v.decisionBlocker && flags.includes(v.decisionBlocker.flag) && typeof v.decisionBlocker.reason === 'string' && v.decisionBlocker.reason.length >= 20 && v.decisionBlocker.reason.length <= 700 ? { decisionBlocker: { flag: v.decisionBlocker.flag, reason: v.decisionBlocker.reason } } : {}),
     materialRisks: v.materialRisks, rationale: v.rationale, sources: v.sourceIndexes.map((i: number) => sources[i]) }));
 }
 
 export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest, forecasts: ReturnForecast[] = [], candidates: NewAssetRecommendation[] = [],
   previous?: PortfolioAnalysisResult, decisions?: AssetRecommendation[], reviewedUnavailableKeys: string[] = [], fundamentals: FundamentalRiskAssessment[] = [],
   variant: 'full' | 'cash-only' = 'full', frozenKeys: ReadonlySet<string> = new Set()): PortfolioAllocation {
+  const explicitBlockers = new Map(fundamentals.filter(item => item.decisionBlocker).map(item => [item.key, item.decisionBlocker!]));
+  const allFrozen = new Set([...frozenKeys, ...explicitBlockers.keys()]);
   const supplied = new Map<string, ReturnForecast>();
   if (request.targetAssetId !== undefined) for (const f of previous?.allocationPlan?.optimization?.forecasts ?? []) if (validReturnForecast(f)) supplied.set(f.key, f);
   for (const f of forecasts) if (validReturnForecast(f)) supplied.set(f.key, f);
   const allowedKeys = new Set([...request.positions.map(p => String(p.id)), ...candidates.map(allocationCandidateKey),
     ...(request.targetAssetId === undefined ? [] : previous?.newAssetRecommendations?.map(allocationCandidateKey) ?? [])]);
-  for (const key of supplied.keys()) if (!allowedKeys.has(key)) supplied.delete(key);
+  for (const key of supplied.keys()) if (!allowedKeys.has(key) || explicitBlockers.has(key)) supplied.delete(key);
   // Research review must not prevent an independently sourced ETF scenario from being calculated.
   const modelCandidates = candidates.map(candidate => candidate.type === 'ETF'
     && supplied.get(allocationCandidateKey(candidate))?.model?.kind === 'etf-history-v1'
@@ -201,10 +205,23 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
     optimization: previous.allocationPlan.optimization && { ...previous.allocationPlan.optimization, forecasts: adjusted } } } : undefined;
   const concentrationKeys = new Set(fundamentals.filter(assessment => assessment.materialRisks.includes('concentration')).map(assessment => assessment.key));
   const plan = buildForecastAllocation(request, adjusted, modelCandidates, context, undefined, reviewedUnavailableKeys, riskModel,
-    variant === 'cash-only', { noIncreaseKeys: concentrationKeys, frozenKeys });
+    variant === 'cash-only', { noIncreaseKeys: concentrationKeys, frozenKeys: allFrozen });
   const details: RobustModelDetails = { version: 3, decisionStatus: 'no-trades', covarianceStatus: measured ? 'measured-eur' : 'unavailable',
     observations: measured?.observations ?? 0, covarianceShrinkage: measured?.shrinkage ?? null, estimates, stressChecks: [], reviewReasons: [], scenarioTrades: [] };
   plan.optimization!.robust = details;
+  const applyExplicitBlockers = (allocation: PortfolioAllocation) => {
+    for (const position of allocation.positions) {
+      const blocker = explicitBlockers.get(position.key);
+      if (!blocker) continue;
+      position.action = 'Prüfen'; position.amountEUR = null;
+      position.targetValueEUR = position.currentValueEUR; position.projectedWeightPercent = position.currentWeightPercent;
+      position.reason = `Konkreter Datenblocker: ${blocker.reason}`;
+      allocation.warnings = allocation.warnings.filter(warning => !warning.startsWith(`${position.name}: Mindestens eine erforderliche Optimierungseingabe fehlt.`));
+    }
+    if (allocation.optimization?.reviewedUnavailableKeys)
+      allocation.optimization.reviewedUnavailableKeys = allocation.optimization.reviewedUnavailableKeys.filter(key => !explicitBlockers.has(key));
+  };
+  applyExplicitBlockers(plan);
   if (variant === 'full' && request.targetAssetId === undefined) {
     const cashPlan = buildRobustForecastAllocation(request, forecasts, candidates, previous, undefined, reviewedUnavailableKeys, fundamentals, 'cash-only', frozenKeys);
     const cashDetails = cashPlan.optimization!.robust!;
@@ -357,7 +374,7 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
       return modeled ? { ...decision, action: 'Kaufen' as const, plannedAmountEUR: modeled.amountEUR, executionBlocker: null } : decision;
     });
     const accepted = buildForecastAllocation(request, adjusted, modelCandidates, context, executionDecisions, reviewedUnavailableKeys, riskModel,
-      variant === 'cash-only', { noIncreaseKeys: concentrationKeys, frozenKeys });
+      variant === 'cash-only', { noIncreaseKeys: concentrationKeys, frozenKeys: allFrozen });
     const acceptedTrades = accepted.positions.filter(position => position.amountEUR !== null
       && (position.action === 'Kaufen' || position.action === 'Verkaufen'));
     accepted.optimization!.forecasts = plan.optimization!.forecasts;
@@ -369,6 +386,7 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
       concentration: { beforeLargestPercent: Math.max(0, ...accepted.positions.map(position => position.currentWeightPercent ?? 0)),
         scenarioLargestPercent: Math.max(0, ...accepted.positions.map(position => position.projectedWeightPercent ?? 0)) },
     };
+    applyExplicitBlockers(accepted);
     accepted.assumptions = plan.assumptions;
     if (details.scenarioTrades.some(trade => !decisions.some(decision => String(decision.assetId) === trade.key
       && decision.action === trade.action && typeof decision.plannedAmountEUR === 'number'))) {

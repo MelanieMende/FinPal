@@ -663,7 +663,7 @@ export function riskFingerprint(position: AnalysisPosition, set: RiskDocumentSet
     ...(position.type === 'Bond' && position.isin.trim().toUpperCase() === 'US912810SQ22'
       ? { treasuryContextVersion: 1, nominalCurrency: position.bondHolding?.source === 'user-confirmed' ? position.bondHolding.currency : null } : {}),
     documents: set.documents.map(doc => [doc.source.url, doc.hash,
-      isInsuranceStock(position) || ['DE0008232125', 'LU3170240538', 'US84615Q1031'].includes(position.isin.trim().toUpperCase()) ? doc.excerptVersion ?? 0 : 0])
+      position.type === 'Stock' || position.isin.trim().toUpperCase() === 'LU3170240538' ? doc.excerptVersion ?? 0 : 0])
       .sort((a, b) => String(a[0]).localeCompare(String(b[0]))) })).digest('hex');
 }
 export function primaryDocumentsFingerprint(set: RiskDocumentSet): string {

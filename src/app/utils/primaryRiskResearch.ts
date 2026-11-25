@@ -108,10 +108,10 @@ const TREASURY_OFFERING_2020 = 'https://www.treasurydirect.gov/instit/annceresul
 const APOLLO_ELTIF_ISIN = 'LU3170240538';
 const APOLLO_ELTIF_KID_ARCHIVE = 'https://www.francetransactions.com/IMG/pdf/dic-apollo-private-equity.pdf';
 const APOLLO_ELTIF_PAGE = 'https://www.apollo.com/agpm-eltif';
-const stockExcerptVersion = (isin: string) => isin === 'DE0008430026' ? 4
+const stockExcerptVersion = (isin: string) => 4 + (isin === 'DE0008430026' ? 4
   : isin === 'DE0008232125' ? 4
   : ['US5801351017', 'DK0062498333', 'US6701002056', 'DE0007030009', 'US6092071058'].includes(isin) ? 3
-    : isin === 'US84615Q1031' ? 5 : 2;
+    : isin === 'US84615Q1031' ? 5 : 2);
 const apolloEltifDocumentUrl = (url: string) => url === APOLLO_ELTIF_KID_ARCHIVE;
 const treasuryAuctionUrl = (url: string) => /^https:\/\/www\.treasurydirect\.gov\/instit\/annceresult\/press\/preanre\/2020\/(?:R_20200819_3|A_20201015_1)\.pdf$/i.test(url);
 const treasuryGeneralUrl = (url: string) => [
@@ -176,6 +176,14 @@ const PRODUCT_HOSTS = ['ishares.com', 'blackrock.com', 'vanguard.co.uk', 'vangua
   'apollo.com', 'treasurydirect.gov'];
 const officialProductHost = (host: string) => PRODUCT_HOSTS.some(domain => host === domain || host.endsWith(`.${domain}`));
 const keywordGroups = [
+  /we believe[^.]{0,500}?(?:cash|liquidity|financial resources)[^.]{0,500}?(?:sufficient|adequate)[^.]{0,350}?(?:12|twelve)\s+months[^.]*\./ig,
+  /principal amount of\s+(?:approximately\s+)?\$\s*[\d,.]+\s+(?:million|billion)\s*,?\s*maturing\s+in\s+[A-Za-z]+\s+20\d{2}/ig,
+  /(?:principal (?:amount|balance)|outstanding (?:notes|debt|borrowings))[\s\S]{0,240}?\b(?:maturing|matures?|maturity|due)\b[\s\S]{0,100}?\b20\d{2}\b/ig,
+  /(?:outstanding notes|convertible notes)[\s\S]{0,140}?\b(?:as of|at)\s+[A-Za-z]+\s+\d{1,2},?\s+20\d{2}/ig,
+  /(?:credit agreement|credit facility)[\s\S]{0,350}?maturit(?:y|ies)/ig,
+  /contractual obligations as of\s+[A-Za-z]+\s+\d{1,2},?\s+20\d{2}/ig,
+  /(?:aggregate contractual obligations|(?:purchase|payment) commitments)[\s\S]{0,200}?(?:due|paid|payable)[\s\S]{0,120}?(?:12|twelve)\s+months/ig,
+  /subject to[^.]{0,200}?(?:laws|regulations)[^.]{0,250}\./ig,
   /Borrowings, current/ig,
   /Novo Nordisk believes its financial resources are sufficient to meet its requirements for at least the next 12 months/ig,
   /Aggregate maturities for 2025 debt balances/ig,
@@ -373,8 +381,10 @@ export function riskExcerpt(html: string, type: AnalysisPosition['type'] = 'Stoc
     let count = 0;
     while ((match = pattern.exec(plain)) && count < (qdve || vgwd || rheinmetall || treasuryBond ? 1 : type === 'Stock' ? 5 : 4)) {
       count++;
-      const start = Math.max(0, match.index - 160);
-      const end = Math.min(plain.length, match.index + 430);
+      // Financial table headings contain the period and units needed to interpret
+      // a reported result; they can be several rows before the matched figure.
+      const start = Math.max(0, match.index - (type === 'Stock' && /net \(\?:income/.test(pattern.source) ? 900 : 160));
+      const end = Math.min(plain.length, Math.max(match.index + 430, match.index + match[0].length + 500));
       const fragment = plain.slice(start, end).trim();
       if (!found.some(item => item === fragment)) found.push(fragment);
       // Non-global expressions return the same match on every exec() call.
@@ -403,7 +413,7 @@ export function riskExcerpt(html: string, type: AnalysisPosition['type'] = 'Stoc
       liquidityFound: !!liquidityStatement, starlinkLicensingFound: !!starlinkStatement });
     for (const row of [revenueRow, operationsRow, liquidityStatement, starlinkStatement]) if (row && !found.includes(row)) found.push(row);
   }
-  return found.join('\n[…]\n').slice(0, insurance ? 24000 : 18000);
+  return found.join('\n[…]\n').slice(0, insurance ? 24000 : type === 'Stock' ? 28000 : 18000);
 }
 function productDocumentPeriod(text: string, now: number): string | null {
   const dates: number[] = [];
@@ -577,7 +587,7 @@ export class PrimaryRiskResearch {
     const urls = sources.map(source => source.url).sort();
     const saved = this.freshnessChecks.get(isin);
     const matching = saved && JSON.stringify(saved.sources) === JSON.stringify(urls) ? saved : undefined;
-    const fresh = !!saved && saved.checkedAt <= this.now() && this.now() - saved.checkedAt < DAY;
+    const fresh = !!matching && matching.checkedAt <= this.now() && this.now() - matching.checkedAt < DAY;
     const succeeded = saved ? saved.succeeded !== false : null;
     return { freshnessSupported: supported, freshnessCheckedAt: saved ? new Date(saved.checkedAt).toISOString() : null,
       freshnessCheckSucceeded: succeeded, freshnessDue: !fresh,
@@ -650,7 +660,6 @@ export class PrimaryRiskResearch {
             if (entry.form === 'FWP' || !shareClass || !/\bCLASS\s+[A-Z0-9]{1,4}\s+(?:COMMON|ORDINARY)\s+(?:STOCK|SHARES?)\b/.test(text)) ambiguous = true;
           }
           if (pending && identity) identity.newerProspectus = { url: pending.url, title: pending.title };
-          else if (identity) delete identity.newerProspectus;
           const regularNewer = filings.some(filing => {
             const index = recent?.primaryDocument?.findIndex((document, i) => filing.url.endsWith(`/${recent.accessionNumber?.[i]?.replace(/-/g, '')}/${document}`)) ?? -1;
             return index >= 0 && index < latestIndex && !known.has(filing.url);

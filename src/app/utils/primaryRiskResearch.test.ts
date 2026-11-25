@@ -45,7 +45,7 @@ it('records successful and failed SEC checks without downloading reports', async
     await expect(failed.checkPublicationFreshness(position, [source])).rejects.toThrow();
     expect(new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now + 1000).publicationStatus(position, [source]))
       .toMatchObject({ newerReportAvailable: true, freshnessCheckedAt: new Date(now + 1000).toISOString(), freshnessCheckSucceeded: false, publicationCheckVerified: false });
-    expect(restarted.publicationStatus(position, [{ ...source, url: source.url + '?changed' }])).toMatchObject({ freshnessCheckedAt: new Date(now).toISOString(), publicationCheckVerified: false });
+    expect(restarted.publicationStatus(position, [{ ...source, url: source.url + '?changed' }])).toMatchObject({ freshnessCheckedAt: new Date(now).toISOString(), publicationCheckVerified: false, freshnessDue: true });
     expect(new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now + 1000 + 86400000).publicationStatus(position, [source]).freshnessDue).toBe(true);
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });
@@ -125,6 +125,8 @@ it('detects a newer issuer prospectus for the same share class and loads it on r
     expect(updated.documents.find(document => document.source.url.endsWith('new.htm'))?.source.title).toContain('Emittentenprospekt');
     expect(await restarted.checkPublicationFreshness(position, updated.documents.map(document => document.source)))
       .toMatchObject({ newerReportAvailable: false, publicationCheckVerified: true });
+    const afterCheck = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch).collect(position, undefined, [], true);
+    expect(afterCheck.documents.map(document => document.source.url)).toContain('https://www.sec.gov/Archives/edgar/data/1234/000000123426000002/new.htm');
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });
 
@@ -578,7 +580,7 @@ it('loads Munich Re issuer reports for its German ISIN and reuses their dated ex
     fs.writeFileSync(file, JSON.stringify(saved));
     const upgraded = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
     expect(fetcher).toHaveBeenCalledTimes(12);
-    expect(upgraded.documents.find(doc => doc.source.url.includes('Group-Annual-Report-2025'))?.excerptVersion).toBe(4);
+    expect(upgraded.documents.find(doc => doc.source.url.includes('Group-Annual-Report-2025'))?.excerptVersion).toBe(8);
     const wrongFetcher = jest.fn(async () => new Response(report.replaceAll('Munich Re', 'Other Company'), { headers: { 'content-type': 'application/pdf' } }));
     const wrong = await new PrimaryRiskResearch(path.join(folder, 'wrong.json'), wrongFetcher as unknown as typeof fetch, () => now).collect(position);
     expect(wrong.discoveryChecked).toBe(false);
@@ -640,7 +642,7 @@ it('loads Rheinmetall half-year and annual issuer reports for its verified ISIN'
     expect(first.documents.map(doc => doc.source.url)).toEqual(knownResearchSources(position));
     expect(first.documents[0].excerpt).toContain('Earnings after taxes');
     expect(first.documents[0].excerpt).toContain('Operating result margin');
-    expect(first.documents.every(doc => doc.excerptVersion === 3)).toBe(true);
+    expect(first.documents.every(doc => doc.excerptVersion === 7)).toBe(true);
     const second = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
     expect(second.documents).toHaveLength(2);
     expect(fetcher).toHaveBeenCalledTimes(2);
@@ -783,6 +785,49 @@ it('prioritizes a current SEC filing conclusion about material legal impact', ()
   expect(excerpt).toMatch(/unfavorable resolutions could involve substantial fines/i);
 });
 
+it('retains the period and units preceding an earnings table row', () => {
+  const filing = `<p>Consolidated Statements of Operations (in millions)
+    Year Ended December 31, Nine Months Ended September 30, 2025 2026</p>
+    <p>${'Other financial statement rows. '.repeat(12)}</p>
+    <p>Net loss $ (25,107) $ (104,039)</p>`;
+  const excerpt = riskExcerpt(filing);
+  expect(excerpt).toContain('Nine Months Ended September 30');
+  expect(excerpt).toContain('(in millions)');
+  expect(excerpt).toContain('Net loss $ (25,107) $ (104,039)');
+});
+
+it('retains dated liquidity outlook and regulatory context beyond early generic risk mentions', () => {
+  const filing = `<p>${'Liquidity and regulatory boilerplate. '.repeat(500)}</p>
+    <p>We believe our existing available cash and cash equivalents and short-term investments,
+    together with cash generated from sales and amounts available under our credit facility,
+    will be sufficient to support operating requirements for at least the next 12 months from the date of this prospectus.</p>
+    <p>We are subject to rapidly evolving laws, regulations, and governmental review across multiple jurisdictions.</p>`;
+  const excerpt = riskExcerpt(filing);
+  expect(excerpt).toContain('the next 12 months from the date of this prospectus');
+  expect(excerpt).toContain('subject to rapidly evolving laws, regulations');
+});
+
+it('retains dated credit maturity and contractual obligations beyond generic risk mentions', () => {
+  const filing = `<p>${'Ordinary liquidity and debt risk. '.repeat(500)}</p>
+    <p>The credit agreement provides revolving commitments of $15 billion and extended the maturity to September 2031, subject to earlier maturity under certain conditions.</p>
+    <p>The following table summarizes our contractual obligations as of September 30, 2026: Payments due by year, in millions: 2027 $29,165; 2028 $44,357.</p>`;
+  const excerpt = riskExcerpt(filing);
+  expect(excerpt).toContain('extended the maturity to September 2031');
+  expect(excerpt).toContain('contractual obligations as of September 30, 2026');
+  expect(excerpt).toContain('2027 $29,165');
+});
+
+it('keeps debt maturity together with the later reporting date and outstanding amount', () => {
+  const filing = `<p>${'Other financial report text. '.repeat(500)}</p>
+    <p>The remaining rollover note has a principal amount of approximately $2.2 billion, maturing in March 2034.
+    ${'The conversion conditions are described here. '.repeat(6)}
+    As of September 30, 2026 (unaudited), the note remained outstanding with a principal amount of $2.2 billion.</p>`;
+  const excerpt = riskExcerpt(filing);
+  expect(excerpt).toContain('maturing in March 2034');
+  expect(excerpt).toContain('As of September 30, 2026');
+  expect(excerpt).toContain('remained outstanding with a principal amount');
+});
+
 it('keeps Mondelēz current debt and the legal materiality conclusion in the primary excerpt', () => {
   const filing = `<html><table><tr><td>Short-term borrowings</td><td>2,327</td></tr>
     <tr><td>Current portion of long-term debt</td><td>2,663</td></tr></table>
@@ -826,13 +871,13 @@ it('rebuilds cached stock excerpts created before the earnings and margin extrac
     const file = path.join(folder, 'documents.json');
     const research = new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now);
     const first = await research.collect(position);
-    expect(first.documents[0].excerptVersion).toBe(3);
+    expect(first.documents[0].excerptVersion).toBe(7);
     const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
     delete saved.documents[0].excerptVersion;
     saved.documents[0].excerpt = 'Old excerpt';
     fs.writeFileSync(file, JSON.stringify(saved));
     const second = await new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch, () => now).collect(position);
     expect(second.documents[0].excerpt).toContain('Net earnings attributable');
-    expect(second.documents[0].excerptVersion).toBe(3);
+    expect(second.documents[0].excerptVersion).toBe(7);
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });

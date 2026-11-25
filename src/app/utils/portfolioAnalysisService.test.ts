@@ -59,7 +59,12 @@ it('assesses a new ETF from its exact issuer document and saves the candidate re
   const fetcher = jest.fn(async (target: string, options?: RequestInit) => {
     if (target === url) return new Response(html, { headers: { 'content-type': 'text/html' } });
     const body = JSON.parse(String(options?.body ?? '{}'));
-    if (body.text?.format?.name === 'primary_risk_assessment') return structuredResponse(riskAnswer);
+    if (body.text?.format?.name === 'primary_risk_assessment') {
+      const input = JSON.parse(body.input[0].content);
+      if (input.security.type === 'ETF' && !input.invalidChecks)
+        return structuredResponse({ ...riskAnswer, checks: riskAnswer.checks.map(check => check.flag === 'identity' ? { ...check, quote: 'Text not in document.' } : check) });
+      return structuredResponse(riskAnswer);
+    }
     if (body.tools) return new Response(JSON.stringify(researched));
     return structuredResponse(answer);
   });
@@ -69,6 +74,8 @@ it('assesses a new ETF from its exact issuer document and saves the candidate re
   expect(apiCalls.length).toBeGreaterThan(1);
   expect(apiCalls.every(([, options]) => JSON.parse((options as RequestInit).body as string).reasoning.effort === 'high')).toBe(true);
   expect(result.fundamentalRisks?.find(item => item.key === `new:${isin}`)).toMatchObject({ status: 'assessed', structuralRisks: expect.arrayContaining(['structure']) });
+  expect(apiCalls.map(([, options]) => JSON.parse((options as RequestInit).body as string))
+    .some(body => body.text?.format?.name === 'primary_risk_assessment' && JSON.parse(body.input[0].content).invalidChecks?.includes('identity'))).toBe(true);
   expect(fetcher.mock.calls.filter(([target]) => target === url)).toHaveLength(1);
   expect(fs.existsSync(path.join(dir, 'portfolio-primary-risk-assessments.json'))).toBe(true);
   expect(new PortfolioAnalysisService(dir, jest.fn()).getLastResult()?.report.fundamentalRisks?.find(item => item.key === `new:${isin}`)?.status).toBe('assessed');
@@ -111,6 +118,34 @@ it('does not request forecasts for a concretely blocked holding and still analyz
     expect(refreshed.allocationPlan?.optimization?.forecasts.some(forecast => forecast.key === '1')).toBe(false);
     await expect(service.refreshMarketForecast({ ...request, profile: { ...request.profile, buyBudget: 0 }, positions }, 1)).rejects.toThrow(/Datenblocker/);
     expect(provider.mock.calls.map(([position]) => position.id)).toEqual([2]);
+  } finally { collect.mockRestore(); }
+});
+
+it('rechecks invalid risk evidence for a holding during the full analysis', async () => {
+  const position = { ...request.positions[0], type: 'Stock' as const, isin: 'US0000001234', name: 'Example' };
+  const source = { title: 'Report', url: 'https://example.com/report' };
+  const documents: RiskDocumentSet = { documents: [{ source, excerpt: 'Cash and debt obligations may strain liquidity.', hash: 'hash', fetchedAt: Date.now(), period: '2026-09-30' }], gaps: [], discoveryChecked: true };
+  const checks = riskChecksFor('Stock').map(flag => ({ flag, finding: 'unknown', reason: 'Offen.', documentIndex: null as number | null, quote: '' }));
+  const fetcher = jest.fn(async (_url: RequestInfo | URL, options?: RequestInit) => {
+    const body = JSON.parse(String(options?.body));
+    if (body.tools) return new Response(JSON.stringify(research));
+    if (body.text?.format?.name === 'primary_risk_assessment') {
+      const correction = !!JSON.parse(body.input[0].content).invalidChecks;
+      return structuredResponse({ checks: checks.map(check => check.flag === 'financing' ? { ...check, finding: 'risk', documentIndex: 0,
+        quote: correction ? 'Cash and debt obligations may strain liquidity.' : 'A fabricated debt quote.' } : check), metrics: [], decisionBlocker: null });
+    }
+    return structuredResponse({ ...report, newAssetRecommendations: [] });
+  });
+  const collect = jest.spyOn(PrimaryRiskResearch.prototype, 'collect').mockResolvedValue(documents);
+  try {
+    const service = new PortfolioAnalysisService(dir, fetcher, undefined, jest.fn().mockResolvedValue(robustReturnForecastFixture('1')));
+    service.saveKey('sk-testOnlyNotARealKey');
+    const result = await service.analyze({ ...request, profile: { ...request.profile, buyBudget: 0 }, positions: [position] });
+    expect(result.fundamentalRisks?.find(risk => risk.key === '1')?.materialRisks).toContain('financing');
+    expect(fetcher.mock.calls.some(([, options]) => {
+      const body = JSON.parse(String(options?.body));
+      return body.text?.format?.name === 'primary_risk_assessment' && JSON.parse(body.input[0].content).invalidChecks?.includes('financing');
+    })).toBe(true);
   } finally { collect.mockRestore(); }
 });
 
@@ -228,6 +263,21 @@ it('records an empty primary document search without claiming reports were loade
   } finally { collect.mockRestore(); }
 });
 
+it('checks the newly loaded document list during an individual refresh and keeps documents if the check fails', async () => {
+  const added = buildAnalysisPositions([{ ID: 2, name: 'New holding', type: 'Stock', isin: 'EXAMPLE', symbol: 'NEW', current_shares: 1, price: 20 }] as Asset[])[0];
+  const service = new PortfolioAnalysisService(dir, jest.fn(), undefined, jest.fn().mockResolvedValue(robustReturnForecastFixture('1')));
+  await service.analyzeLocal(request);
+  const source = { title: 'New report', url: 'https://example.com/new-report' };
+  const collect = jest.spyOn(PrimaryRiskResearch.prototype, 'collect').mockResolvedValue({ documents: [{ source, excerpt: 'Report', hash: 'hash', fetchedAt: Date.now(), period: null }], discoveryChecked: true, gaps: [] });
+  const status = jest.spyOn(PrimaryRiskResearch.prototype, 'publicationStatus').mockReturnValue({ freshnessSupported: true, freshnessCheckedAt: null, freshnessCheckSucceeded: null, freshnessDue: true, newerReportAvailable: false, publicationCheckVerified: false });
+  const check = jest.spyOn(PrimaryRiskResearch.prototype, 'checkPublicationFreshness').mockRejectedValue(new Error('SEC unavailable'));
+  try {
+    const updated = await service.refreshPrimaryRisk(added, undefined, undefined, true);
+    expect(check).toHaveBeenCalledWith(added, [source]);
+    expect(updated.fundamentalRisks?.find(risk => risk.key === '2')?.primaryDocuments).toEqual([source]);
+  } finally { collect.mockRestore(); status.mockRestore(); check.mockRestore(); }
+});
+
 it('assesses a new holding using its loaded documents and persists the result without altering the saved portfolio', async () => {
   const added = buildAnalysisPositions([{ ID: 2, name: 'New holding', type: 'Stock', isin: 'US0000001234', symbol: 'NEW', current_shares: 1, price: 20 }] as Asset[])[0];
   const source = { title: 'Issuer report', url: 'https://example.com/report' };
@@ -253,6 +303,71 @@ it('assesses a new holding using its loaded documents and persists the result wi
     expect(new PortfolioAnalysisService(dir, jest.fn()).getLastResult()?.report.fundamentalRisks?.find(item => item.key === '2')).toMatchObject({ primaryDocumentIdentity: { type: 'Stock', isin: 'US0000001234' }, primaryDocumentsCheckedAt: expect.any(String) });
     expect((await service.getPrimaryDocumentStatus([added]))[0].loadedAt).not.toBeNull();
   } finally { collect.mockRestore(); cachedStatus.mockRestore(); reuse.mockRestore(); }
+});
+
+it('rechecks a missing net income after a documented loss and retains the first risk findings', async () => {
+  const added = buildAnalysisPositions([{ ID: 2, name: 'Example', type: 'Stock', isin: 'EXAMPLE', symbol: 'NEW', current_shares: 1, price: 20 }] as Asset[])[0];
+  const source = { title: 'Report', url: 'https://example.com/report' };
+  const excerpt = 'Nine months ended September 2026, in USD millions. Net loss was (123).';
+  const documents: RiskDocumentSet = { documents: [{ source, excerpt, hash: 'hash', fetchedAt: Date.now(), period: '2026-09-30' }], discoveryChecked: true, gaps: [] };
+  const checks = riskChecksFor('Stock').map(flag => flag === 'loss-making'
+    ? { flag, finding: 'risk', reason: 'Verlust belegt.', documentIndex: 0, quote: 'Net loss was (123).' }
+    : { flag, finding: 'unknown', reason: 'Offen.', documentIndex: null as number | null, quote: '' });
+  const fetcher = jest.fn().mockResolvedValueOnce(structuredResponse({ checks, metrics: [], decisionBlocker: null }))
+    .mockResolvedValueOnce(structuredResponse({ checks, metrics: [{ name: 'net-income', value: -123, unit: 'Mio. USD', period: 'Neun Monate bis September 2026', documentIndex: 0, quote: 'Net loss was (123).' }], decisionBlocker: null }));
+  const service = new PortfolioAnalysisService(dir, fetcher, undefined, jest.fn().mockResolvedValue(robustReturnForecastFixture('1')));
+  service.saveKey('sk-testOnlyNotARealKey');
+  await service.analyzeLocal(request);
+  const collect = jest.spyOn(PrimaryRiskResearch.prototype, 'collect').mockResolvedValue(documents);
+  try {
+    const updated = await service.refreshPrimaryRisk(added);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    const record = JSON.parse(fs.readFileSync(path.join(dir, 'portfolio-primary-risk-assessments.json'), 'utf8')).records.find((item: { key: string }) => item.key === '2');
+    expect(record.metrics).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'net-income', value: -123 })]));
+    expect(record.checks).toEqual(expect.arrayContaining([expect.objectContaining({ flag: 'loss-making', finding: 'risk' })]));
+    expect(updated.fundamentalRisks?.find(item => item.key === '2')?.primaryDocumentGaps).not.toEqual(expect.arrayContaining([expect.stringMatching(/^net-income:/)]));
+  } finally { collect.mockRestore(); }
+});
+
+it('rechecks an invalid financing quote without turning missing continuity evidence into a finding', async () => {
+  const added = buildAnalysisPositions([{ ID: 2, name: 'Example', type: 'Stock', isin: 'EXAMPLE', symbol: 'NEW', current_shares: 1, price: 20 }] as Asset[])[0];
+  const source = { title: 'Report', url: 'https://example.com/report' };
+  const documents: RiskDocumentSet = { documents: [{ source, excerpt: 'Cash and debt obligations may strain liquidity.', hash: 'hash', fetchedAt: Date.now(), period: null }], discoveryChecked: true, gaps: [] };
+  const base = riskChecksFor('Stock').map(flag => ({ flag, finding: 'unknown', reason: 'Offen.', documentIndex: null as number | null, quote: '' }));
+  const invalid = base.map(check => check.flag === 'financing' ? { ...check, finding: 'risk', documentIndex: 0, quote: 'A fabricated debt quote.' } : check);
+  const corrected = base.map(check => check.flag === 'financing' ? { ...check, finding: 'risk', reason: 'Finanzierungsrisiko.', documentIndex: 0, quote: 'Cash and debt obligations may strain liquidity.' } : check);
+  const fetcher = jest.fn().mockResolvedValueOnce(structuredResponse({ checks: invalid, metrics: [], decisionBlocker: null }))
+    .mockResolvedValueOnce(structuredResponse({ checks: corrected, metrics: [], decisionBlocker: null }));
+  const service = new PortfolioAnalysisService(dir, fetcher, undefined, jest.fn().mockResolvedValue(robustReturnForecastFixture('1')));
+  service.saveKey('sk-testOnlyNotARealKey');
+  await service.analyzeLocal(request);
+  const collect = jest.spyOn(PrimaryRiskResearch.prototype, 'collect').mockResolvedValue(documents);
+  try {
+    await service.refreshPrimaryRisk(added);
+    const record = JSON.parse(fs.readFileSync(path.join(dir, 'portfolio-primary-risk-assessments.json'), 'utf8')).records.find((item: { key: string }) => item.key === '2');
+    expect(record.checks).toEqual(expect.arrayContaining([expect.objectContaining({ flag: 'financing', finding: 'risk' }), expect.objectContaining({ flag: 'going-concern', finding: 'unknown' })]));
+    expect(record.gaps).not.toEqual(expect.arrayContaining([expect.stringMatching(/^financing:/)]));
+  } finally { collect.mockRestore(); }
+});
+
+it('rechecks a missing debt maturity when the document contains a dated principal amount', async () => {
+  const added = buildAnalysisPositions([{ ID: 2, name: 'Example', type: 'Stock', isin: 'EXAMPLE', symbol: 'NEW', current_shares: 1, price: 20 }] as Asset[])[0];
+  const source = { title: 'Report', url: 'https://example.com/report' };
+  const excerpt = 'As of September 30, 2026 the note has a principal amount of $2.2 billion, maturing in March 2034.';
+  const documents: RiskDocumentSet = { documents: [{ source, excerpt, hash: 'hash', fetchedAt: Date.now(), period: '2026-09-30' }], discoveryChecked: true, gaps: [] };
+  const checks = riskChecksFor('Stock').map(flag => ({ flag, finding: 'unknown', reason: 'Offen.', documentIndex: null as number | null, quote: '' }));
+  const fetcher = jest.fn().mockResolvedValueOnce(structuredResponse({ checks, metrics: [], decisionBlocker: null }))
+    .mockResolvedValueOnce(structuredResponse({ checks, metrics: [{ name: 'debt-maturities', value: 2.2, unit: 'Mrd. USD', period: 'Stand 2026-09-30; Fälligkeit März 2034', documentIndex: 0, quote: excerpt }], decisionBlocker: null }));
+  const service = new PortfolioAnalysisService(dir, fetcher, undefined, jest.fn().mockResolvedValue(robustReturnForecastFixture('1')));
+  service.saveKey('sk-testOnlyNotARealKey');
+  await service.analyzeLocal(request);
+  const collect = jest.spyOn(PrimaryRiskResearch.prototype, 'collect').mockResolvedValue(documents);
+  try {
+    await service.refreshPrimaryRisk(added);
+    const record = JSON.parse(fs.readFileSync(path.join(dir, 'portfolio-primary-risk-assessments.json'), 'utf8')).records.find((item: { key: string }) => item.key === '2');
+    expect(record.metrics).toEqual(expect.arrayContaining([expect.objectContaining({ name: 'debt-maturities', value: 2.2, period: expect.stringContaining('2034') })]));
+    expect(record.gaps).not.toEqual(expect.arrayContaining([expect.stringMatching(/^debt-maturities:/)]));
+  } finally { collect.mockRestore(); }
 });
 
 it('does not replace cached research or the saved report when a refresh search fails', async () => {

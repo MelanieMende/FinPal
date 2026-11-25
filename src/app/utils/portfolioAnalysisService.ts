@@ -19,7 +19,7 @@ import { investorFactsAnalysisInstructions, historyCoverageAnalysisInstructions,
 import type { MarketForecastProvider } from './marketForecastProvider';
 import { candidateForecastPosition, validCandidateMarketQuote, type CandidateMarketQuote, type CandidateMarketQuoteProvider } from './candidateMarketQuote';
 import type { DeterministicResearchProvider, DeterministicResearchResult } from './deterministicOnlineResearch';
-import { PrimaryRiskResearch } from './primaryRiskResearch';
+import { PrimaryRiskResearch, type RiskDocumentSet } from './primaryRiskResearch';
 import { TradeRepublicContractDocumentStore } from './tradeRepublicContractDocuments';
 import { PrimaryRiskAssessmentCache, addRiskReviewContext, primaryDocumentsFingerprint, riskReviewInput, riskAssessmentSchema, riskForModel, validateRiskAssessment,
   type PrimaryRiskRecord } from './primaryRiskAssessment';
@@ -593,6 +593,38 @@ export class PortfolioAnalysisService {
     }
   }
 
+  private async recoverRiskAssessment(position: import('./portfolioAnalysis').AnalysisPosition, set: RiskDocumentSet, record: PrimaryRiskRecord,
+    key: string, model: string, provider: 'chatgpt' | 'api', effort: import('./portfolioAnalysis').ReasoningEffort | undefined,
+    signal: AbortSignal, onActivity: () => void, onRetry: () => void): Promise<PrimaryRiskRecord> {
+    const invalidChecks = record.checks.filter(check => check.finding === 'unknown' && check.reason === 'Kein überprüfbarer Befund mit Textstelle.').map(check => check.flag);
+    const missingIncome = position.type === 'Stock' && record.checks.some(check => check.flag === 'loss-making' && check.finding === 'risk')
+      && !record.metrics.some(metric => metric.name === 'net-income');
+    const missingMaturities = position.type === 'Stock' && !record.metrics.some(metric => metric.name === 'debt-maturities')
+      && set.documents.some(document => /(?:principal amount|outstanding (?:notes|debt|borrowings))[\s\S]{0,300}\b(?:maturing|matures?|maturity|due)\b[\s\S]{0,100}\b20\d{2}\b/i.test(document.excerpt));
+    if (!invalidChecks.length && !missingIncome && !missingMaturities) return record;
+    try {
+      const correction = await this.response(key, model, provider, effort, {
+        instructions: `${riskReviewInstructions(position)} Prüfe die genannten offenen Felder gezielt erneut. Gib für jeden belegten Befund eine zusammenhängende wörtliche Textstelle mit höchstens 400 Zeichen und dem richtigen Dokumentindex an. Nenne bei weiterhin offenen Feldern den konkreten Grund. Erfasse fehlende Kennzahlen nur mit Zahl, Einheit, Zeitraum und wörtlichem Beleg. Negative Tabellenwerte in Klammern sind negative Zahlen. Verwechsle Kreditrahmen nicht mit abgerufenen Schulden oder sonstigen Verpflichtungen. Wenn nicht eindeutig, lasse die Angabe offen.`,
+        input: [{ role: 'user', content: JSON.stringify({ ...riskReviewInput(position, set), invalidChecks, missingIncome, missingMaturities }) }],
+        text: { format: { type: 'json_schema', name: 'primary_risk_assessment', strict: true, schema: riskAssessmentSchema(position) } },
+      }, signal, onActivity, onRetry);
+      const retry = validateRiskAssessment(position, set, JSON.parse(responseText(correction, 'analysis')), Date.now(), record.key);
+      const replacements = retry.checks.filter(check => invalidChecks.includes(check.flag)
+        && (check.finding !== 'unknown' || check.reason !== 'Kein überprüfbarer Befund mit Textstelle.'));
+      const addedMetrics = retry.metrics.filter(metric => !record.metrics.some(item => item.name === metric.name));
+      const checks = record.checks.map(check => replacements.find(item => item.flag === check.flag) ?? check);
+      const replacedFlags = new Set(replacements.map(check => check.flag));
+      const gaps = record.gaps.filter(gap => !replacedFlags.has(gap.split(':', 1)[0] as typeof invalidChecks[number])
+        && !addedMetrics.some(metric => gap.startsWith(`${metric.name}:`)));
+      for (const check of replacements) if (check.finding === 'unknown') gaps.push(`${check.flag}: ${check.reason}`);
+      const decisionBlocker = record.decisionBlocker && checks.some(check => check.flag === record.decisionBlocker!.flag && check.finding === 'unknown') ? record.decisionBlocker : undefined;
+      return { ...record, checks, metrics: [...record.metrics, ...addedMetrics], gaps, decisionBlocker, status: gaps.length ? 'unknown' : 'assessed' };
+    } catch (error) {
+      if (signal.aborted) throw error;
+      return record;
+    }
+  }
+
   private async response(key: string, model: string, provider: 'chatgpt' | 'api', effort: import('./portfolioAnalysis').ReasoningEffort | undefined, input: Record<string, unknown>, signal: AbortSignal, onActivity: () => void, onRetry: () => void): Promise<ResponseBody> {
     let compact = false;
     const step = input.tools ? 'Webrecherche' : 'Portfolio-Analyse';
@@ -779,6 +811,16 @@ export class PortfolioAnalysisService {
       progress(reusedDocuments ? 'assessment' : 'documents');
       const set = reusedDocuments ?? await this.primaryRiskResearch.collect(position, controller.signal, previous.report.sources, documentsOnly,
         step => progress(step));
+      const loadedSources = set.documents.map(document => document.source);
+      const loadedPublication = this.primaryRiskResearch.publicationStatus(position, loadedSources);
+      if (loadedSources.length && loadedPublication.freshnessSupported && loadedPublication.freshnessDue) {
+        try {
+          await this.primaryRiskResearch.checkPublicationFreshness(position, loadedSources);
+        } catch (error) {
+          if (controller.signal.aborted) throw controller.signal.reason;
+          // The failed check is recorded separately; keep successfully loaded documents.
+        }
+      }
       addRiskReviewContext(position, set, request.investorContext);
       if (documentsOnly) {
         const documentsFingerprint = primaryDocumentsFingerprint(set);
@@ -811,6 +853,7 @@ export class PortfolioAnalysisService {
         return report;
       }
       let assessment: unknown = null;
+      let record: PrimaryRiskRecord | undefined;
       if (set.documents.length && set.discoveryChecked) {
         progress('assessment');
         let key: string;
@@ -832,8 +875,11 @@ export class PortfolioAnalysisService {
           text: { format: { type: 'json_schema', name: 'primary_risk_assessment', strict: true, schema: riskAssessmentSchema(position) } },
         }, controller.signal, () => progress('assessment'), () => progress('assessment'));
         assessment = JSON.parse(responseText(evidence, 'analysis'));
+        record = validateRiskAssessment(position, set, assessment);
+        record = await this.recoverRiskAssessment(position, set, record, key, model, savedRequest.provider,
+          reasoningEffort ?? savedRequest.reasoningEffort, controller.signal, () => progress('assessment'), () => progress('assessment'));
       }
-      const record = validateRiskAssessment(position, set, assessment);
+      record ??= validateRiskAssessment(position, set, assessment);
       this.primaryRiskCache.set(record);
       const updatedRisk = { ...riskForModel(record), ...(!savedPosition ? { primaryDocumentIdentity: { type: position.type, isin: position.isin.trim().toUpperCase() } } : {}) };
       if (updatedRisk.key !== String(asset.id)) throw new Error('Die Risikoprüfung lieferte eine abweichende Asset-Zuordnung. Der gespeicherte Befund wurde nicht geändert.');
@@ -1124,6 +1170,9 @@ export class PortfolioAnalysisService {
             stage = 'risk-review'; notify(true);
           }
           record = validateRiskAssessment(position, set, assessment);
+          if (assessment !== null)
+            record = await this.recoverRiskAssessment(position, set, record, key, model, request.provider, request.reasoningEffort,
+              controller.signal, notify, onRetry);
           this.primaryRiskCache.set(record);
         }
         primaryRiskRecords.push(record);
@@ -1272,6 +1321,9 @@ export class PortfolioAnalysisService {
                 stage = 'risk-review'; notify(true);
               }
               record = validateRiskAssessment(position, set, assessment, Date.now(), candidateKey);
+              if (assessment !== null)
+                record = await this.recoverRiskAssessment(position, set, record, key, model, request.provider, request.reasoningEffort,
+                  controller.signal, notify, onRetry);
               this.primaryRiskCache.set(record);
             }
             candidateRiskRecords.set(candidateKey, record);

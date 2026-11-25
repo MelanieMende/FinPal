@@ -8,6 +8,14 @@ import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 
 const config: ForgeConfig = {
+  hooks: {
+    postStart: async (_config, child) => {
+      child.once('exit', (code, signal) => {
+        console.log(`[startup] Electron-Prozess beendet: Exit-Code ${code ?? 'unbekannt'}, Signal ${signal ?? 'keines'}.`);
+      });
+      child.once('error', error => console.error(`[startup] Electron-Prozess konnte nicht gestartet werden: ${error.message}`));
+    },
+  },
   packagerConfig: {
     asar: true,
   },

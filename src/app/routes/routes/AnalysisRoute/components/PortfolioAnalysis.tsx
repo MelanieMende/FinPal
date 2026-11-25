@@ -201,7 +201,8 @@ export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, c
   const isStructuralFinding = (line: string) => structural.has(lineLabel(line))
     || (risk.structuralRisks?.includes('structure') === true && /(?:Produkt)?struktur|Gegenparteien/i.test(lineLabel(line)));
   const materialFindings = lines.filter(line => material.has(lineLabel(line)));
-  const metrics = lines.filter(line => metricPrefixes.some(prefix => line.startsWith(prefix)));
+  const metrics = lines.filter(line => metricPrefixes.some(prefix => line.startsWith(prefix))
+    && !/keine .*textstelle|nicht (?:belegt|gefunden|verfügbar)|fehlt|ungeklärt/i.test(line));
   const reviewedResidual = lines.filter(line => line.toLocaleLowerCase('de-DE').includes(': geprüfte restunsicherheit')
     || (risk.decisionReadiness === 'reviewed-uncertainty' && lineLabel(line) === 'Regulatorische Risiken' && /: offen\b/i.test(line))
     || (risk.decisionReadiness === 'reviewed-uncertainty' && lineLabel(line) === 'Fortführung' && /: offen\b/i.test(line)));

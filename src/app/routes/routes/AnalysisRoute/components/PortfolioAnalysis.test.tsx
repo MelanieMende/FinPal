@@ -212,6 +212,14 @@ it('marks an incomplete risk review red and a material risk without open points 
   expect(within(materialReview).getByText('Wesentliche Risiken')).toBeInTheDocument();
 });
 
+it('shows missing maturity evidence as an open point rather than a reported metric', () => {
+  render(<RiskReview risk={{ key: '1', status: 'unknown', materialRisks: [], sources: [],
+    rationale: 'Liquidität: 95 Mrd. USD, Periode 2026-09-30\ndebt-maturities: Keine periodisierte Zahl mit überprüfbarer Textstelle.' }} openSource={jest.fn()} />);
+  const open = screen.getByLabelText('Offene Prüfpunkte');
+  expect(within(open).getByText(/debt-maturities: Keine periodisierte Zahl/)).toBeVisible();
+  expect(within(open).queryByText(/Liquidität: 95/)).not.toBeInTheDocument();
+});
+
 it('replaces the missing risk review notice while work is in progress', () => {
   const risk: import('../../../../utils/robustForecastModel').FundamentalRiskAssessment = { key: '1', status: 'unknown', materialRisks: [], rationale: 'Noch kein Befund.', sources: [] };
   const { rerender } = render(<RiskReview risk={risk} notReviewed openSource={jest.fn()} />);

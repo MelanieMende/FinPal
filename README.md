@@ -74,7 +74,7 @@ Die Analyse verbindet aktuelle Portfolio- und Marktdaten mit Primärberichten, e
 
 ![FinPal Analyseablauf](docs/analysis-flow.svg)
 
-Die Grafik ist Bestandteil der technischen Dokumentation. Änderungen an Analysephasen, Risikosemantik, Blockierungslogik, Portfoliomodell oder Ergebnisvalidierung müssen gemeinsam mit `docs/analysis-flow.svg` aktualisiert werden.
+Die Grafik ist Bestandteil der technischen Dokumentation. Änderungen an Analysephasen, Risikosemantik, Blockierungslogik, Portfoliomodell oder Ergebnisvalidierung müssen gemeinsam mit `docs/analysis-flow.svg` aktualisiert und im sichtbaren Diagramm dargestellt werden. Änderungen allein an SVG-Metadaten reichen dafür nicht aus; das gerenderte Diagramm ist visuell zu prüfen.
 
 ### Code of Conduct
 

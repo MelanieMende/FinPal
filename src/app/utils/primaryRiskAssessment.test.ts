@@ -478,7 +478,7 @@ it('rechecks Munich Re when the annual legal-risk excerpt is upgraded', () => {
   const oldSet: RiskDocumentSet = { documents: [annual], discoveryChecked: true, gaps: [] };
   const newSet: RiskDocumentSet = { ...oldSet, documents: [{ ...annual, excerptVersion: 1 }] };
   expect(riskFingerprint(insurer, newSet)).not.toBe(riskFingerprint(insurer, oldSet));
-  expect(riskFingerprint(position, newSet)).toBe(riskFingerprint(position, oldSet));
+  expect(riskFingerprint(position, newSet)).not.toBe(riskFingerprint(position, oldSet));
 });
 
 it('does not label disclosed 2025 proceedings as a proven material regulatory risk', () => {

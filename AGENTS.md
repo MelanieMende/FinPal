@@ -21,4 +21,6 @@ Immer zunächst prüfen, ob ein Problem generisch gelöst werden kann.
 
 - `README.md` bindet `docs/analysis-flow.svg` als verbindliche Übersicht des FinPal-Analyseablaufs ein.
 - Bei Änderungen an Analysephasen, Recherche, Primärrisikoprüfung, `materialRisks`, `decisionReadiness`, Blockierungslogik, Portfoliomodell, Finanzierung, Teilplänen oder Ergebnisvalidierung muss das Flussdiagramm im selben Änderungssatz fachlich aktualisiert werden.
+- Diese Änderungen müssen im sichtbaren Diagramm durch passende Schritte, Entscheidungen, Verbindungen oder Beschriftungen dargestellt werden; eine Änderung nur an `<desc>`, `<title>` oder anderen nicht sichtbaren Metadaten reicht nicht aus. Beschreibe den tatsächlichen Ablauf einschließlich relevanter Alternativen und Rückführungen.
+- Nach jeder solchen Diagrammänderung die SVG rendern und visuell auf Lesbarkeit, Überlappungen sowie korrekte Pfeilrichtungen und Anschlüsse prüfen. Wenn das Rendern nicht möglich ist, die fehlende Sichtprüfung ausdrücklich als Einschränkung melden.
 - Belegte Risiken im Diagramm als Entscheidungsfaktoren darstellen. Nur ein separat benannter konkreter Daten-, Strategie-, Finanzierungs- oder Ausführungsgrund ist ein Blocker.

@@ -19,9 +19,11 @@ export class PortfolioResearchCache {
       for (const entry of saved.entries.slice(-200)) {
         if (!Array.isArray(entry) || entry.length !== 2) continue;
         const [key, value] = entry;
+        let deterministic = false;
+        try { deterministic = JSON.parse(key).provider === 'deterministic-online'; } catch { /* Legacy keys remain readable if sourced. */ }
         if (typeof key !== 'string' || !value || typeof value.text !== 'string' || !value.text.trim()
           || typeof value.fetchedAt !== 'number' || !fresh(value.fetchedAt, Date.now())
-          || !Array.isArray(value.sources) || !value.sources.length || !value.sources.every((source: AnalysisSource) => {
+          || !Array.isArray(value.sources) || (!value.sources.length && !deterministic) || !value.sources.every((source: AnalysisSource) => {
             if (!source || typeof source.title !== 'string' || typeof source.url !== 'string') return false;
             try { const url = new URL(source.url); return ['https:', 'http:'].includes(url.protocol) && !url.username && !url.password; }
             catch { return false; }
@@ -36,13 +38,14 @@ export class PortfolioResearchCache {
     this.entries.delete(key);
     return undefined;
   }
-  findForSecurity(security: ReturnType<typeof buildResearchSecurities>[number], includeDiscovery = false): Research | undefined {
+  findForSecurity(security: ReturnType<typeof buildResearchSecurities>[number], includeDiscovery = false, provider?: string): Research | undefined {
     let latest: Research | undefined;
     for (const [key, value] of this.entries) {
       if (!fresh(value.fetchedAt, Date.now())) continue;
       try {
         const input = JSON.parse(key);
-        if (input.researchPolicy === RESEARCH_POLICY && (includeDiscovery || input.provider !== 'deterministic-online') && Array.isArray(input.securities)
+        if (input.researchPolicy === RESEARCH_POLICY && (includeDiscovery || input.provider !== 'deterministic-online')
+          && (!provider || input.provider === provider) && Array.isArray(input.securities)
           && input.securities.some((item: unknown) => JSON.stringify(item) === JSON.stringify(security))
           && (!latest || value.fetchedAt > latest.fetchedAt)) latest = value;
       } catch { /* Ignore unrelated or malformed legacy keys. */ }

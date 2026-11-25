@@ -17,6 +17,9 @@ import { createYahooMarketForecastProvider } from './app/utils/marketForecastPro
 import { createCandidateMarketQuoteProvider } from './app/utils/candidateMarketQuote';
 import { createDeterministicOnlineResearchProvider } from './app/utils/deterministicOnlineResearch';
 import { fetchGermanHousePriceIndex } from './app/utils/germanHousePriceIndex';
+import { guardConsoleOutput } from './app/utils/consoleOutput';
+
+guardConsoleOutput([process.stdout, process.stderr]);
 
 // Handle creating/removing shortcuts on Windows when installing/uninstalling.
 if (started) {

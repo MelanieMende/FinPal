@@ -5,10 +5,28 @@ import { MARKET_PRICE_UPDATED_AT_KEY, MARKET_PRICE_UPDATED_EVENT } from '../../.
 
 describe('AssetsRoute component', () => {
 	const originalSaveSelectedTab = window.API.saveSelectedTab;
+	const originalGetTradeRepublicQuotes = window.API.getTradeRepublicQuotes;
 	beforeEach(() => localStorage.removeItem(ASSET_TYPE_FILTER_KEY));
 	afterEach(() => {
 		localStorage.removeItem(ASSET_TYPE_FILTER_KEY);
 		window.API.saveSelectedTab = originalSaveSelectedTab;
+		window.API.getTradeRepublicQuotes = originalGetTradeRepublicQuotes;
+	});
+
+	it('places the four overview cards above the asset types and uses broker positions without cash', async () => {
+		window.API.getTradeRepublicQuotes = jest.fn().mockResolvedValue({ fetchedAt: '2026-11-20T12:00:00Z', quotes: [
+			{ name: 'A', isin: 'US0000000001', netValue: 120 }, { name: 'B', isin: 'US0000000002', netValue: 80 },
+		] });
+		render(<AssetsRoute />, { preloadedState: { assets: [], transactions: [], dividends: [], cash: [{ ID: 1, date: '2026-11-20', type: 'Deposit', amount: 50 }] } });
+		const total = screen.getByTestId('asset-total-wealth');
+		const overview = total.parentElement!;
+		expect(Array.from(overview.children).map(element => element.getAttribute('data-testid'))).toEqual([
+			'asset-total-wealth', 'asset-trade-republic-value', 'asset-type-value-RealEstate', 'asset-cash-value',
+		]);
+		expect(await screen.findByText(/200,00/)).toBeInTheDocument();
+		expect(screen.getByTestId('asset-cash-value')).toHaveTextContent('50,00');
+		expect(within(screen.getByTestId('asset-type-row')).getByTestId('asset-type-value-Stock')).toBeInTheDocument();
+		expect(within(screen.getByTestId('asset-type-row')).queryByTestId('asset-type-value-RealEstate')).not.toBeInTheDocument();
 	});
 
 	it.each(['click', 'Enter', ' '])('opens the Cash tab via %s without changing the asset filter', async (activation) => {
@@ -51,7 +69,7 @@ describe('AssetsRoute component', () => {
 		// Positions 150 + liquidity (300 - 2 - 20 + 5 - 100 + 7) = 340.
 		const total = screen.getByTestId('asset-total-wealth');
 		expect(total.parentElement?.firstElementChild).toBe(total);
-		expect(total).toHaveTextContent('Total Wealth');
+		expect(total).toHaveTextContent('Gesamtvermögen');
 		expect(total).toHaveTextContent(/340,00/);
 		await act(async () => fireEvent.click(screen.getByTestId('asset-type-value-Stock')));
 		expect(total).toHaveTextContent(/340,00/);
@@ -131,7 +149,7 @@ describe('AssetsRoute component', () => {
 			['Stock', 'Aktie', 175, 'chart'], ['ETF', 'ETF', 80, 'pie-chart'], ['Bond', 'Anleihe', 60, 'bank-account'],
 			['Fund', 'Fonds', 10.9, 'briefcase'],
 			['Crypto', 'Krypto', 100, null], ['Commodity', 'Rohstoff', 30, 'cube'],
-			['RealEstate', 'Immobilie', 0, 'home'], ['CashEquivalent', 'Geldmarkt', 5, 'dollar'],
+			['RealEstate', 'Immobilien', 0, 'home'], ['CashEquivalent', 'Geldmarkt', 5, 'dollar'],
 			['IPO', 'IPO', 201, 'time'],
 		];
 		for (const [type, label, value, icon] of expected) {

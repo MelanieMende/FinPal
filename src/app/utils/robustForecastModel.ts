@@ -14,6 +14,8 @@ export interface FundamentalRiskAssessment {
   primaryDocumentsFingerprintVersion?: 2;
   primaryExcerptVersion?: number;
   primaryDocumentsChanged?: boolean;
+  primaryDocumentIdentity?: { type: string; isin: string };
+  primaryDocumentGaps?: string[];
   decisionReadiness?: 'reviewed-uncertainty';
   decisionBlocker?: { flag: string; reason: string };
   materialRisks: string[];
@@ -144,6 +146,9 @@ export function readFundamentalRisks(value: unknown, sources: AnalysisSource[]):
     ...(v.primaryDocumentsFingerprintVersion === 2 ? { primaryDocumentsFingerprintVersion: 2 as const } : {}),
     ...(Number.isInteger(v.primaryExcerptVersion) && v.primaryExcerptVersion >= 1 ? { primaryExcerptVersion: v.primaryExcerptVersion } : {}),
     ...(v.primaryDocumentsChanged === true ? { primaryDocumentsChanged: true } : {}),
+    ...(v.primaryDocumentIdentity && typeof v.primaryDocumentIdentity.type === 'string' && typeof v.primaryDocumentIdentity.isin === 'string'
+      ? { primaryDocumentIdentity: { type: v.primaryDocumentIdentity.type, isin: v.primaryDocumentIdentity.isin } } : {}),
+    ...(Array.isArray(v.primaryDocumentGaps) ? { primaryDocumentGaps: v.primaryDocumentGaps.filter((gap: unknown) => typeof gap === 'string' && gap.length <= 1000).slice(0, 30) } : {}),
     ...(Array.isArray(v.primaryDocuments) ? { primaryDocuments: v.primaryDocuments.flatMap((document: unknown) => {
       if (!document || typeof document !== 'object') return [];
       const candidate = document as AnalysisSource;

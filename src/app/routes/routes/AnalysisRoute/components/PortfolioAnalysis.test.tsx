@@ -61,6 +61,41 @@ async function openAISettings() {
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'KI-Einstellungen' })); });
 }
 
+it('shows cached search results for a held asset without a saved recommendation', async () => {
+  const report = await window.API.analyzePortfolio!({} as never);
+  report.mode = 'ai';
+  report.recommendations = report.recommendations.filter(item => item.assetId !== 2);
+  window.API.getPortfolioResearchStatus = jest.fn().mockResolvedValue([{ assetId: 2,
+    fetchedAt: new Date(Date.now() - 1000).toISOString(), expiresAt: new Date(Date.now() + 60000).toISOString(),
+    text: '1 Nachrichtentreffer', sources: [{ title: 'Gefundene Meldung', url: 'https://example.com/news' }] }]);
+  const request: import('../../../../utils/portfolioAnalysis').PortfolioAnalysisRequest = { provider: 'api', positions: buildAnalysisPositions(assets), priceUpdatedAt: null,
+    profile: { goal: 'growth' as const, risk: 'medium' as const, horizonYears: 10, buyBudget: 0 } };
+  const store = setupStore({ assets });
+  store.dispatch(analyzePortfolio.fulfilled({ report, snapshot: '' }, 'initial', { request, snapshot: '' }));
+  render(<PortfolioAnalysis standalone priceUpdatedAt={null} />, { store });
+  const section = screen.getByRole('region', { name: 'Online-Recherche für Crypto Asset' });
+  const analysis = screen.getByRole('region', { name: 'KI-Analyseergebnis für Crypto Asset' });
+  expect(within(analysis).getByRole('button', { name: 'Asset 2 neu analysieren' })).toBeDisabled();
+  const card = analysis.closest('article')!;
+  expect(within(card).getByText('Noch nicht analysiert')).toBeInTheDocument();
+  const risk = within(card).getByRole('region', { name: 'Unternehmens- und Produktrisiken' });
+  expect(within(risk).getByText('Noch nicht geprüft')).toBeInTheDocument();
+  expect(within(risk).getByText(/noch keine inhaltliche Prüfung/)).toBeInTheDocument();
+  expect(within(risk).queryByText('Geprüft · offene Punkte')).not.toBeInTheDocument();
+  expect(within(risk).queryByText('Befunde anzeigen')).not.toBeInTheDocument();
+  const riskButton = within(risk).getByRole('button', { name: 'Unternehmens- und Produktrisiken für Asset 2 prüfen' });
+  expect(riskButton).toBeEnabled();
+  jest.mocked(window.API.refreshPortfolioPrimaryRisk!).mockResolvedValue({ ...report, fundamentalRisks: [{ key: '2', status: 'unknown', materialRisks: [], rationale: 'Prüfung abgeschlossen.', sources: [], primaryDocumentsCheckedAt: new Date().toISOString() }] });
+  fireEvent.click(riskButton);
+  await waitFor(() => expect(window.API.refreshPortfolioPrimaryRisk).toHaveBeenCalledWith(expect.objectContaining({ id: 2, shares: 1 }), expect.anything(), false, expect.any(String)));
+  await waitFor(() => expect(within(risk).queryByText('Noch nicht geprüft')).not.toBeInTheDocument());
+  expect(within(card).queryByText(/Risiken: Kein assetbezogener/)).not.toBeInTheDocument();
+  await waitFor(() => expect(within(section).getByText('Online-Recherche: gültig')).toBeInTheDocument());
+  fireEvent.click(within(section).getByText('Online-Recherche: gültig'));
+  expect(within(section).getByText('1 Nachrichtentreffer')).toBeInTheDocument();
+  expect(within(section).getByRole('link', { name: 'Gefundene Meldung' })).toHaveAttribute('href', 'https://example.com/news');
+});
+
 it('shows the running analysis log and restores the last log after a restart', async () => {
   const { store, unmount } = render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
   await open();
@@ -175,6 +210,19 @@ it('marks an incomplete risk review red and a material risk without open points 
   const materialReview = screen.getByRole('region', { name: 'Unternehmens- und Produktrisiken' });
   expect(materialReview).toHaveClass('border-amber-400/30');
   expect(within(materialReview).getByText('Wesentliche Risiken')).toBeInTheDocument();
+});
+
+it('replaces the missing risk review notice while work is in progress', () => {
+  const risk: import('../../../../utils/robustForecastModel').FundamentalRiskAssessment = { key: '1', status: 'unknown', materialRisks: [], rationale: 'Noch kein Befund.', sources: [] };
+  const { rerender } = render(<RiskReview risk={risk} notReviewed openSource={jest.fn()} />);
+  expect(screen.getByText(/noch keine inhaltliche Prüfung/)).toBeInTheDocument();
+  rerender(<RiskReview risk={risk} notReviewed openSource={jest.fn()} checkStatus="Dokumenttext wird geprüft" />);
+  expect(screen.getByText('Wird bearbeitet')).toBeInTheDocument();
+  expect(screen.getByRole('status')).toHaveTextContent('Dokumenttext wird geprüft');
+  expect(screen.queryByText(/noch keine inhaltliche Prüfung/)).not.toBeInTheDocument();
+  rerender(<RiskReview risk={risk} notReviewed openSource={jest.fn()} />);
+  expect(screen.getByText('Noch nicht geprüft')).toBeInTheDocument();
+  expect(screen.getByText(/noch keine inhaltliche Prüfung/)).toBeInTheDocument();
 });
 
 it('shows a concrete data blocker in the open risk panel without expanding details', () => {
@@ -311,12 +359,13 @@ it('stops promising reuse exactly at the 24-hour deadline', () => {
 it('shows a due report reload from the document load time even after a recent risk review', () => {
   const loaded = Date.parse('2026-10-14T10:00:00Z');
   const risk: import('../../../../utils/robustForecastModel').FundamentalRiskAssessment = { key: '1', status: 'assessed', materialRisks: [], rationale: 'Geprüft.', sources: [],
-    primaryDocumentsCheckedAt: new Date(loaded + 23 * 60 * 60 * 1000).toISOString() };
+    primaryDocumentsCheckedAt: new Date(loaded + 23 * 60 * 60 * 1000).toISOString(),
+    primaryDocuments: [{ title: 'Bericht', url: 'https://example.com/report' }] };
   const props = { risk, now: loaded + 24 * 60 * 60 * 1000, openSource: jest.fn(), onReload: jest.fn(),
     disabled: false, loading: false, forceReload: false, onCheck: jest.fn() };
   const { rerender } = render(<PrimaryDocumentsIndicator {...props}
     status={{ assetId: 1, loadedAt: new Date(loaded).toISOString(), freshnessCheckedAt: new Date(loaded).toISOString(), needsRefresh: false }} />);
-  expect(screen.getByText(/Primärberichte: keine Berichte geladen/)).toBeInTheDocument();
+  expect(screen.getByText(/Primärberichte: geladen · Aktualität offen/)).toBeInTheDocument();
   expect(screen.getByText(/^Aktualität zuletzt geprüft:/)).toHaveTextContent('erneute Prüfung bei Analyse fällig');
   expect(screen.getByText(/^Berichte zuletzt geladen:/).tagName).toBe('P');
   expect(screen.getByText(/^Risiken zuletzt geprüft:/).tagName).toBe('P');
@@ -336,10 +385,15 @@ it('shows a due report reload from the document load time even after a recent ri
   rerender(<PrimaryDocumentsIndicator {...props} now={loaded + 2 * 60 * 60 * 1000}
     status={{ assetId: 1, loadedAt: new Date(loaded).toISOString(), freshnessCheckedAt: new Date(loaded + 60 * 60 * 1000).toISOString(), needsRefresh: true, newerReportAvailable: true, publicationCheckVerified: true, freshnessCheckSucceeded: true }} />);
   expect(screen.getByText(/^Aktualität zuletzt geprüft:/)).toHaveTextContent('erneute Prüfung bei Analyse in 23 Std. 00 Min.');
-  expect(screen.getByText(/neuere Berichtsversion verfügbar/)).toBeInTheDocument();
+  expect(screen.getByText(/neuer Bericht verfügbar/)).toBeInTheDocument();
   rerender(<PrimaryDocumentsIndicator {...props} now={loaded + 2 * 60 * 60 * 1000}
     status={{ assetId: 1, loadedAt: new Date(loaded).toISOString(), freshnessCheckedAt: new Date(loaded + 60 * 60 * 1000).toISOString(), needsRefresh: true, freshnessCheckSucceeded: false, publicationCheckVerified: false, freshnessSupported: true }} />);
   expect(screen.getByText(/^Aktualität zuletzt geprüft:/)).toHaveTextContent('Prüfung fehlgeschlagen');
+  expect(screen.getByText(/^Aktualität zuletzt geprüft:/)).toHaveTextContent('nächster automatischer Versuch bei Analyse in 23 Std. 00 Min.');
+  rerender(<PrimaryDocumentsIndicator {...props} now={loaded + 2 * 60 * 60 * 1000}
+    status={{ assetId: 1, loadedAt: new Date(loaded).toISOString(), freshnessCheckedAt: new Date(loaded + 60 * 60 * 1000).toISOString(), needsRefresh: false, freshnessCheckSucceeded: true, publicationCheckVerified: false, freshnessSupported: true, freshnessCoverage: 'sec-no-periodic-reports' }} />);
+  expect(screen.getByText(/SEC-Verzeichnis geprüft · Prospektaktualität offen/)).toBeInTheDocument();
+  expect(screen.getByText(/Änderungen am Prospekt wurden nicht automatisch geprüft/)).toBeInTheDocument();
 
 });
 
@@ -494,7 +548,14 @@ it('orders asset analysis by workflow and replaces quote, research, risk and for
   expect(researchDetails).not.toHaveAttribute('open');
   expect(within(researchDetails).getByText('Online-Recherche: muss neu geladen werden')).toBeInTheDocument();
   fireEvent.click(within(researchDetails).getByText('Online-Recherche: muss neu geladen werden'));
-  expect(within(researchDetails).getByRole('link', { name: '[0] Report' })).toBeInTheDocument();
+  const evidenceToggle = within(analysis).getByText('Belege dieser Analyse');
+  expect(evidenceToggle.closest('details')).not.toHaveAttribute('open');
+  expect(within(analysis).getByRole('link', { name: '[0] Report' })).not.toBeVisible();
+  fireEvent.click(evidenceToggle);
+  expect(within(analysis).getByRole('link', { name: '[0] Report' })).toBeInTheDocument();
+  fireEvent.click(evidenceToggle);
+  expect(evidenceToggle.closest('details')).not.toHaveAttribute('open');
+  expect(within(researchDetails).queryByRole('link', { name: '[0] Report' })).not.toBeInTheDocument();
   expect(risk).toHaveTextContent('Alter gespeicherter Risikobefund');
   expect(forecast).toHaveTextContent(/Analysten-Kursziel\s*60 EUR/);
 
@@ -504,6 +565,7 @@ it('orders asset analysis by workflow and replaces quote, research, risk and for
     stage: 'prices', activeAssetId: 1, lastActivityAt: Date.now(),
   } })); });
   expect(within(getCard()).getByTestId('asset-price-loading-1')).toBeInTheDocument();
+  expect(within(getCard()).getByTestId('asset-price-loading-1').closest('p')).toBeNull();
   expect(within(getCard()).getByRole('region', { name: 'Aktueller Kurs für Stock Asset' })).not.toHaveTextContent('50,00');
 
   act(() => { store.dispatch(analysisProgressReceived({ requestId: 'refresh', progress: {
@@ -511,6 +573,7 @@ it('orders asset analysis by workflow and replaces quote, research, risk and for
   } })); });
   const refreshedResearch = within(getCard()).getByRole('region', { name: 'Online-Recherche für Stock Asset' });
   expect(within(refreshedResearch).getByTestId('asset-research-loading-1')).toHaveTextContent('Onlinequellen werden gesucht');
+  expect(within(refreshedResearch).getByTestId('asset-research-loading-1').closest('p')).toBeNull();
   expect(within(refreshedResearch).queryByRole('link', { name: '[0] Report' })).not.toBeInTheDocument();
 
   act(() => { store.dispatch(analysisProgressReceived({ requestId: 'refresh', progress: {
@@ -634,7 +697,7 @@ it('keeps the asset card visible while refreshing only its primary risk assessme
   await open(); fillProfile();
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
   jest.mocked(window.API.analyzePortfolio!).mockClear();
-  const refreshRiskButton = screen.getByRole('button', { name: 'Unternehmens- und Produktrisiken für Asset 1 neu prüfen' });
+  const refreshRiskButton = screen.getByRole('button', { name: 'Unternehmens- und Produktrisiken für Asset 1 prüfen' });
   expect(refreshRiskButton).toBeInTheDocument();
   expect(refreshRiskButton.closest('section[aria-label="Unternehmens- und Produktrisiken"]')).not.toBeNull();
   fireEvent.click(refreshRiskButton);
@@ -672,6 +735,16 @@ it('refreshes online research for one asset without starting a new AI analysis',
   expect(screen.getByRole('status')).toHaveTextContent('KI-Bewertung wurde beibehalten');
 });
 
+it('shows a failed manual search directly in the affected asset card', async () => {
+  jest.mocked(window.API.refreshPortfolioResearch!).mockRejectedValue(new Error('Der Suchanbieter ist nicht erreichbar.'));
+  render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
+  await open(); fillProfile();
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' })); });
+  const section = screen.getByRole('region', { name: 'Online-Recherche für Stock Asset' });
+  fireEvent.click(within(section).getByRole('button', { name: 'Online-Recherche für Asset 1 neu laden' }));
+  expect(await within(section).findByRole('alert')).toHaveTextContent('Der Suchanbieter ist nicht erreichbar.');
+});
+
 it('displays the shared financing check and its unresolved deductions', async () => {
   const response = await window.API.analyzePortfolio!({} as never);
   jest.mocked(window.API.analyzePortfolio!).mockResolvedValue({ ...response, fundingCheck: {
@@ -700,6 +773,7 @@ it('starts a single asset refresh, keeps existing results visible and preserves 
   expect(window.API.analyzePortfolio).toHaveBeenLastCalledWith(expect.objectContaining({ targetAssetId: 1, positions: expect.arrayContaining([expect.objectContaining({ id: 1 }), expect.objectContaining({ id: 2 })]) }), expect.any(String));
   expect(screen.getByText('Begründung')).toBeInTheDocument();
   expect(screen.getByTestId('asset-reload-status-1')).toHaveTextContent('Kursaktualisierung läuft');
+  expect(screen.getByTestId('asset-reload-status-1').closest('p')).toBeNull();
   expect(screen.queryByTestId('asset-reload-status-2')).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Asset 2 neu analysieren' })).toBeDisabled();
   await act(async () => { reject(new Error('Einzelanalyse fehlgeschlagen')); });
@@ -787,6 +861,7 @@ it('does not transmit data until started and analyzes all held positions using t
   expect(tradeCheck.getByText(/100 EUR Marktwert/)).toBeInTheDocument();
   expect(tradeCheck.getByText(/Verlusttöpfe unbekannt/)).toBeInTheDocument();
   expect(tradeCheck.getByText(/Kein Verkauf zur Bereinigung/)).toBeInTheDocument();
+  fireEvent.click(within(screen.getByRole('region', { name: /Analyseergebnis für Stock Asset/ })).getByText('Belege dieser Analyse'));
   expect(screen.getAllByRole('link', { name: '[0] Report' })[0]).toHaveAttribute('href', 'https://example.com/report');
   expect(localStorage.getItem(ANALYSIS_PROFILE_KEY)).toContain('growth');
   fireEvent.change(screen.getByLabelText('Anlagedauer (Jahre)'), { target: { value: '5' } });

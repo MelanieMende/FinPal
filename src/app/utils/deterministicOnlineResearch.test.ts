@@ -39,5 +39,48 @@ it('keeps deterministic source links and reports the gap when the online search 
   expect(result.sources).toContainEqual(expect.objectContaining({ url: 'https://finance.yahoo.com/quote/EXA.DE/history/' }));
   expect(result.text).toContain('Nachrichtensuche ist fehlgeschlagen');
   await provider(position);
-  expect(search).toHaveBeenCalledTimes(2);
+  expect(search).toHaveBeenCalledTimes(4);
+});
+
+it('retries by name when the full search fails and uses the successful response', async () => {
+  const search = jest.fn().mockRejectedValueOnce(new Error('provider failure')).mockResolvedValueOnce({ news: [
+    { title: 'News', link: 'https://example.com/news' },
+  ] });
+  const result = await createDeterministicOnlineResearchProvider({ search })(position);
+  expect(search.mock.calls.map(call => call[0])).toEqual(['EXA.DE DE000EXAMPLE Example AG', 'Example AG']);
+  expect(result).toMatchObject({ searchStatus: 'completed', newsCount: 1 });
+});
+
+it('reports a failed name fallback without claiming that the first search failed', async () => {
+  const search = jest.fn().mockResolvedValueOnce({ news: [] }).mockRejectedValueOnce(new Error('provider failure'));
+  const result = await createDeterministicOnlineResearchProvider({ search })(position);
+  expect(result).toMatchObject({ searchStatus: 'failed', failureReason: 'provider', failureStage: 'fallback' });
+  expect(result.text).toContain('erste Suche lieferte keine nutzbaren Nachrichten');
+});
+
+it('uses independently validated news when Yahoo rejects an unrelated response schema field', async () => {
+  const error = Object.assign(new Error('Failed Yahoo Schema validation'), { name: 'FailedYahooValidationError', result: { news: [
+    { title: 'Nachricht', link: 'https://example.com/news', providerPublishTime: 1795600000 },
+    { title: 'Unsicher', link: 'javascript:alert(1)' }, null,
+  ] } });
+  const result = await createDeterministicOnlineResearchProvider({ search: jest.fn().mockRejectedValue(error) })(position);
+  expect(result).toMatchObject({ searchStatus: 'completed', newsCount: 1 });
+  expect(result.sources).toContainEqual(expect.objectContaining({ url: 'https://example.com/news', title: expect.stringContaining('2026-11-25') }));
+  expect(result.sources.some(source => source.url.startsWith('javascript:'))).toBe(false);
+});
+
+it('does not report a successful empty search when all returned news is malformed', async () => {
+  const result = await createDeterministicOnlineResearchProvider({ search: jest.fn().mockResolvedValue({ news: [{ title: 'Invalid', link: 'javascript:alert(1)' }] }) })(position);
+  expect(result).toMatchObject({ searchStatus: 'failed', failureReason: 'provider' });
+});
+
+it('retries by name when the full identifier query yields no usable news', async () => {
+  const search = jest.fn().mockResolvedValueOnce({ news: [] }).mockResolvedValueOnce({ news: [
+    { title: 'News', publisher: 'Publisher', link: 'https://example.com/news' },
+  ] });
+  const result = await createDeterministicOnlineResearchProvider({ search })(position);
+  expect(search.mock.calls.map(call => call[0])).toEqual(['EXA.DE DE000EXAMPLE Example AG', 'Example AG']);
+  expect(result.newsCount).toBe(1);
+  expect(result.sources).toContainEqual(expect.objectContaining({ url: 'https://example.com/news' }));
+  expect(result.text).toContain('und "Example AG"');
 });

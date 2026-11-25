@@ -430,7 +430,41 @@ function productDocumentPeriod(text: string, now: number): string | null {
   return dates.length ? new Date(Math.max(...dates)).toISOString().slice(0, 10) : null;
 }
 
-type SecSubmission = { filings?: { recent?: { form?: string[]; accessionNumber?: string[]; primaryDocument?: string[]; reportDate?: string[] } } };
+type SecSubmission = { filings?: { recent?: { form?: string[]; accessionNumber?: string[]; primaryDocument?: string[]; reportDate?: string[]; filingDate?: string[] } } };
+type SecProspectus = { url: string; title: string; period: null; form: string; index: number; filedAt: string };
+function secProspectusEntries(cik: string, value: SecSubmission): SecProspectus[] {
+  const recent = value.filings?.recent;
+  if (!recent?.form || !recent.accessionNumber || !recent.primaryDocument || !recent.filingDate) return [];
+  return recent.form.flatMap((form, index) => {
+    const accession = recent.accessionNumber![index]?.replace(/-/g, '');
+    const document = recent.primaryDocument![index];
+    const filedAt = recent.filingDate![index];
+    if (!['FWP', '424B4', '424B3', 'S-1', 'S-1/A'].includes(form) || !/^\d{18}$/.test(accession ?? '')
+      || !/^[A-Za-z0-9._-]+\.html?$/i.test(document ?? '') || !/^\d{4}-\d{2}-\d{2}$/.test(filedAt ?? '')) return [];
+    return [{ url: `https://www.sec.gov/Archives/edgar/data/${Number(cik)}/${accession}/${document}`,
+      title: `SEC ${form} – Emittentenprospekt (${filedAt})`, period: null as null, form, index, filedAt }];
+  });
+}
+const prospectusText = (html: string) => html.replace(/<[^>]*>/g, ' ').replace(/&nbsp;|&#160;/gi, ' ').replace(/\s+/g, ' ').toUpperCase();
+function securityClassForIsin(text: string, isin: string): string | null {
+  const index = text.indexOf(isin);
+  if (index < 0) return null;
+  const near = text.slice(Math.max(0, index - 500), index + 500);
+  const classes = [...near.matchAll(/\bCLASS\s+([A-Z0-9]{1,4})\s+(?:COMMON|ORDINARY)\s+(?:STOCK|SHARES?)\b/g)];
+  const distinct = [...new Set(classes.map(match => match[1]))];
+  return distinct.length === 1 ? distinct[0] : null;
+}
+function secProspectuses(cik: string, value: SecSubmission): { url: string; title: string; period: null }[] {
+  const recent = value.filings?.recent;
+  if (!recent?.form || !recent.accessionNumber || !recent.primaryDocument) return [];
+  return recent.form.flatMap((form, index) => {
+    if (!['FWP', '424B4', '424B3', 'S-1', 'S-1/A'].includes(form)) return [];
+    const accession = recent.accessionNumber![index]?.replace(/-/g, '');
+    const document = recent.primaryDocument![index];
+    if (!/^\d{18}$/.test(accession ?? '') || !/^[A-Za-z0-9._-]+\.html?$/i.test(document ?? '')) return [];
+    return [{ url: `https://www.sec.gov/Archives/edgar/data/${Number(cik)}/${accession}/${document}`, title: `SEC ${form} Prospekt`, period: null as null }];
+  }).sort((a, b) => Number(!a.title.includes('FWP')) - Number(!b.title.includes('FWP'))).slice(0, 8);
+}
 function secUrls(cik: string, value: SecSubmission): { url: string; title: string; period: string | null }[] {
   const recent = value.filings?.recent;
   if (!recent?.form || !recent.accessionNumber || !recent.primaryDocument) return [];
@@ -467,10 +501,10 @@ function secUrls(cik: string, value: SecSubmission): { url: string; title: strin
 
 export class PrimaryRiskResearch {
   private readonly cache = new Map<string, RiskDocument>();
-  private readonly freshnessChecks = new Map<string, { sources: string[]; checkedAt: number; newerReportAvailable: boolean; succeeded?: boolean }>();
+  private readonly freshnessChecks = new Map<string, { sources: string[]; checkedAt: number; newerReportAvailable: boolean; succeeded?: boolean; coverage?: 'sec-no-periodic-reports' | 'sec-prospectus-incomplete' }>();
   private readonly freshnessInFlight = new Map<string, Promise<ReturnType<PrimaryRiskResearch['publicationStatus']>>>();
   private readonly submissions = new Map<string, { fetchedAt: number; filings: ReturnType<typeof secUrls> }>();
-  private readonly cikCache = new Map<string, { fetchedAt: number; cik: string | null }>();
+  private readonly cikCache = new Map<string, { fetchedAt: number; cik: string | null; prospectus?: string; newerProspectus?: { url: string; title: string } }>();
   private lufthansaReportIndexCache?: { fetchedAt: number; latestPeriod: string | null; verified: boolean };
   private tickerDirectory?: Promise<Array<{ cik_str: number; ticker: string; title: string }>>;
   constructor(private readonly file: string, private readonly requestFetch: typeof fetch = fetch, private readonly now = Date.now,
@@ -495,7 +529,10 @@ export class PrimaryRiskResearch {
       }
       if ([2, 3].includes(saved.version) && Array.isArray(saved.identifiers)) for (const entry of saved.identifiers) {
         if (entry && typeof entry.isin === 'string' && Number.isFinite(entry.fetchedAt) &&
-          (entry.cik === null || /^\d{10}$/.test(entry.cik))) this.cikCache.set(entry.isin, { fetchedAt: entry.fetchedAt, cik: entry.cik });
+          (entry.cik === null || /^\d{10}$/.test(entry.cik))) this.cikCache.set(entry.isin, { fetchedAt: entry.fetchedAt, cik: entry.cik,
+            ...(typeof entry.prospectus === 'string' && entry.cik && entry.prospectus.startsWith(`https://www.sec.gov/Archives/edgar/data/${Number(entry.cik)}/`) ? { prospectus: entry.prospectus } : {}),
+            ...(entry.cik && typeof entry.newerProspectus?.url === 'string' && entry.newerProspectus.url.startsWith(`https://www.sec.gov/Archives/edgar/data/${Number(entry.cik)}/`)
+              && typeof entry.newerProspectus.title === 'string' ? { newerProspectus: entry.newerProspectus } : {}) });
       }
     } catch { /* Missing or damaged cache is rebuilt from primary sources. */ }
   }
@@ -536,7 +573,7 @@ export class PrimaryRiskResearch {
   }
   publicationStatus(position: Pick<AnalysisPosition, 'isin' | 'type'>, sources: AnalysisSource[]) {
     const isin = position.isin.trim().toUpperCase();
-    const supported = isin === 'DE0008232125' || (position.type === 'Stock' && !!SEC_CIK_BY_ISIN[isin]);
+    const supported = isin === 'DE0008232125' || (position.type === 'Stock' && !!(SEC_CIK_BY_ISIN[isin] || this.cikCache.get(isin)?.cik));
     const urls = sources.map(source => source.url).sort();
     const saved = this.freshnessChecks.get(isin);
     const matching = saved && JSON.stringify(saved.sources) === JSON.stringify(urls) ? saved : undefined;
@@ -544,8 +581,9 @@ export class PrimaryRiskResearch {
     const succeeded = saved ? saved.succeeded !== false : null;
     return { freshnessSupported: supported, freshnessCheckedAt: saved ? new Date(saved.checkedAt).toISOString() : null,
       freshnessCheckSucceeded: succeeded, freshnessDue: !fresh,
+      ...(matching?.coverage === 'sec-no-periodic-reports' || matching?.coverage === 'sec-prospectus-incomplete' ? { freshnessCoverage: matching.coverage } : {}),
       newerReportAvailable: !!matching && matching.newerReportAvailable,
-      publicationCheckVerified: !!matching && succeeded === true && fresh };
+      publicationCheckVerified: !!matching && succeeded === true && fresh && !matching.coverage };
   }
   async checkPublicationFreshness(position: Pick<AnalysisPosition, 'isin' | 'type'>, sources: AnalysisSource[]) {
     const isin = position.isin.trim().toUpperCase();
@@ -562,22 +600,69 @@ export class PrimaryRiskResearch {
     if (!supported) throw new Error('Für dieses Asset ist noch keine automatische Prüfung auf neue Berichte verfügbar.');
     try {
       let newerReportAvailable: boolean;
+      let coverage: 'sec-prospectus-incomplete' | undefined;
       if (isin === 'DE0008232125') {
         const result = await this.lufthansaReportFreshness(position, sources, true);
         if (!result.verified) throw new Error('Die Berichtsübersicht konnte nicht zuverlässig geprüft werden.');
         newerReportAvailable = result.newerReportAvailable;
       } else {
-        const cik = SEC_CIK_BY_ISIN[isin];
+        const cik = SEC_CIK_BY_ISIN[isin] || this.cikCache.get(isin)?.cik;
+        if (!cik) throw new Error('Keine verlässlich zugeordnete SEC-Kennung vorhanden.');
         const response = await this.requestFetch(`https://data.sec.gov/submissions/CIK${cik}.json`, {
           headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' }, signal: AbortSignal.timeout(10000),
         });
         if (!response.ok) throw new Error('Das SEC-Einreichungsverzeichnis konnte nicht geprüft werden.');
-        const filings = secUrls(cik, await response.json());
-        if (!filings.length) throw new Error('Keine zuverlässig zugeordneten SEC-Berichte gefunden.');
+        const submission = await response.json() as SecSubmission;
+        const filings = secUrls(cik, submission);
         const known = new Set(sources.map(source => source.url));
-        newerReportAvailable = filings.some(filing => !known.has(filing.url));
+        const identity = this.cikCache.get(isin);
+        const prospectus = identity?.prospectus;
+        const entries = secProspectusEntries(cik, submission);
+        const anchor = prospectus && entries.find(filing => filing.url === prospectus);
+        if (prospectus && anchor) {
+          if (!/^[A-Z0-9]{12}$/.test(isin)) throw new Error('Die ISIN ist für den Prospektabgleich ungültig.');
+          const recent = submission.filings?.recent;
+          const savedIndexes = recent?.primaryDocument?.flatMap((document, index) => {
+            const accession = recent.accessionNumber?.[index]?.replace(/-/g, '');
+            if (!/^\d{18}$/.test(accession ?? '') || !/^[A-Za-z0-9._-]+\.html?$/i.test(document)) return [];
+            const url = `https://www.sec.gov/Archives/edgar/data/${Number(cik)}/${accession}/${document}`;
+            return known.has(url) ? [index] : [];
+          }) ?? [];
+          if (!savedIndexes.length) throw new Error('Die geladenen SEC-Berichte konnten im aktuellen Verzeichnis nicht datiert werden.');
+          const latestIndex = Math.min(...savedIndexes);
+          const newer = entries.filter(entry => entry.index < latestIndex && !known.has(entry.url));
+          if (newer.length > 12) throw new Error('Zu viele neuere SEC-Prospekte für einen vollständigen automatischen Abgleich.');
+          const fetchProspectus = async (url: string) => {
+            const document = await this.requestFetch(url, { headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' }, signal: AbortSignal.timeout(10000) });
+            if (!document.ok || (document.url && document.url !== url)) throw new Error('Ein SEC-Prospekt konnte nicht geprüft werden.');
+            return prospectusText((await readResponseBuffer(document, MAX_BYTES)).toString('utf8'));
+          };
+          const original = newer.length ? await fetchProspectus(prospectus) : '';
+          const shareClass = original ? securityClassForIsin(original, isin) : null;
+          let pending: SecProspectus | undefined;
+          let ambiguous = false;
+          for (const entry of newer) {
+            const text = await fetchProspectus(entry.url);
+            const exactIsin = new RegExp(`\\bISIN\\b.{0,200}\\b${isin}\\b`).test(text);
+            const matchingClass = entry.form !== 'FWP' && shareClass !== null
+              && new RegExp(`\\bCLASS\\s+${shareClass}\\s+(?:COMMON|ORDINARY)\\s+(?:STOCK|SHARES?)\\b`).test(text);
+            if (exactIsin || matchingClass) { pending = entry; break; }
+            if (entry.form === 'FWP' || !shareClass || !/\bCLASS\s+[A-Z0-9]{1,4}\s+(?:COMMON|ORDINARY)\s+(?:STOCK|SHARES?)\b/.test(text)) ambiguous = true;
+          }
+          if (pending && identity) identity.newerProspectus = { url: pending.url, title: pending.title };
+          else if (identity) delete identity.newerProspectus;
+          const regularNewer = filings.some(filing => {
+            const index = recent?.primaryDocument?.findIndex((document, i) => filing.url.endsWith(`/${recent.accessionNumber?.[i]?.replace(/-/g, '')}/${document}`)) ?? -1;
+            return index >= 0 && index < latestIndex && !known.has(filing.url);
+          });
+          newerReportAvailable = !!pending || regularNewer;
+          if (!newerReportAvailable && ambiguous) coverage = 'sec-prospectus-incomplete';
+        } else {
+          if (!filings.length) throw new Error('Für den Abgleich wurden keine regelmäßigen SEC-Geschäftsberichte und kein zugeordneter Prospekt im aktuellen Verzeichnis gefunden.');
+          newerReportAvailable = filings.some(filing => !known.has(filing.url));
+        }
       }
-      this.freshnessChecks.set(isin, { sources: sources.map(source => source.url).sort(), checkedAt: this.now(), newerReportAvailable, succeeded: true });
+      this.freshnessChecks.set(isin, { sources: sources.map(source => source.url).sort(), checkedAt: this.now(), newerReportAvailable, succeeded: true, ...(coverage ? { coverage } : {}) });
       this.save();
       return this.publicationStatus(position, sources);
     } catch (error) {
@@ -630,10 +715,9 @@ export class PrimaryRiskResearch {
     if (position.type !== 'Stock' || !position.isin.trim().toUpperCase().startsWith('US')) return null;
     const isin = position.isin.trim().toUpperCase();
     const stored = this.cikCache.get(isin);
-    if (stored && this.now() - stored.fetchedAt < DAY) return stored.cik;
+    if (stored?.cik && this.now() - stored.fetchedAt < DAY) return stored.cik;
     if (stored) this.tickerDirectory = undefined;
     const ticker = position.symbol.trim().toUpperCase().replace(/^[A-Z]+:/, '').split('.')[0];
-    if (!/^[A-Z]{1,6}$/.test(ticker)) return null;
     try {
       this.tickerDirectory ??= this.requestFetch('https://www.sec.gov/files/company_tickers.json', {
         headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' },
@@ -643,13 +727,45 @@ export class PrimaryRiskResearch {
         const value = await response.json() as Record<string, { cik_str: number; ticker: string; title: string }>;
         return Object.values(value).filter(item => Number.isInteger(item.cik_str) && typeof item.ticker === 'string' && typeof item.title === 'string');
       });
-      const matches = (await this.tickerDirectory).filter(item => item.ticker.toUpperCase() === ticker);
+      const directory = await this.tickerDirectory;
+      const matches = directory.filter(item => /^[A-Z]{1,6}$/.test(ticker) && item.ticker.toUpperCase() === ticker);
       const words = position.name.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(/\s+/)
         .filter(word => word.length >= 4 && !['corporation', 'company', 'holding', 'holdings', 'limited', 'group', 'stock'].includes(word));
       const match = matches.length === 1 && words.length > 0 && words.slice(0, 2)
         .every(word => matches[0].title.toLowerCase().includes(word)) ? matches[0] : null;
-      const cik = match ? String(match.cik_str).padStart(10, '0') : null;
-      this.cikCache.set(isin, { fetchedAt: this.now(), cik });
+      let cik = match ? String(match.cik_str).padStart(10, '0') : null;
+      let prospectus: string | undefined;
+      if (!cik && /^US[A-Z0-9]{10}$/.test(isin)) {
+        const normalized = (name: string) => name.toUpperCase().replace(/[^A-Z0-9]+/g, ' ').trim().split(/\s+/)
+          .filter(word => !['INC', 'INCORPORATED', 'CORP', 'CORPORATION', 'COMPANY', 'CO', 'PBC', 'PLC', 'LTD', 'LIMITED'].includes(word)).join(' ');
+        const name = normalized(position.name);
+        const named = name.length >= 5 ? directory.filter(item => normalized(item.title) === name) : [];
+        const unique = [...new Set(named.map(item => item.cik_str))];
+        if (unique.length === 1) {
+          const candidate = String(unique[0]).padStart(10, '0');
+          const response = await this.requestFetch(`https://data.sec.gov/submissions/CIK${candidate}.json`, {
+            headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' },
+            signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000),
+          });
+          if (!response.ok) throw new Error('SEC submissions unavailable');
+          const submission = await response.json() as SecSubmission;
+          for (const filing of secProspectuses(candidate, submission)) {
+            try {
+              const document = await this.requestFetch(filing.url, { headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' },
+                signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000) });
+              if (!document.ok || (document.url && document.url !== filing.url)) continue;
+              const html = (await readResponseBuffer(document, MAX_BYTES)).toString('utf8');
+              const text = html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').toUpperCase();
+              const identity = new RegExp(`\\bISIN\\b.{0,200}\\b${isin}\\b`);
+              if (identity.test(text)) { cik = candidate; prospectus = filing.url; break; }
+            } catch { if (signal?.aborted) throw signal.reason; }
+          }
+        }
+      }
+      const sameIssuer = !!cik && cik === stored?.cik;
+      const verifiedProspectus = prospectus || (sameIssuer ? stored?.prospectus : undefined);
+      this.cikCache.set(isin, { fetchedAt: this.now(), cik, ...(verifiedProspectus ? { prospectus: verifiedProspectus } : {}),
+        ...(sameIssuer && stored?.newerProspectus ? { newerProspectus: stored.newerProspectus } : {}) });
       try { this.save(); } catch { /* The lookup remains available during this run. */ }
       return cik;
     } catch {
@@ -839,6 +955,12 @@ export class PrimaryRiskResearch {
           this.submissions.set(cik, { filings, fetchedAt: this.now() });
           try { this.save(); } catch { /* This run can still use the retrieved directory. */ }
         }
+        const discoveredProspectus = this.cikCache.get(isin)?.newerProspectus;
+        if (discoveredProspectus && !filings.some(filing => filing.url === discoveredProspectus.url))
+          filings.unshift({ url: discoveredProspectus.url, title: discoveredProspectus.title, period: null });
+        const verifiedProspectus = this.cikCache.get(isin)?.prospectus;
+        if (verifiedProspectus && !filings.some(filing => filing.url === verifiedProspectus))
+          filings.push({ url: verifiedProspectus, title: 'SEC Prospekt zur bestätigten ISIN', period: null });
         if (!filings.length) throw new Error('No current SEC financial filing');
         filings.forEach(filing => filingDetails.set(filing.url, { title: filing.title, period: filing.period }));
         candidates.unshift(...filings.map(filing => filing.url));

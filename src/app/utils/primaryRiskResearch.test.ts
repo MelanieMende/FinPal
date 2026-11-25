@@ -50,6 +50,84 @@ it('records successful and failed SEC checks without downloading reports', async
   } finally { fs.rmSync(folder, { recursive: true, force: true }); }
 });
 
+it('finds an issuer by name only when its SEC prospectus confirms the exact ISIN', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-sec-prospectus-'));
+  const file = path.join(folder, 'documents.json');
+  const position = { id: 9, name: 'Example', isin: 'US0000001234', symbol: 'A12345', type: 'Stock' } as AnalysisPosition;
+  const submission = { filings: { recent: { form: ['FWP'], accessionNumber: ['0000001234-26-000001'], primaryDocument: ['prospectus.htm'], reportDate: [''], filingDate: ['2026-11-12'] } } };
+  let exact = true;
+  const fetcher = jest.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes('company_tickers')) return new Response(JSON.stringify({ 0: { cik_str: 1234, ticker: 'EXM', title: 'Example, PBC' } }));
+    if (url.includes('/submissions/')) return new Response(JSON.stringify(submission));
+    return new Response(`<html><p>Class A shares have ISIN ${exact ? position.isin : 'US0000009999'}.</p><p>Net loss and liquidity are discussed in this prospectus.</p></html>`, { headers: { 'content-type': 'text/html' } });
+  });
+  try {
+    const research = new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch);
+    const found = await research.collect(position, undefined, [], true);
+    expect(found.discoveryChecked).toBe(true);
+    expect(found.documents).toHaveLength(1);
+    expect(found.documents[0].source).toMatchObject({ title: 'SEC Prospekt zur bestätigten ISIN', url: expect.stringContaining('/1234/') });
+    const restarted = new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch);
+    const sources = found.documents.map(doc => doc.source);
+    expect(restarted.publicationStatus(position, sources).freshnessSupported).toBe(true);
+    expect(await restarted.checkPublicationFreshness(position, sources)).toMatchObject({ freshnessCheckSucceeded: true, freshnessDue: false,
+      publicationCheckVerified: true, newerReportAvailable: false });
+    expect(new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch).publicationStatus(position, sources))
+      .toMatchObject({ publicationCheckVerified: true });
+    submission.filings.recent.form.unshift('10-Q');
+    submission.filings.recent.accessionNumber.unshift('0000001234-26-000002');
+    submission.filings.recent.primaryDocument.unshift('report.htm');
+    submission.filings.recent.reportDate.unshift('2026-09-30');
+    submission.filings.recent.filingDate.unshift('2026-11-20');
+    expect(await restarted.checkPublicationFreshness(position, sources)).toMatchObject({ newerReportAvailable: true, freshnessCheckSucceeded: true });
+    exact = false;
+    const other = await new PrimaryRiskResearch(path.join(folder, 'other.json'), fetcher as unknown as typeof fetch).collect(position);
+    expect(other.documents).toHaveLength(0);
+    expect(other.discoveryChecked).toBe(false);
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
+it('detects a newer issuer prospectus for the same share class and loads it on request', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-sec-new-prospectus-'));
+  const file = path.join(folder, 'documents.json');
+  const position = { id: 9, name: 'Example', isin: 'US0000001234', symbol: 'A12345', type: 'Stock' } as AnalysisPosition;
+  const recent = { form: ['FWP'], accessionNumber: ['0000001234-26-000001'], primaryDocument: ['original.htm'], reportDate: [''], filingDate: ['2026-11-12'] };
+  const fetcher = jest.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url.includes('company_tickers')) return new Response(JSON.stringify({ 0: { cik_str: 1234, ticker: 'EXM', title: 'Example PBC' } }));
+    if (url.includes('/submissions/')) return new Response(JSON.stringify({ filings: { recent } }));
+    return new Response(url.endsWith('original.htm')
+      ? '<p>Class A common stock having the ISIN US0000001234. Net loss and liquidity.</p>'
+      : url.endsWith('wrong.htm') ? '<p>Offering of Class B common stock. Net loss and liquidity.</p>'
+        : '<p>Offering of Class A common stock. Net loss and cash and cash equivalents are discussed.</p>', { headers: { 'content-type': 'text/html' } });
+  });
+  try {
+    const first = new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch);
+    const initial = await first.collect(position, undefined, [], true);
+    const sources = initial.documents.map(document => document.source);
+    expect(sources).toHaveLength(1);
+    recent.form.unshift('424B4'); recent.accessionNumber.unshift('0000001234-26-000004');
+    recent.primaryDocument.unshift('wrong.htm'); recent.reportDate.unshift(''); recent.filingDate.unshift('2026-11-18');
+    expect(await first.checkPublicationFreshness(position, sources)).toMatchObject({ newerReportAvailable: false, publicationCheckVerified: true });
+    recent.form.shift(); recent.accessionNumber.shift(); recent.primaryDocument.shift(); recent.reportDate.shift(); recent.filingDate.shift();
+    recent.form.unshift('FWP'); recent.accessionNumber.unshift('0000001234-26-000003');
+    recent.primaryDocument.unshift('unrelated.htm'); recent.reportDate.unshift(''); recent.filingDate.unshift('2026-11-18');
+    expect(await first.checkPublicationFreshness(position, sources)).toMatchObject({ newerReportAvailable: false,
+      freshnessCoverage: 'sec-prospectus-incomplete', publicationCheckVerified: false });
+    recent.form.shift(); recent.accessionNumber.shift(); recent.primaryDocument.shift(); recent.reportDate.shift(); recent.filingDate.shift();
+    recent.form.unshift('424B4'); recent.accessionNumber.unshift('0000001234-26-000002');
+    recent.primaryDocument.unshift('new.htm'); recent.reportDate.unshift(''); recent.filingDate.unshift('2026-11-19');
+    expect(await first.checkPublicationFreshness(position, sources)).toMatchObject({ newerReportAvailable: true, publicationCheckVerified: true });
+    const restarted = new PrimaryRiskResearch(file, fetcher as unknown as typeof fetch);
+    const updated = await restarted.collect(position, undefined, sources, true);
+    expect(updated.documents.map(document => document.source.url)).toContain('https://www.sec.gov/Archives/edgar/data/1234/000000123426000002/new.htm');
+    expect(updated.documents.find(document => document.source.url.endsWith('new.htm'))?.source.title).toContain('Emittentenprospekt');
+    expect(await restarted.checkPublicationFreshness(position, updated.documents.map(document => document.source)))
+      .toMatchObject({ newerReportAvailable: false, publicationCheckVerified: true });
+  } finally { fs.rmSync(folder, { recursive: true, force: true }); }
+});
+
 it('loads and persists Bitcoin network documentation without requiring an ISIN or annual report', async () => {
   const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-bitcoin-primary-'));
   let now = Date.parse('2026-10-30T10:00:00Z');

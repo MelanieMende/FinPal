@@ -349,7 +349,7 @@ export class PortfolioAnalysisService {
   private readonly primaryRiskCache: PrimaryRiskAssessmentCache;
 
   private cacheDeterministicResearch(security: ReturnType<typeof buildResearchSecurities>[number], result: DeterministicResearchResult): void {
-    if (result.searchStatus !== 'completed' || !result.sources.length) return;
+    if (result.searchStatus !== 'completed') return;
     const cacheKey = JSON.stringify({ researchPolicy: RESEARCH_POLICY, provider: 'deterministic-online', scope: 'asset', securities: [security] });
     this.researchCache.set(cacheKey, { text: result.text, sources: result.sources, fetchedAt: result.fetchedAt });
   }
@@ -360,9 +360,11 @@ export class PortfolioAnalysisService {
       throw new Error('Die Recherchekennungen sind ungültig.');
     }
     return buildResearchSecurities(assets).map(security => {
-      const cached = this.researchCache.findForSecurity(security, true);
+      const cached = this.researchCache.findForSecurity(security, true, 'deterministic-online')
+        ?? this.researchCache.findForSecurity(security);
       return { assetId: security.id, fetchedAt: cached ? new Date(cached.fetchedAt).toISOString() : null,
-        expiresAt: cached ? new Date(cached.fetchedAt + RESEARCH_CACHE_TTL_MS).toISOString() : null };
+        expiresAt: cached ? new Date(cached.fetchedAt + RESEARCH_CACHE_TTL_MS).toISOString() : null,
+        ...(cached ? { text: cached.text, sources: cached.sources } : {}) };
     });
   }
   async getPrimaryDocumentStatus(assets: ResearchAsset[]): Promise<PrimaryDocumentStatus[]> {
@@ -372,10 +374,12 @@ export class PortfolioAnalysisService {
     const saved = this.getLastResult();
     const savedRequest = saved ? JSON.parse(fs.readFileSync(this.resultFile, 'utf8')).request as PortfolioAnalysisRequest : null;
     return Promise.all(assets.map(async asset => {
-      const position = savedRequest?.positions.find(item => item.id === asset.id && item.type === asset.type
-        && item.isin.trim().toUpperCase() === asset.isin.trim().toUpperCase());
+      const savedPosition = savedRequest?.positions.find(item => item.id === asset.id);
+      const position = savedPosition?.type === asset.type && savedPosition.isin.trim().toUpperCase() === asset.isin.trim().toUpperCase() ? savedPosition : undefined;
       const risk = saved?.report.fundamentalRisks?.find(item => item.key === String(asset.id));
-      const sources = position ? risk?.primaryDocuments ?? [] : [];
+      const matchesAddedAsset = !savedPosition && risk?.primaryDocumentIdentity?.type === asset.type
+        && risk.primaryDocumentIdentity.isin === asset.isin.trim().toUpperCase();
+      const sources = position || matchesAddedAsset ? risk?.primaryDocuments ?? [] : [];
       const status = this.primaryRiskResearch.cachedStatus(asset, sources);
       const publication = this.primaryRiskResearch.publicationStatus(asset, sources);
       return { assetId: asset.id, ...status, ...publication,
@@ -387,9 +391,13 @@ export class PortfolioAnalysisService {
     if (!saved || !asset || !Number.isInteger(asset.id) || ![asset.name, asset.isin, asset.symbol, asset.type].every(value => typeof value === 'string' && value.length <= 300))
       throw new Error('Die Asset-Kennung oder gespeicherte Analyse ist ungültig.');
     const savedRequest = JSON.parse(fs.readFileSync(this.resultFile, 'utf8')).request as PortfolioAnalysisRequest;
-    const position = savedRequest.positions.find(item => item.id === asset.id && item.type === asset.type && item.isin.trim().toUpperCase() === asset.isin.trim().toUpperCase());
-    if (!position) throw new Error('Das Asset wurde seit der gespeicherten Analyse geändert.');
-    const sources = saved.report.fundamentalRisks?.find(item => item.key === String(asset.id))?.primaryDocuments ?? [];
+    const savedPosition = savedRequest.positions.find(item => item.id === asset.id);
+    const risk = saved.report.fundamentalRisks?.find(item => item.key === String(asset.id));
+    const matches = savedPosition ? savedPosition.type === asset.type && savedPosition.isin.trim().toUpperCase() === asset.isin.trim().toUpperCase()
+      : risk?.primaryDocumentIdentity?.type === asset.type && risk.primaryDocumentIdentity.isin === asset.isin.trim().toUpperCase();
+    if (!matches) throw new Error('Das Asset wurde seit der gespeicherten Analyse geändert oder es wurden noch keine Primärberichte geladen.');
+    const position = savedPosition ?? asset;
+    const sources = risk?.primaryDocuments ?? [];
     const publication = await this.primaryRiskResearch.checkPublicationFreshness(position, sources);
     const status = this.primaryRiskResearch.cachedStatus(position, sources);
     return { assetId: asset.id, ...status, ...publication, needsRefresh: status.needsRefresh || publication.newerReportAvailable };
@@ -682,19 +690,19 @@ export class PortfolioAnalysisService {
   }
 
   async refreshOnlineResearch(asset: ResearchAsset, onProgress?: (progress: PortfolioAnalysisProgress) => void): Promise<PortfolioAnalysisResult> {
-    if (!asset || !Number.isInteger(asset.id) || !['Stock', 'ETF', 'Fund', 'Bond', 'Crypto', 'Commodity', 'RealEstate', 'CashEquivalent'].includes(asset.type)
+    if (!asset || !Number.isInteger(asset.id) || !['Stock', 'ETF', 'Fund', 'Bond', 'Crypto', 'Commodity', 'RealEstate', 'CashEquivalent', 'IPO'].includes(asset.type)
       || ![asset.name, asset.isin, asset.symbol].every(value => typeof value === 'string' && value.length <= 300))
       throw new Error('Das ausgewählte Asset ist ungültig.');
     if (this.running) throw new Error('Eine Portfolio-Analyse oder Aktualisierung läuft bereits.');
     const previous = this.getLastResult();
-    const recommendation = previous?.report.recommendations.find(rec => rec.assetId === asset.id);
-    if (!previous || !recommendation)
+    if (!previous)
       throw new Error('Für dieses Asset liegt noch keine gespeicherte Analyse vor.');
     if (!this.deterministicResearchProvider) throw new Error('Der Online-Recherche-Anbieter ist nicht verfügbar. Bitte FinPal neu starten.');
     const savedRequest = JSON.parse(fs.readFileSync(this.resultFile, 'utf8')).request as PortfolioAnalysisRequest;
-    const position = savedRequest.positions.find(item => item.id === asset.id);
-    if (!position || position.type !== asset.type || position.isin.trim().toUpperCase() !== asset.isin.trim().toUpperCase())
+    const savedPosition = savedRequest.positions.find(item => item.id === asset.id);
+    if (savedPosition && (savedPosition.type !== asset.type || savedPosition.isin.trim().toUpperCase() !== asset.isin.trim().toUpperCase()))
       throw new Error('Das Asset wurde seit der gespeicherten Analyse geändert. Bitte die Portfolioanalyse neu starten.');
+    const position = asset;
     this.running = true;
     const progress = (completed: boolean) => onProgress?.({
       stage: 'research', activeAssetId: asset.id, researchTotal: 1, researchCompleted: completed ? 1 : 0,
@@ -703,25 +711,20 @@ export class PortfolioAnalysisService {
     try {
       progress(false);
       const found = await this.deterministicResearchProvider(position, { forceRefresh: true });
-      if (found.assetId !== asset.id || found.searchStatus !== 'completed' || !found.sources.length)
-        throw new Error(`Die Online-Recherche für ${position.name} konnte nicht erfolgreich abgeschlossen werden. Bitte später erneut versuchen.`);
+      if (found.assetId !== asset.id || found.searchStatus !== 'completed') {
+        const detail = found.failureReason === 'timeout' ? 'Der Suchanbieter hat das Zeitlimit überschritten.'
+          : found.failureStage === 'fallback' ? 'Die ergänzende Namenssuche beim Suchanbieter ist fehlgeschlagen.'
+            : found.searchStatus === 'failed' ? 'Der Suchanbieter konnte die Anfrage nicht abschließen.' : 'Die Suchergebnisse konnten nicht zugeordnet werden.';
+        throw new Error(`Die Online-Recherche für ${position.name} konnte nicht erfolgreich abgeschlossen werden. ${detail} Vorherige Suchdaten bleiben erhalten; bitte später erneut versuchen.`);
+      }
       const security = buildResearchSecurities([position])[0];
       const sources = [...previous.report.sources];
-      const sourceIndexes = new Set(recommendation.sourceIndexes);
       for (const source of found.sources) {
-        let sourceIndex = sources.findIndex(existing => existing.url === source.url);
-        if (sourceIndex < 0) {
-          sourceIndex = sources.length;
-          sources.push(source);
-        }
-        sourceIndexes.add(sourceIndex);
+        if (!sources.some(existing => existing.url === source.url)) sources.push(source);
       }
       const report = {
         ...previous.report,
         sources,
-        recommendations: previous.report.recommendations.map(rec => rec.assetId === asset.id
-          ? { ...rec, sourceIndexes: [...sourceIndexes] }
-          : rec),
       };
       this.saveLastResult(report, savedRequest, previous.snapshot);
       this.cacheDeterministicResearch(security, found);
@@ -740,16 +743,19 @@ export class PortfolioAnalysisService {
       throw new Error('Das ausgewählte Asset ist ungültig.');
     if (this.running) throw new Error('Eine Portfolio-Analyse oder Aktualisierung läuft bereits.');
     const previous = this.getLastResult();
-    if (!previous?.report.recommendations.some(rec => rec.assetId === asset.id))
+    if (!previous)
       throw new Error('Für dieses Asset liegt noch keine gespeicherte Analyse vor.');
     if (currentInvestorContext !== undefined && !validInvestorContext(currentInvestorContext))
       throw new Error('Die aktuellen Angaben für die Risikoprüfung sind ungültig.');
     const savedRequest = JSON.parse(fs.readFileSync(this.resultFile, 'utf8')).request as PortfolioAnalysisRequest;
-    const position = savedRequest.positions.find(item => item.id === asset.id);
-    if (!position || position.type !== asset.type || position.isin.trim().toUpperCase() !== asset.isin.trim().toUpperCase())
+    const savedPosition = savedRequest.positions.find(item => item.id === asset.id);
+    if (savedPosition && (savedPosition.type !== asset.type || savedPosition.isin.trim().toUpperCase() !== asset.isin.trim().toUpperCase()))
       throw new Error('Das Asset wurde seit der gespeicherten Analyse geändert. Bitte die Portfolioanalyse neu starten.');
+    if (!savedPosition) validateAnalysisRequest({ ...savedRequest, positions: [asset as import('./portfolioAnalysis').AnalysisPosition], targetAssetId: undefined });
+    const position = savedPosition ?? asset as import('./portfolioAnalysis').AnalysisPosition;
     const request = currentInvestorContext ? { ...savedRequest, investorContext: currentInvestorContext } : savedRequest;
-    const oldRisk = previous.report.fundamentalRisks?.find(item => item.key === String(asset.id));
+    const oldRisk = previous.report.fundamentalRisks?.find(item => item.key === String(asset.id)
+      && (savedPosition || item.primaryDocumentIdentity?.type === asset.type && item.primaryDocumentIdentity.isin === asset.isin.trim().toUpperCase()));
     const oldSources = oldRisk?.primaryDocuments ?? [];
     const publication = await this.primaryRiskResearch.lufthansaReportFreshness(position, oldSources);
     const checkedPublication = this.primaryRiskResearch.publicationStatus(position, oldSources);
@@ -776,29 +782,31 @@ export class PortfolioAnalysisService {
       addRiskReviewContext(position, set, request.investorContext);
       if (documentsOnly) {
         const documentsFingerprint = primaryDocumentsFingerprint(set);
-        const oldRisk = previous.report.fundamentalRisks?.find(item => item.key === String(asset.id));
         const priorDocuments = oldRisk?.primaryDocuments ?? [];
         const sameLegacySources = priorDocuments.length === set.documents.length
           && priorDocuments.every(source => set.documents.some(document => document.source.url === source.url));
-        const changed = !oldRisk || (oldRisk.primaryDocumentsFingerprintVersion === 2
-          ? oldRisk.primaryDocumentsFingerprint !== documentsFingerprint : !sameLegacySources);
+        const changed = set.documents.length > 0 && (!oldRisk || (oldRisk.primaryDocumentsFingerprintVersion === 2
+          ? oldRisk.primaryDocumentsFingerprint !== documentsFingerprint : !sameLegacySources));
         const updatedRisk: FundamentalRiskAssessment = {
           ...(oldRisk ?? { key: String(asset.id), status: 'unknown' as const, materialRisks: [],
-            rationale: 'Die Dokumente wurden geladen; eine inhaltliche Risikoprüfung steht noch aus.', sources: [] }),
-          primaryDocuments: set.documents.map(document => document.source),
-          primaryDocumentsFingerprint: documentsFingerprint, primaryDocumentsFingerprintVersion: 2,
+            rationale: set.documents.length ? 'Die Dokumente wurden geladen; eine inhaltliche Risikoprüfung steht noch aus.'
+              : 'Es konnten keine Primärberichte geladen werden; eine inhaltliche Risikoprüfung steht noch aus.', sources: [] }),
+          primaryDocuments: set.documents.length ? set.documents.map(document => document.source) : priorDocuments,
+          ...(set.documents.length ? { primaryDocumentsFingerprint: documentsFingerprint, primaryDocumentsFingerprintVersion: 2 as const } : {}),
+          primaryDocumentIdentity: { type: position.type, isin: position.isin.trim().toUpperCase() },
+          primaryDocumentGaps: set.gaps,
           ...(position.isin.trim().toUpperCase() === 'US84615Q1031' ? { primaryExcerptVersion: set.documents.find(document => document.period === '2026-09-30')?.excerptVersion } : {}),
-          ...(changed ? { primaryDocumentsChanged: true } : { primaryDocumentsChanged: undefined }),
+          ...(changed ? { primaryDocumentsChanged: true } : set.documents.length ? { primaryDocumentsChanged: undefined } : {}),
         };
         const fundamentalRisks = [...(previous.report.fundamentalRisks ?? []).filter(item => item.key !== updatedRisk.key), updatedRisk];
         const sources = [...new Map([...previous.report.sources, ...set.documents.map(document => document.source)]
           .map(source => [source.url, source])).values()];
         const report = { ...previous.report, fundamentalRisks, sources };
-        report.allocationPlan = buildForecastAllocation(request, previous.report.allocationPlan?.optimization?.forecasts ?? [],
+        if (savedPosition) report.allocationPlan = buildForecastAllocation(request, previous.report.allocationPlan?.optimization?.forecasts ?? [],
           report.newAssetRecommendations ?? [], previous.report, previous.report.recommendations,
           previous.report.allocationPlan?.optimization?.reviewedUnavailableKeys ?? [], fundamentalRisks);
-        report.fundingCheck = checkPortfolioFunding(request, report);
-        this.saveLastResult(report, request, previous.snapshot);
+        if (savedPosition) report.fundingCheck = checkPortfolioFunding(request, report);
+        this.saveLastResult(report, savedPosition ? request : savedRequest, previous.snapshot);
         progress(undefined, true);
         return report;
       }
@@ -827,13 +835,13 @@ export class PortfolioAnalysisService {
       }
       const record = validateRiskAssessment(position, set, assessment);
       this.primaryRiskCache.set(record);
-      const updatedRisk = riskForModel(record);
+      const updatedRisk = { ...riskForModel(record), ...(!savedPosition ? { primaryDocumentIdentity: { type: position.type, isin: position.isin.trim().toUpperCase() } } : {}) };
       if (updatedRisk.key !== String(asset.id)) throw new Error('Die Risikoprüfung lieferte eine abweichende Asset-Zuordnung. Der gespeicherte Befund wurde nicht geändert.');
-      const oldRisk = previous.report.fundamentalRisks?.find(item => item.key === updatedRisk.key);
-      const changed = !oldRisk || oldRisk.status !== updatedRisk.status
-        || oldRisk.decisionReadiness !== updatedRisk.decisionReadiness
-        || JSON.stringify(oldRisk.materialRisks) !== JSON.stringify(updatedRisk.materialRisks)
-        || oldRisk.rationale !== updatedRisk.rationale;
+      const previousRisk = previous.report.fundamentalRisks?.find(item => item.key === updatedRisk.key);
+      const changed = !previousRisk || previousRisk.status !== updatedRisk.status
+        || previousRisk.decisionReadiness !== updatedRisk.decisionReadiness
+        || JSON.stringify(previousRisk.materialRisks) !== JSON.stringify(updatedRisk.materialRisks)
+        || previousRisk.rationale !== updatedRisk.rationale;
       const recommendations = previous.report.recommendations.map(rec => {
         if (rec.assetId !== asset.id) return rec;
         if (updatedRisk.decisionBlocker) return { ...rec, action: 'Prüfen' as const, plannedAmountEUR: null,
@@ -847,11 +855,11 @@ export class PortfolioAnalysisService {
       const sources = [...new Map([...previous.report.sources, ...record.sources].map(source => [source.url, source])).values()];
       const report: PortfolioAnalysisResult = { ...previous.report, recommendations, fundamentalRisks, sources,
         ...(changed ? { riskReviewUpdatedAt: new Date().toISOString() } : {}) };
-      report.allocationPlan = buildForecastAllocation(request, previous.report.allocationPlan?.optimization?.forecasts ?? [],
+      if (savedPosition) report.allocationPlan = buildForecastAllocation(request, previous.report.allocationPlan?.optimization?.forecasts ?? [],
         report.newAssetRecommendations ?? [], previous.report, recommendations,
         previous.report.allocationPlan?.optimization?.reviewedUnavailableKeys ?? [], fundamentalRisks);
-      report.fundingCheck = checkPortfolioFunding(request, report);
-      this.saveLastResult(report, request, previous.snapshot);
+      if (savedPosition) report.fundingCheck = checkPortfolioFunding(request, report);
+      this.saveLastResult(report, savedPosition ? request : savedRequest, previous.snapshot);
       progress(undefined, true);
       return report;
     } catch (error) {
@@ -1042,7 +1050,7 @@ export class PortfolioAnalysisService {
           .map((batch, index) => researchBatch(batch, offset + index))));
       }
       const cachedDiscovery = this.deterministicResearchProvider
-        ? securities.map(security => this.researchCache.findForSecurity(security, true)).filter((result): result is NonNullable<typeof result> => !!result)
+        ? securities.map(security => this.researchCache.findForSecurity(security, true, 'deterministic-online')).filter((result): result is NonNullable<typeof result> => !!result)
         : [];
       const researchText = [...new Set([...researchResults, ...cachedDiscovery].map(result => result.text)),
         ...deterministicResearch.filter(result => result.searchStatus === 'completed').map(result => result.text),

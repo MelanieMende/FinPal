@@ -42,6 +42,28 @@ it('finds successful asset research across groups and scopes without mixing inst
   expect(cache.findForSecurity({ ...securities[0], symbol: 'OTHER' })).toBeUndefined();
 });
 
+it('can select deterministic results independently of a more recent AI research entry', () => {
+  const securities = buildResearchSecurities([{ id: 1, name: 'Example', isin: 'US0000001234', symbol: 'EXM', type: 'Stock' }]);
+  const cache = new PortfolioResearchCache(file);
+  const discovery = { ...research, text: 'Manuell aktualisierte Onlinesuche', fetchedAt: Date.now() - 1000 };
+  const ai = { ...research, text: 'Separater KI-Befund', fetchedAt: Date.now() };
+  cache.set(JSON.stringify({ researchPolicy: RESEARCH_POLICY, provider: 'deterministic-online', scope: 'asset', securities }), discovery);
+  cache.set(JSON.stringify({ researchPolicy: RESEARCH_POLICY, provider: 'api', scope: 'asset', securities }), ai);
+  expect(cache.findForSecurity(securities[0], true)).toEqual(ai);
+  expect(cache.findForSecurity(securities[0], true, 'deterministic-online')).toEqual(discovery);
+});
+
+it('restores a successful deterministic search with no results without accepting empty AI research', () => {
+  const securities = buildResearchSecurities([{ id: 1, name: 'Example', isin: '', symbol: '', type: 'Stock' }]);
+  const cache = new PortfolioResearchCache(file);
+  const empty = { text: 'Keine Treffer gefunden.', sources: [] as { title: string; url: string }[], fetchedAt: Date.now() };
+  cache.set(JSON.stringify({ researchPolicy: RESEARCH_POLICY, provider: 'deterministic-online', scope: 'asset', securities }), empty);
+  cache.set(JSON.stringify({ researchPolicy: RESEARCH_POLICY, provider: 'api', scope: 'asset', securities }), empty);
+  const restarted = new PortfolioResearchCache(file);
+  expect(restarted.findForSecurity(securities[0], true, 'deterministic-online')).toEqual(empty);
+  expect(restarted.findForSecurity(securities[0])).toBeUndefined();
+});
+
 it.each(['{broken', JSON.stringify({ version: 999, entries: [] })])('ignores damaged or unsupported files', contents => {
   fs.writeFileSync(file, contents);
   expect(() => new PortfolioResearchCache(file)).not.toThrow();

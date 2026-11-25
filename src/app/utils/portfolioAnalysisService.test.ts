@@ -151,11 +151,108 @@ it('refreshes only the selected asset research and keeps the existing analysis r
 
   expect(onlineProvider).toHaveBeenNthCalledWith(2, expect.objectContaining({ id: 1 }), { forceRefresh: true });
   expect(refreshed.recommendations[0].rationale).toBe(original.recommendations[0].rationale);
-  expect(refreshed.recommendations[0].sourceIndexes.map(index => refreshed.sources[index].url)).toEqual(expect.arrayContaining([
-    'https://example.com/old', 'https://example.com/new',
-  ]));
+  expect(refreshed.recommendations[0].sourceIndexes).toEqual(original.recommendations[0].sourceIndexes);
+  expect(refreshed.sources).toContainEqual(newResearch.sources[0]);
   expect(service.getResearchStatus(request.positions)[0].fetchedAt).not.toBe(previousResearchTime);
   expect(new PortfolioAnalysisService(dir, jest.fn()).getLastResult()?.report.sources).toContainEqual(newResearch.sources[0]);
+});
+
+it('refreshes research for a newly held asset absent from the saved analysis', async () => {
+  const addedAsset = { id: 2, name: 'New holding', symbol: 'NEW', isin: 'EXAMPLE', type: 'Stock' as const };
+  const onlineProvider = jest.fn().mockImplementation(async (asset) => ({ assetId: asset.id, query: asset.name,
+    fetchedAt: Date.now(), searchStatus: 'completed', newsCount: 1, text: 'Recherche',
+    sources: [{ title: 'Neue Quelle', url: 'https://example.com/new-holding' }] }));
+  const service = new PortfolioAnalysisService(dir, jest.fn(), undefined,
+    jest.fn().mockResolvedValue(robustReturnForecastFixture('1')), undefined, onlineProvider);
+  const original = await service.analyzeLocal(request);
+  const refreshed = await service.refreshOnlineResearch(addedAsset);
+  expect(onlineProvider).toHaveBeenLastCalledWith(addedAsset, { forceRefresh: true });
+  expect(refreshed.recommendations).toEqual(original.recommendations);
+  expect(service.getResearchStatus([addedAsset])[0].fetchedAt).not.toBeNull();
+  expect(service.getResearchStatus([addedAsset])[0]).toMatchObject({ text: 'Recherche', sources: [{ title: 'Neue Quelle', url: 'https://example.com/new-holding' }] });
+  expect(service.getLastResult()?.report.sources).toContainEqual({ title: 'Neue Quelle', url: 'https://example.com/new-holding' });
+});
+
+it('refreshes with current search identifiers and exposes the matching cached result', async () => {
+  const onlineProvider = jest.fn().mockImplementation(async asset => ({ assetId: asset.id, query: asset.name,
+    fetchedAt: Date.now(), searchStatus: 'completed', newsCount: 1, text: `Recherche für ${asset.symbol}`,
+    sources: [{ title: 'Neue Quelle', url: 'https://example.com/new' }] }));
+  const service = new PortfolioAnalysisService(dir, jest.fn(), undefined,
+    jest.fn().mockResolvedValue(robustReturnForecastFixture('1')), undefined, onlineProvider);
+  await service.analyzeLocal(request);
+  const current = { id: 1, name: 'Aktueller Name', isin: request.positions[0].isin, symbol: 'NEW', type: 'Stock' as const };
+  await service.refreshOnlineResearch(current);
+  expect(onlineProvider).toHaveBeenLastCalledWith(current, { forceRefresh: true });
+  expect(service.getResearchStatus([current])[0]).toMatchObject({ text: 'Recherche für NEW', sources: [{ title: 'Neue Quelle', url: 'https://example.com/new' }] });
+});
+
+it('saves a completed search with no sources and reports the empty result after restart', async () => {
+  const onlineProvider = jest.fn().mockResolvedValue({ assetId: 1, query: 'Asset', fetchedAt: Date.now(), searchStatus: 'completed', newsCount: 0,
+    text: 'Keine Nachrichtentreffer.', sources: [] });
+  const service = new PortfolioAnalysisService(dir, jest.fn(), undefined,
+    jest.fn().mockResolvedValue(robustReturnForecastFixture('1')), undefined, onlineProvider);
+  await service.analyzeLocal(request);
+  await service.refreshOnlineResearch(request.positions[0]);
+  expect(new PortfolioAnalysisService(dir, jest.fn()).getResearchStatus(request.positions)[0])
+    .toMatchObject({ text: 'Keine Nachrichtentreffer.', sources: [], fetchedAt: expect.any(String) });
+});
+
+it('loads primary documents for a new holding without changing the saved portfolio analysis', async () => {
+  const added = buildAnalysisPositions([{ ID: 2, name: 'New holding', type: 'Stock', isin: 'EXAMPLE', symbol: 'NEW', current_shares: 1, price: 20 }] as Asset[])[0];
+  const service = new PortfolioAnalysisService(dir, jest.fn(), undefined, jest.fn().mockResolvedValue(robustReturnForecastFixture('1')));
+  const original = await service.analyzeLocal(request);
+  const source = { title: 'Issuer report', url: 'https://example.com/report' };
+  const collect = jest.spyOn(PrimaryRiskResearch.prototype, 'collect').mockResolvedValueOnce({ documents: [{ source, excerpt: 'Report', hash: 'hash', fetchedAt: Date.now(), period: null }], discoveryChecked: true, gaps: [] })
+    .mockResolvedValueOnce({ documents: [], discoveryChecked: false, gaps: ['Keine Primärquelle zugeordnet.'] });
+  try {
+    const updated = await service.refreshPrimaryRisk(added, undefined, undefined, true);
+    expect(updated.recommendations).toEqual(original.recommendations);
+    expect(updated.allocationPlan).toEqual(original.allocationPlan);
+    expect(updated.fundamentalRisks?.find(risk => risk.key === '2')).toMatchObject({ primaryDocuments: [source], primaryDocumentsChanged: true });
+    expect(service.getLastResult()?.report.fundamentalRisks?.find(risk => risk.key === '2')).toMatchObject({ primaryDocuments: [source], primaryDocumentIdentity: { type: 'Stock', isin: 'EXAMPLE' } });
+    const failed = await service.refreshPrimaryRisk(added, undefined, undefined, true);
+    expect(failed.fundamentalRisks?.find(risk => risk.key === '2')).toMatchObject({ primaryDocuments: [source], primaryDocumentGaps: ['Keine Primärquelle zugeordnet.'] });
+  } finally { collect.mockRestore(); }
+});
+
+it('records an empty primary document search without claiming reports were loaded', async () => {
+  const added = buildAnalysisPositions([{ ID: 2, name: 'New holding', type: 'Stock', isin: 'EXAMPLE', symbol: 'NEW', current_shares: 1, price: 20 }] as Asset[])[0];
+  const service = new PortfolioAnalysisService(dir, jest.fn(), undefined, jest.fn().mockResolvedValue(robustReturnForecastFixture('1')));
+  await service.analyzeLocal(request);
+  const collect = jest.spyOn(PrimaryRiskResearch.prototype, 'collect').mockResolvedValue({ documents: [], discoveryChecked: false, gaps: ['Keine Primärquelle zugeordnet.'] });
+  try {
+    const updated = await service.refreshPrimaryRisk(added, undefined, undefined, true);
+    expect(updated.fundamentalRisks?.find(risk => risk.key === '2')).toMatchObject({ primaryDocuments: [], primaryDocumentGaps: ['Keine Primärquelle zugeordnet.'] });
+    expect(updated.fundamentalRisks?.find(risk => risk.key === '2')?.primaryDocumentsChanged).not.toBe(true);
+    expect(service.getLastResult()?.report.fundamentalRisks?.find(risk => risk.key === '2')?.primaryDocumentGaps).toEqual(['Keine Primärquelle zugeordnet.']);
+  } finally { collect.mockRestore(); }
+});
+
+it('assesses a new holding using its loaded documents and persists the result without altering the saved portfolio', async () => {
+  const added = buildAnalysisPositions([{ ID: 2, name: 'New holding', type: 'Stock', isin: 'US0000001234', symbol: 'NEW', current_shares: 1, price: 20 }] as Asset[])[0];
+  const source = { title: 'Issuer report', url: 'https://example.com/report' };
+  const documents: RiskDocumentSet = { documents: [{ source, excerpt: 'Net loss and liquidity are discussed.', hash: 'hash', fetchedAt: Date.now(), period: null }], discoveryChecked: true, gaps: [] };
+  const answer = { checks: riskChecksFor('Stock').map(flag => ({ flag, finding: 'unknown', reason: 'Keine ausreichende Textstelle.', documentIndex: null as number | null, quote: '' })), metrics: [] as unknown[] };
+  const fetcher = jest.fn().mockResolvedValue(structuredResponse(answer));
+  const service = new PortfolioAnalysisService(dir, fetcher, undefined, jest.fn().mockResolvedValue(robustReturnForecastFixture('1')));
+  service.saveKey('sk-testOnlyNotARealKey');
+  const original = await service.analyzeLocal(request);
+  const collect = jest.spyOn(PrimaryRiskResearch.prototype, 'collect').mockResolvedValue(documents);
+  const cachedStatus = jest.spyOn(PrimaryRiskResearch.prototype, 'cachedStatus').mockReturnValue({ loadedAt: new Date().toISOString(), freshnessCheckedAt: new Date().toISOString(), needsRefresh: false });
+  const reuse = jest.spyOn(PrimaryRiskResearch.prototype, 'reuseCached').mockReturnValue(documents);
+  try {
+    await service.refreshPrimaryRisk(added, undefined, undefined, true);
+    collect.mockClear();
+    const refreshed = await service.refreshPrimaryRisk(added);
+    expect(collect).not.toHaveBeenCalled();
+    expect(reuse).toHaveBeenCalled();
+    expect(refreshed.recommendations).toEqual(original.recommendations);
+    expect(refreshed.allocationPlan).toEqual(original.allocationPlan);
+    const risk = refreshed.fundamentalRisks?.find(item => item.key === '2');
+    expect(risk).toMatchObject({ primaryDocuments: [source], primaryDocumentIdentity: { type: 'Stock', isin: 'US0000001234' }, primaryDocumentsCheckedAt: expect.any(String) });
+    expect(new PortfolioAnalysisService(dir, jest.fn()).getLastResult()?.report.fundamentalRisks?.find(item => item.key === '2')).toMatchObject({ primaryDocumentIdentity: { type: 'Stock', isin: 'US0000001234' }, primaryDocumentsCheckedAt: expect.any(String) });
+    expect((await service.getPrimaryDocumentStatus([added]))[0].loadedAt).not.toBeNull();
+  } finally { collect.mockRestore(); cachedStatus.mockRestore(); reuse.mockRestore(); }
 });
 
 it('does not replace cached research or the saved report when a refresh search fails', async () => {
@@ -1310,7 +1407,7 @@ it('reports the actual per-asset cache and researches only a newly added asset',
     const service = new PortfolioAnalysisService(dir, mockedFetch); service.saveKey('sk-testOnlyNotARealKey');
     expect(service.getResearchStatus(both.positions).map(status => status.fetchedAt)).toEqual([null, null]);
     await service.analyze(request);
-    expect(service.getResearchStatus(both.positions)).toEqual([
+    expect(service.getResearchStatus(both.positions).map(({ assetId, fetchedAt, expiresAt }) => ({ assetId, fetchedAt, expiresAt }))).toEqual([
       { assetId: 1, fetchedAt: '2026-10-14T10:00:00.000Z', expiresAt: '2026-10-15T10:00:00.000Z' },
       { assetId: 2, fetchedAt: null, expiresAt: null },
     ]);

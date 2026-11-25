@@ -109,14 +109,16 @@ export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onRel
   const checkedAt = risk.primaryDocumentsCheckedAt ? Date.parse(risk.primaryDocumentsCheckedAt) : NaN;
   const loadedAt = status?.loadedAt ? Date.parse(status.loadedAt) : NaN;
   const freshnessCheckedAt = status?.freshnessCheckedAt ? Date.parse(status.freshnessCheckedAt) : NaN;
-  const current = !!status && status.publicationCheckVerified !== false && !status.newerReportAvailable && Number.isFinite(freshnessCheckedAt) && freshnessCheckedAt <= now
+  const current = !!risk.primaryDocuments?.length && !!status && status.publicationCheckVerified !== false && !status.newerReportAvailable && Number.isFinite(freshnessCheckedAt) && freshnessCheckedAt <= now
     && now - freshnessCheckedAt < 24 * 60 * 60 * 1000;
   const remainingMinutes = Math.max(0, Math.ceil((freshnessCheckedAt + 24 * 60 * 60 * 1000 - now) / 60000));
   const checkWithinWindow = Number.isFinite(freshnessCheckedAt) && freshnessCheckedAt <= now && now - freshnessCheckedAt < 24 * 60 * 60 * 1000;
-  const validity = checkWithinWindow ? `erneute Prüfung bei Analyse in ${Math.floor(remainingMinutes / 60)} Std. ${String(remainingMinutes % 60).padStart(2, '0')} Min.` : 'erneute Prüfung bei Analyse fällig';
+  const validity = checkWithinWindow ? `${status?.freshnessCheckSucceeded === false ? 'nächster automatischer Versuch' : 'erneute Prüfung'} bei Analyse in ${Math.floor(remainingMinutes / 60)} Std. ${String(remainingMinutes % 60).padStart(2, '0')} Min.` : 'erneute Prüfung bei Analyse fällig';
   const newReportAwaitingReview = risk.primaryDocumentsChanged === true;
   const reportVersionAvailable = status?.newerReportAvailable === true;
   const publicationCheckUnverified = status?.freshnessSupported === true && status.publicationCheckVerified === false;
+  const noPeriodicReports = status?.freshnessCoverage === 'sec-no-periodic-reports' && status.freshnessCheckSucceeded === true && checkWithinWindow;
+  const prospectusIncomplete = status?.freshnessCoverage === 'sec-prospectus-incomplete' && status.freshnessCheckSucceeded === true && checkWithinWindow;
   const documents = (risk.primaryDocuments ?? []).filter(source => source && typeof source.url === 'string' && typeof source.title === 'string');
   return <section aria-label="Primärberichte" className="my-3 min-w-0 rounded border border-white/10 bg-slate-950/25 p-3">
     <div className="flex min-w-0 flex-wrap items-start gap-2">
@@ -125,8 +127,9 @@ export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onRel
         <Icon icon={current && !excerptNeedsRefresh && !newReportAwaitingReview ? 'tick-circle' : 'refresh'} size={14} aria-hidden="true" />
         <span className="min-w-0 break-words">Primärberichte: {loading && forceReload ? 'wird ausgeführt'
           : excerptNeedsRefresh ? 'neuer Auszug erforderlich'
-            : reportVersionAvailable ? 'neuere Berichtsversion verfügbar · neu laden'
+            : reportVersionAvailable ? 'neuer Bericht verfügbar · neu laden'
               : newReportAwaitingReview ? 'Berichte geladen · Risikoprüfung ausstehend'
+                : noPeriodicReports || prospectusIncomplete ? 'SEC-Verzeichnis geprüft · Prospektaktualität offen'
                 : publicationCheckUnverified ? 'Aktualität prüfen'
                   : current ? 'geladen · aktuell' : documents.length ? 'geladen · Aktualität offen' : 'keine Berichte geladen'}</span>
         <Icon icon="chevron-right" size={12} aria-hidden="true" className="ml-auto shrink-0 text-gray-500 transition-transform group-open:rotate-90" />
@@ -143,9 +146,13 @@ export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onRel
     </div>
       <div id={`primary-documents-details-${risk.key}`} hidden={!expanded} className="mt-2 min-w-0 space-y-2 border-t border-white/10 pt-2">
         {newReportAwaitingReview
-          ? <p className="m-0 text-xs text-amber-200">Eine neue Berichtsversion wurde geladen. Die inhaltliche Risikoprüfung steht noch aus; bitte „Risiken neu prüfen“ wählen.</p>
+          ? <p className="m-0 text-xs text-amber-200">Berichte wurden neu geladen. Die inhaltliche Risikoprüfung steht noch aus; bitte „Risiken neu prüfen“ wählen.</p>
           : reportVersionAvailable
-            ? <p className="m-0 text-xs text-amber-200">Eine neuere Berichtsversion ist verfügbar. Bitte die Berichte neu laden und danach die Risiken erneut prüfen.</p>
+            ? <p className="m-0 text-xs text-amber-200">Ein neuer Bericht ist verfügbar. Bitte die Berichte neu laden und danach die Risiken erneut prüfen.</p>
+            : prospectusIncomplete
+              ? <p className="m-0 text-xs text-amber-200">Neuere SEC-Veröffentlichungen konnten dem Wertpapier nicht eindeutig zugeordnet werden. Die Aktualität der geladenen Prospekte bleibt offen.</p>
+            : noPeriodicReports
+              ? <p className="m-0 text-xs text-amber-200">Im SEC-Verzeichnis wurden noch keine regelmäßigen Geschäftsberichte gefunden. Der geladene Prospekt ist dort verzeichnet; mögliche Änderungen am Prospekt wurden nicht automatisch geprüft.</p>
             : publicationCheckUnverified
               ? <p className="m-0 text-xs text-amber-200">{status?.freshnessCheckSucceeded === false ? 'Der letzte Abgleich ist fehlgeschlagen. Eine manuelle Wiederholung ist möglich.' : 'Für diese Berichte liegt kein gültiger Abgleich vor. Bitte die Aktualität prüfen.'}</p>
           : status?.freshnessSupported === false
@@ -163,6 +170,7 @@ export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onRel
             {documents.map((source, index) => <a key={`${source.url}-${index}`} href={source.url} onClick={event => openSource(event, source.url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">{source.title}</a>)}
           </div>
           : <p className="m-0 text-xs text-gray-400">Keine geladenen Primärberichte in der gespeicherten Prüfung.</p>}
+        {!!risk.primaryDocumentGaps?.length && <ul className="m-0 pl-4 text-xs text-amber-200">{risk.primaryDocumentGaps.map((gap, index) => <li key={index} className="break-words">{gap}</li>)}</ul>}
       </div>
   </section>;
 }
@@ -183,9 +191,9 @@ const riskLineLabels: Record<string, string> = {
   underwriting: 'Versicherungstechnik', solvency: 'Solvenz',
 };
 const metricPrefixes = ['Periodengewinn:', 'operative Marge:', 'Liquidität:', 'Fälligkeiten:', 'Combined Ratio:', 'Solvenzquote:', 'debt-maturities:'];
-export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, checkStatus, reviewPending = false, primaryDocumentsStep }: { risk: FundamentalRiskAssessment;
+export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, checkStatus, reviewPending = false, primaryDocumentsStep, notReviewed = false }: { risk: FundamentalRiskAssessment;
   openSource: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void; onRefreshRisk?: () => void; refreshDisabled?: boolean; checkStatus?: string; reviewPending?: boolean;
-  primaryDocumentsStep?: React.ReactNode }) {
+  primaryDocumentsStep?: React.ReactNode; notReviewed?: boolean }) {
   const material = new Set(risk.materialRisks.map(item => riskLineLabels[item] ?? item));
   const structural = new Set(risk.structuralRisks?.map(item => riskLineLabels[item] ?? item) ?? []);
   const lines = risk.rationale.split('\n').map(line => line.trim()).filter(Boolean);
@@ -207,7 +215,10 @@ export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, c
   const documentsChanged = risk.primaryDocumentsChanged === true;
   const incomplete = documentsChanged || (risk.status === 'unknown' && risk.decisionReadiness !== 'reviewed-uncertainty');
   const requiresManualReview = incomplete || open.length > 0;
-  const tone = documentsChanged ? {
+  const tone = notReviewed ? {
+    border: 'border-amber-400/30', background: 'bg-amber-500/5', text: 'text-amber-200', icon: 'warning-sign' as const,
+    title: checkStatus ? 'Wird bearbeitet' : 'Noch nicht geprüft',
+  } : documentsChanged ? {
     border: 'border-red-400/35', background: 'bg-red-500/5', text: 'text-red-300', icon: 'error' as const,
     title: 'Neue Risikoprüfung erforderlich',
   } : requiresManualReview ? {
@@ -233,7 +244,7 @@ export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, c
       </div>
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         {onRefreshRisk && <Button small icon="refresh" disabled={refreshDisabled} onClick={onRefreshRisk}
-          aria-label={`Unternehmens- und Produktrisiken für Asset ${risk.key} neu prüfen`}>Risiken neu prüfen</Button>}
+          aria-label={`Unternehmens- und Produktrisiken für Asset ${risk.key} ${notReviewed ? 'prüfen' : 'neu prüfen'}`}>{notReviewed ? 'Risiken prüfen' : 'Risiken neu prüfen'}</Button>}
       </div>
     </div>
     {primaryDocumentsStep}
@@ -243,11 +254,12 @@ export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, c
     {reviewPending && <div role="status" className="mx-3 mb-0 mt-2 rounded border border-amber-400/30 bg-amber-500/10 px-2.5 py-2 text-xs text-amber-200">
       Berichtsauszug neu geladen. Die SpaceX-Margenprüfung steht noch aus. Bitte hier „Risiken neu prüfen“ wählen.
     </div>}
-    {!!open.length && <div className="mx-3 mb-0 mt-2 rounded border border-amber-400/25 bg-amber-950/15 p-2.5 text-xs text-gray-200" aria-label="Offene Prüfpunkte">
+    {notReviewed && !checkStatus && <p className="mx-3 mb-0 mt-2 text-xs text-gray-300">Für dieses Asset liegt noch keine inhaltliche Prüfung der Unternehmens- und Produktrisiken vor.</p>}
+    {!notReviewed && !!open.length && <div className="mx-3 mb-0 mt-2 rounded border border-amber-400/25 bg-amber-950/15 p-2.5 text-xs text-gray-200" aria-label="Offene Prüfpunkte">
       <p className="m-0 font-bold text-amber-200">Offene Punkte</p>
       <ul className="mb-0 mt-1.5 space-y-1 pl-4">{open.map(line => <li key={line} className="break-words">{line}</li>)}</ul>
     </div>}
-    {documentsChanged && <p role="status" className="mx-3 mb-0 mt-2 rounded border border-amber-400/25 bg-amber-500/5 px-2.5 py-2 text-xs text-amber-200">
+    {!notReviewed && documentsChanged && <p role="status" className="mx-3 mb-0 mt-2 rounded border border-amber-400/25 bg-amber-500/5 px-2.5 py-2 text-xs text-amber-200">
       Seit der letzten inhaltlichen Risikoprüfung haben sich Primärberichte geändert. Der gespeicherte Befund bleibt sichtbar, ist aber bis zur erneuten Prüfung nicht aktuell.
     </p>}
     {(hasMaterial || risk.structuralRisks?.length) && <div className="flex flex-wrap gap-1.5 px-3 pt-3" aria-label="Risikokategorien">
@@ -258,7 +270,7 @@ export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, c
         {riskLabels[item] ?? item} · strukturell
       </span>)}
     </div>}
-    <details className="group px-3 py-2.5 text-xs text-gray-300">
+    {!notReviewed && <details className="group px-3 py-2.5 text-xs text-gray-300">
       <summary className="cursor-pointer select-none font-semibold text-gray-200 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400">
         Befunde anzeigen
       </summary>
@@ -281,7 +293,7 @@ export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, c
           <ul className="mb-0 mt-1.5 space-y-1 pl-4">{verified.map(line => <li key={line} className="break-words">{line}</li>)}</ul>
         </div>}
       </div>
-    </details>
+    </details>}
   </section>;
 }
 const isCostBlockedHold = (recommendation: AssetRecommendation) => {
@@ -542,6 +554,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const [researchStatus, setResearchStatus] = useState<AssetResearchStatus[]>([]);
+  const [researchErrors, setResearchErrors] = useState<Record<number, string>>({});
   const [checkingPrimaryAsset, setCheckingPrimaryAsset] = useState<number | null>(null);
   const [primaryDocumentStatus, setPrimaryDocumentStatus] = useState<import('../../../../utils/portfolioAnalysis').PrimaryDocumentStatus[]>([]);
   const researchAssets = JSON.stringify(positions.map(({ id, name, isin, symbol, type }) => ({ id, name, isin, symbol, type })));
@@ -740,12 +753,15 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
       if (!result) throw new Error('Für die Risikoprüfung ist zuerst eine gespeicherte Analyse erforderlich.');
       const asset = positions.find(position => position.id === assetId);
       if (!asset) throw new Error('Das Asset ist nicht mehr im Portfolio vorhanden.');
-      const refreshed = await dispatch(refreshPortfolioPrimaryRisk({ asset: { id: asset.id, name: asset.name, isin: asset.isin,
-        symbol: asset.symbol, type: asset.type }, investorContext, documentsOnly, reasoningEffort })).unwrap();
+      const refreshed = await dispatch(refreshPortfolioPrimaryRisk({ asset, investorContext, documentsOnly, reasoningEffort })).unwrap();
       if (alive.current) {
         const risk = refreshed.fundamentalRisks?.find(item => item.key === String(assetId));
         setNotice(documentsOnly
-          ? risk?.primaryDocumentsChanged
+          ? !risk?.primaryDocuments?.length
+            ? `Für ${asset.name} konnten keine Primärberichte geladen werden. Die Gründe stehen im Abschnitt Primärberichte.`
+            : !!risk.primaryDocumentGaps?.length
+              ? `Primärberichte für ${asset.name} wurden geprüft. Offene Punkte stehen im Abschnitt Primärberichte.`
+            : risk?.primaryDocumentsChanged
             ? `Primärberichte für ${asset.name} haben sich geändert. Bitte jetzt „Risiken neu prüfen“ ausführen.`
             : `Primärberichte für ${asset.name} wurden neu geladen. Der gespeicherte Risikobefund bleibt unverändert.`
           : risk?.status === 'assessed'
@@ -760,8 +776,15 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
       if (!result) throw new Error('Für die Online-Recherche ist zuerst eine gespeicherte Analyse erforderlich.');
       const asset = positions.find(position => position.id === assetId);
       if (!asset) throw new Error('Das Asset ist nicht mehr im Portfolio vorhanden.');
-      await dispatch(refreshPortfolioResearch({ id: asset.id, name: asset.name, isin: asset.isin,
-        symbol: asset.symbol, type: asset.type })).unwrap();
+      setResearchErrors(previous => { const next = { ...previous }; delete next[assetId]; return next; });
+      try {
+        await dispatch(refreshPortfolioResearch({ id: asset.id, name: asset.name, isin: asset.isin,
+          symbol: asset.symbol, type: asset.type })).unwrap();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : typeof error === 'string' ? error : 'Die Online-Recherche konnte nicht aktualisiert werden.';
+        if (alive.current) setResearchErrors(previous => ({ ...previous, [assetId]: message }));
+        throw error;
+      }
       if (alive.current) setNotice(`Online-Recherche für ${asset.name} aktualisiert. Die KI-Bewertung wurde beibehalten; für eine aktualisierte Empfehlung das Asset neu analysieren.`);
     });
   }
@@ -772,7 +795,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
     : 0;
   const heldRecommendations = result ? positions.map(position => result.recommendations.find(rec => rec.assetId === position.id) ?? {
     assetId: position.id, action: 'Prüfen' as const,
-    rationale: 'Für dieses aktuell gehaltene Asset liegt in der gespeicherten Analyse kein Einzelbefund vor. Die Karte bleibt sichtbar; bitte das Asset neu analysieren.',
+    rationale: 'Für dieses aktuell gehaltene Asset liegt in der gespeicherten Analyse kein Einzelbefund vor. Starte die Portfolioanalyse erneut, um einen Befund zu erstellen.',
     risk: 'Kein assetbezogener KI-Risikotext verfügbar.', sourceIndexes: [],
   }) : [];
 
@@ -956,17 +979,34 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                 const source = Number.isInteger(index) ? result.sources[index] : undefined;
                 return source && typeof source.url === 'string' && typeof source.title === 'string' ? [{ index, source }] : [];
               });
-              const risk = result.fundamentalRisks?.find(item => item.key === String(rec.assetId)) ?? {
+              const savedRecommendation = result.recommendations.find(item => item.assetId === rec.assetId);
+              const savedRisk = result.fundamentalRisks?.find(item => item.key === String(rec.assetId));
+              const notReviewed = !savedRisk || (!!savedRisk.primaryDocumentIdentity && !savedRisk.primaryDocumentsCheckedAt
+                && savedRisk.status === 'unknown' && !savedRisk.sources.length);
+              const risk = savedRisk ?? {
                 key: String(rec.assetId), status: 'unknown' as const, materialRisks: [],
                 rationale: 'Keine gespeicherte Risikoprüfung verfügbar.', sources: [],
               };
               return <article key={rec.assetId} className="min-w-0 rounded-lg border border-white/10 p-4">
               <div className="flex justify-between items-start gap-3"><span className="font-bold text-sm text-white">{assetName}</span>
-                <AssetRecommendationStatus recommendation={rec} assetName={assetName} />
+                {savedRecommendation ? <AssetRecommendationStatus recommendation={rec} assetName={assetName} />
+                  : <span className="text-xs font-semibold text-amber-200">Noch nicht analysiert</span>}
               </div>
               <section aria-label={`${result.mode === 'ai' ? 'KI-Analyseergebnis' : 'Lokales Analyseergebnis'} für ${assetName}`} className="mt-3 min-w-0 rounded border border-indigo-400/20 bg-indigo-500/5 p-3">
-                <p className="m-0 text-xs font-bold text-indigo-200">{result.mode === 'ai' ? 'KI-Analyseergebnis' : 'Lokales Analyseergebnis'}</p>
+                <div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+                  <p className="m-0 text-xs font-bold text-indigo-200">{result.mode === 'ai' ? 'KI-Analyseergebnis' : 'Lokales Analyseergebnis'}</p>
+                  <Button small disabled={busy || !position || !savedRecommendation} onClick={() => analyze(rec.assetId)} aria-label={`Asset ${rec.assetId} neu analysieren`}>Neu analysieren</Button>
+                </div>
                 <p className="mb-0 mt-1 whitespace-pre-wrap break-words text-sm text-gray-200">{rec.rationale}</p>
+                {!!recommendationSources.length && <details className="group mt-2 min-w-0">
+                  <summary className="flex cursor-pointer list-none items-center gap-1 text-xs font-semibold text-gray-400 outline-none focus-visible:ring-2 focus-visible:ring-indigo-400">
+                    <Icon icon="chevron-right" size={12} aria-hidden="true" className="shrink-0 transition-transform group-open:rotate-90" />
+                    Belege dieser Analyse
+                  </summary>
+                  <div className="mt-1 flex flex-wrap gap-2" aria-label={`Analysebelege für ${assetName}`}>
+                    {recommendationSources.map(({ index, source }) => <a key={index} href={source.url} onClick={e => openSource(e, source.url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">[{index}] {source.title}</a>)}
+                  </div>
+                </details>}
               </section>
               {asset && investorFacts.assets[asset.ID] && <div className="mt-3">
                 <AssetFactsEditor key={`${asset.ID}-${JSON.stringify(investorFacts.assets[asset.ID])}`} embedded busy={busy} asset={asset}
@@ -974,13 +1014,13 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                   depotTaxContexts={investorFacts.depotTaxContexts} onSave={value => saveInvestorFacts({ ...investorFacts,
                     assets: { ...investorFacts.assets, [asset.ID]: value } })} />
               </div>}
-              {showGeneralProgress && <p role="status" data-testid={`asset-reload-status-${rec.assetId}`} className="my-2 flex min-w-0 items-center gap-2 break-words rounded border border-sky-400/25 bg-sky-500/10 px-2 py-1.5 text-xs text-sky-200">
+              {showGeneralProgress && <div role="status" data-testid={`asset-reload-status-${rec.assetId}`} className="my-2 flex min-w-0 items-center gap-2 break-words rounded border border-sky-400/25 bg-sky-500/10 px-2 py-1.5 text-xs text-sky-200">
                 <Spinner size={14} /> <span><span className="font-semibold">Aktueller Schritt für {assetName}:</span> {assetProgress.message}. Die bisherige KI-Begründung bleibt oben sichtbar.</span>
-              </p>}
+              </div>}
               <section aria-label={`Aktueller Kurs für ${assetName}`} className="my-3 min-w-0 rounded border border-white/10 bg-slate-950/25 p-3">
                 <p className="m-0 text-xs font-bold text-gray-300">Aktueller Kurs</p>
                 {assetProgress?.refreshingPrice
-                  ? <p role="status" data-testid={`asset-price-loading-${rec.assetId}`} className="mb-0 mt-2 flex items-center gap-2 text-xs text-sky-200"><Spinner size={14} /> {assetProgress.message}</p>
+                  ? <div role="status" data-testid={`asset-price-loading-${rec.assetId}`} className="mb-0 mt-2 flex items-center gap-2 text-xs text-sky-200"><Spinner size={14} /> {assetProgress.message}</div>
                   : position?.price !== null && position?.price !== undefined && (position.quote?.valuationCurrency === 'EUR' || position.currency === 'EUR')
                     ? <p className="mb-0 mt-1 text-sm text-white">{euros(position.price)}{position.quote?.quoteAsOf && <span className="ml-2 text-xs text-gray-400">Kurszeit: {formatSyncTime(position.quote.quoteAsOf)}</span>}</p>
                     : position?.quote?.originalPrice !== undefined
@@ -1002,13 +1042,16 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                     </summary>
                     <div className="mt-2 min-w-0 space-y-2 border-t border-white/10 pt-2">
                       {refreshingResearch
-                        ? <p role="status" data-testid={`asset-research-loading-${rec.assetId}`} className="mb-0 flex items-center gap-2 text-xs text-sky-200"><Spinner size={14} /> {assetProgress?.message}</p>
+                        ? <div role="status" data-testid={`asset-research-loading-${rec.assetId}`} className="mb-0 flex items-center gap-2 text-xs text-sky-200"><Spinner size={14} /> {assetProgress?.message}</div>
                         : result.mode === 'local'
                           ? <p className="my-1 text-xs text-gray-400" data-testid={`local-market-data-status-${rec.assetId}`}>{localForecastKeys.has(String(rec.assetId)) ? 'Lokaler Forecast und deterministisch gefundene Onlinequellen vorhanden.' : 'Kein vollständiger lokaler Forecast verfügbar; Onlinequellen werden ohne inhaltliche Bewertung angezeigt.'}</p>
                           : <AssetResearchIndicator status={research} now={now} />}
-                      {!refreshingResearch && !!recommendationSources.length && <div className="flex flex-wrap gap-2" aria-label={`Recherchequellen für ${assetName}`}>
-                        {recommendationSources.map(({ index, source }) => <a key={index} href={source.url} onClick={e => openSource(e, source.url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">[{index}] {source.title}</a>)}
+                      {!refreshingResearch && reusable && research?.text && <p className="m-0 whitespace-pre-wrap break-words text-xs text-gray-300">{research.text}</p>}
+                      {!refreshingResearch && reusable && !!research?.sources?.length && <div className="flex flex-wrap gap-2" aria-label={`Online-Suchquellen für ${assetName}`}>
+                        {research.sources.map(source => <a key={source.url} href={source.url} onClick={e => openSource(e, source.url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">{source.title}</a>)}
                       </div>}
+                      {!refreshingResearch && reusable && !!research?.sources?.length && <p className="m-0 text-xs text-gray-400">Links können automatisch erzeugt sein; ihre Erreichbarkeit und inhaltliche Eignung wurden nicht geprüft.</p>}
+                      {!refreshingResearch && reusable && !research?.sources?.length && <p className="m-0 text-xs text-gray-400">Bei dieser Suche wurden keine verwendbaren Quellen gefunden.</p>}
                     </div>
                   </details>
                   <Button small icon="refresh" disabled={busy || !positions.some(position => position.id === rec.assetId)}
@@ -1016,8 +1059,9 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                     Recherche neu laden
                   </Button>
                 </div>
+                {!refreshingResearch && researchErrors[rec.assetId] && <p role="alert" className="mb-0 mt-2 break-words text-xs text-red-300">{researchErrors[rec.assetId]}</p>}
               </section>
-              <RiskReview risk={risk} openSource={openSource}
+              <RiskReview risk={risk} notReviewed={notReviewed} openSource={openSource}
                 primaryDocumentsStep={<PrimaryDocumentsIndicator risk={risk} now={now} status={primaryDocumentStatus.find(item => item.assetId === rec.assetId)} openSource={openSource} onReload={() => refreshRisk(rec.assetId, true)} onCheck={() => checkPrimaryFreshness(rec.assetId)} checking={checkingPrimaryAsset === rec.assetId}
                   disabled={busy || !positions.some(position => position.id === rec.assetId)}
                   loading={assetProgress?.refreshingRisk === true && progress?.activeRiskStep === 'documents'
@@ -1049,13 +1093,10 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                 <p className="m-0">{rec.orderRecommendation.priceInstruction}</p><p className="m-0">{rec.orderRecommendation.rationale}</p>
                 {rec.orderRecommendation.type === 'trailing-stop' && <p className="m-0 text-amber-200">Manuell in der aktuellen Trade-Republic-Ordermaske prüfen: Referenzkurs, Nachlaufabstand und Gültigkeit werden nicht von FinPal übermittelt.</p>}
               </div>}
-              <div className="flex flex-wrap gap-2">
-                <Button small disabled={busy || !positions.some(position => position.id === rec.assetId)} onClick={() => analyze(rec.assetId)} aria-label={`Asset ${rec.assetId} neu analysieren`}>Neu analysieren</Button>
-              </div>
               {rec.updatedAt && <p className="text-xs text-gray-400">Einzelanalyse vom {formatSyncTime(rec.updatedAt)} · {rec.model}. Portfolio-Zusammenfassung und übrige Empfehlungen stammen aus der Gesamtanalyse.</p>}
               <EltifValuation position={positions.find(position => position.id === rec.assetId)} evidence={rec.navEvidence} />
               <AnalysisMessages infos={rec.infos} warnings={rec.warnings} />
-              <p className="text-xs text-amber-200 whitespace-pre-wrap">Risiken: {rec.risk}</p>
+              {savedRecommendation && <p className="text-xs text-amber-200 whitespace-pre-wrap">Risiken: {rec.risk}</p>}
               {rec.tradeCheck && <div className="rounded border border-white/10 bg-slate-950/30 p-3 text-xs text-gray-300 space-y-2" aria-label="Kosten- und Steuerprüfung">
                 <p className="m-0"><span className="font-bold text-white">Kosten:</span> {rec.tradeCheck.costs}</p>
                 <p className="m-0"><span className="font-bold text-white">Steuern:</span> {rec.tradeCheck.taxes}</p>

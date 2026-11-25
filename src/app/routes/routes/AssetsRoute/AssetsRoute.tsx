@@ -12,6 +12,7 @@ import { selectTotalLiquidity } from '../../../store/cash/cash.selectors';
 import { changeSelectedTab } from '../../../store/appState/appState.reducer';
 import { formatSyncTime } from '../../../utils/syncTimestamps';
 import { useMarketPriceUpdatedAt } from '../../../utils/useMarketPriceUpdatedAt';
+import type { TradeRepublicQuoteCache } from '../../../utils/tradeRepublicSync';
 
 const assetTypes: { type: Asset['type']; label: string; icon?: IconName; symbol?: string }[] = [
 	{ type: 'Stock', label: 'Aktie', icon: 'chart' },
@@ -20,7 +21,7 @@ const assetTypes: { type: Asset['type']; label: string; icon?: IconName; symbol?
 	{ type: 'Bond', label: 'Anleihe', icon: 'bank-account' },
 	{ type: 'Crypto', label: 'Krypto', symbol: '₿' },
 	{ type: 'Commodity', label: 'Rohstoff', icon: 'cube' },
-	{ type: 'RealEstate', label: 'Immobilie', icon: 'home' },
+	{ type: 'RealEstate', label: 'Immobilien', icon: 'home' },
 	{ type: 'CashEquivalent', label: 'Geldmarkt', icon: 'dollar' },
 	{ type: 'IPO', label: 'IPO', icon: 'time' },
 ];
@@ -33,6 +34,12 @@ export default function AnalysisRoute() {
 	const assets = useAppSelector(state => state.assets);
 	const selectedTab = useAppSelector(state => state.appState.selectedTab);
 	const totalLiquidity = useAppSelector(selectTotalLiquidity);
+	const [brokerCache, setBrokerCache] = useState<TradeRepublicQuoteCache | null>(null);
+	useEffect(() => {
+		let active = true;
+		window.API.getTradeRepublicQuotes?.().then(cache => { if (active) setBrokerCache(cache); }).catch(() => {});
+		return () => { active = false; };
+	}, []);
 	const totalWealth = assets.reduce((sum, asset) => sum + (assetsSelector.get_current_value(asset) || 0), 0) + totalLiquidity;
 	const [selectedType, setSelectedType] = useState<Asset['type'] | null>(() => {
 		const savedType = localStorage.getItem(ASSET_TYPE_FILTER_KEY);
@@ -60,27 +67,8 @@ export default function AnalysisRoute() {
 			.reduce((sum, asset) => sum + (assetsSelector.get_current_value(asset) || 0), 0),
 	}));
 
-	return (
-		<div id="AssetsRoute" data-testid="AssetsRoute" className="w-full p-4 animate-in fade-in duration-500">
-			{/* Summary Header */}
-			<div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
-				
-				<div className="flex flex-wrap gap-4">
-					<Card
-						data-testid="asset-total-wealth"
-						title="Aktuelle Positionswerte inklusive Cash Equivalents plus Total Liquidity aus Cash Management"
-						className="glass-card py-2 px-4 flex items-center gap-3 !border-emerald-400/30 !bg-emerald-500/10"
-					>
-						<div className="p-2 rounded-lg bg-emerald-500/10">
-							<Icon icon="bank-account" className="text-emerald-400" size={16} />
-						</div>
-						<div>
-							<div className="text-[10px] uppercase font-bold tracking-wider text-emerald-300">Total Wealth</div>
-							<div className={`text-lg font-bold ${totalWealth === 0 ? 'text-slate-500' : 'text-white'}`}>{euroFormatter.format(totalWealth)}</div>
-						</div>
-					</Card>
-					{valuesByType.map(({ type, label, icon, symbol, value }) => {
-						const isRealEstate = type === 'RealEstate';
+	const renderAssetTypeCard = ({ type, label, icon, symbol, value }: typeof valuesByType[number]) => {
+					const isRealEstate = type === 'RealEstate';
 						const isSelected = isRealEstate ? selectedTab === 'realEstateTab' : selectedType === type;
 
 						return (
@@ -122,7 +110,42 @@ export default function AnalysisRoute() {
 						</div>
 						</Card>
 						);
-					})}
+	};
+
+	return (
+		<div id="AssetsRoute" data-testid="AssetsRoute" className="w-full p-4 animate-in fade-in duration-500">
+			{/* Summary Header */}
+			<div className="mb-8 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+
+				<div className="flex flex-wrap gap-4">
+					<Card
+						data-testid="asset-total-wealth"
+						title="Aktuelle Positionswerte inklusive Cash Equivalents plus Total Liquidity aus Cash Management"
+						className="glass-card py-2 px-4 flex items-center gap-3 !border-emerald-400/30 !bg-emerald-500/10"
+					>
+						<div className="p-2 rounded-lg bg-emerald-500/10">
+							<Icon icon="bank-account" className="text-emerald-400" size={16} />
+						</div>
+						<div>
+							<div className="text-[10px] uppercase font-bold tracking-wider text-emerald-300">Gesamtvermögen</div>
+							<div className={`text-lg font-bold ${totalWealth === 0 ? 'text-slate-500' : 'text-white'}`}>{euroFormatter.format(totalWealth)}</div>
+						</div>
+					</Card>
+                    <Card
+                        data-testid="asset-trade-republic-value"
+                        title={brokerCache?.fetchedAt ? `Depotpositionen laut Trade Republic, Stand: ${formatSyncTime(brokerCache.fetchedAt)}. Cash ist separat ausgewiesen.` : 'Depotpositionen aus dem letzten Trade-Republic-Sync; Cash ist separat ausgewiesen.'}
+                        className="glass-card py-2 px-4 flex items-center gap-3"
+                    >
+                        <div className="p-2 rounded-lg bg-indigo-500/10"><Icon icon="briefcase" className="text-indigo-500" size={16} /></div>
+                        <div>
+                            <div className="text-[10px] uppercase font-bold tracking-wider text-gray-400">Trade Republic</div>
+                            <div className={`text-lg font-bold ${brokerCache?.fetchedAt ? 'text-white' : 'text-slate-500'}`}>
+                                {brokerCache?.fetchedAt ? euroFormatter.format(brokerCache.quotes.reduce((sum, quote) => sum + (Number.isFinite(quote.netValue) ? quote.netValue : 0), 0)) : 'Nicht verfügbar'}
+                            </div>
+                            {brokerCache?.fetchedAt && <div className="text-[10px] text-gray-400">Stand: {formatSyncTime(brokerCache.fetchedAt)}</div>}
+                        </div>
+                    </Card>
+                    {valuesByType.filter(item => item.type === 'RealEstate').map(renderAssetTypeCard)}
 					<Card
 						data-testid="asset-cash-value"
 						interactive
@@ -148,6 +171,9 @@ export default function AnalysisRoute() {
 					</Card>
 				</div>
 			</div>
+            <div data-testid="asset-type-row" className="mb-8 flex flex-wrap gap-4">
+                {valuesByType.filter(item => item.type !== 'RealEstate').map(renderAssetTypeCard)}
+            </div>
 
 			{/* Asset Management Area */}
 			{assets.some(asset => asset.current_shares > 0 && asset.quote?.valuationCurrency === 'unknown') &&

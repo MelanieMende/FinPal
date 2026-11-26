@@ -133,19 +133,6 @@ export function validForecastOptimizationDetails(v: ForecastOptimizationDetails)
       && Array.isArray(v.robust.reviewReasons) && v.robust.reviewReasons.length <= 200 && v.robust.reviewReasons.every(s => typeof s === 'string' && s.length < 5000)
       && Array.isArray(v.robust.scenarioTrades) && v.robust.scenarioTrades.length <= 105 && v.robust.scenarioTrades.every(t => t && typeof t.key === 'string'
         && ['Kaufen', 'Verkaufen'].includes(t.action) && finite(t.amountEUR) && t.amountEUR > 0 && (t.targetPercent === null || finite(t.targetPercent) && t.targetPercent >= 0 && t.targetPercent <= 100.000001))
-      && (v.robust.cashOnlyComparison === undefined || !!v.robust.cashOnlyComparison
-        && ['stable-scenario', 'review-required', 'no-trades', 'unavailable'].includes(v.robust.cashOnlyComparison.decisionStatus)
-        && [v.robust.cashOnlyComparison.availableCashEUR, v.robust.cashOnlyComparison.feesEUR, v.robust.cashOnlyComparison.remainingCashEUR].every(n => finite(n) && n >= 0)
-        && Array.isArray(v.robust.cashOnlyComparison.scenarioTrades) && v.robust.cashOnlyComparison.scenarioTrades.length <= 105
-        && v.robust.cashOnlyComparison.scenarioTrades.every(t => t && typeof t.key === 'string' && t.action === 'Kaufen' && finite(t.amountEUR) && t.amountEUR > 0
-          && (t.targetPercent === null || finite(t.targetPercent) && t.targetPercent >= 0 && t.targetPercent <= 100.000001))
-        && v.robust.cashOnlyComparison.scenarioTrades.reduce((sum, trade) => sum + trade.amountEUR, v.robust.cashOnlyComparison.feesEUR)
-          <= v.robust.cashOnlyComparison.availableCashEUR + .02
-        && Array.isArray(v.robust.cashOnlyComparison.stressChecks) && v.robust.cashOnlyComparison.stressChecks.length <= 110
-        && v.robust.cashOnlyComparison.stressChecks.every(s => s && typeof s.name === 'string' && finite(s.utilityImprovementEUR))
-        && (v.robust.cashOnlyComparison.baseUtilityImprovementEUR === undefined || finite(v.robust.cashOnlyComparison.baseUtilityImprovementEUR))
-        && Array.isArray(v.robust.cashOnlyComparison.reviewReasons) && v.robust.cashOnlyComparison.reviewReasons.length <= 200
-        && v.robust.cashOnlyComparison.reviewReasons.every(s => typeof s === 'string' && s.length < 5000))
       && (v.robust.concentration === undefined || !!v.robust.concentration && [v.robust.concentration.beforeLargestPercent, v.robust.concentration.scenarioLargestPercent].every(n => finite(n) && n >= 0 && n <= 100.000001)))
     && [v.expectedReturnPercent, v.riskProxyPercent, v.expectedGainEUR].every(n => n === null || finite(n));
 }
@@ -199,8 +186,8 @@ function project(v: number[], lower: number[], upper: number[], budget: number, 
 
 export function buildForecastAllocation(request: PortfolioAnalysisRequest, forecasts: ReturnForecast[] = [], candidates: NewAssetRecommendation[] = [],
   previous?: PortfolioAnalysisResult, decisions?: AssetRecommendation[], reviewedUnavailableKeys: string[] = [], riskModel?: ForecastRiskModel,
-  buyOnly = false, constraints?: ForecastAllocationConstraints): PortfolioAllocation {
-  const plan = calculateForecastAllocation(request, forecasts, candidates, previous, decisions, riskModel, buyOnly, constraints);
+  constraints?: ForecastAllocationConstraints): PortfolioAllocation {
+  const plan = calculateForecastAllocation(request, forecasts, candidates, previous, decisions, riskModel, constraints);
   const reviewed = new Set([...previous?.allocationPlan?.optimization?.reviewedUnavailableKeys ?? [], ...reviewedUnavailableKeys]);
   const optimization = plan.optimization!;
   const onlyMissingForecasts = plan.status === 'blocked' && plan.warnings.some(w => w.startsWith('Für die ausgewählte Optimierung'));
@@ -219,7 +206,7 @@ export function buildForecastAllocation(request: PortfolioAnalysisRequest, forec
 }
 
 function calculateForecastAllocation(request: PortfolioAnalysisRequest, forecasts: ReturnForecast[] = [], candidates: NewAssetRecommendation[] = [],
-  previous?: PortfolioAnalysisResult, decisions?: AssetRecommendation[], riskModel?: ForecastRiskModel, buyOnly = false,
+  previous?: PortfolioAnalysisResult, decisions?: AssetRecommendation[], riskModel?: ForecastRiskModel,
   constraints?: ForecastAllocationConstraints): PortfolioAllocation {
   const base = buildPortfolioAllocation(request, candidates, previous);
   const level = request.profile.goal === 'preservation' || request.profile.horizonYears < 5 ? 'low' : request.profile.risk;
@@ -325,10 +312,9 @@ function calculateForecastAllocation(request: PortfolioAnalysisRequest, forecast
   const targets = base.positions.map(p => request.investorContext?.assets.find(f => f.assetId === p.assetId && f.confirmedAt)?.targetWeight ?? null);
   const lower = targets.map((t, i) => frozen[i] ? request.targetAssetId !== undefined && base.positions[i].assetId !== request.targetAssetId
     ? (base.positions[i].currentValueEUR! + (base.positions[i].action === 'Kaufen' ? 1 : base.positions[i].action === 'Verkaufen' ? -1 : 0) * (base.positions[i].amountEUR ?? 0)) / total
-    : current[i] : Math.max(buyOnly ? current[i] : 0, (t?.minPercent ?? 0) / 100 * net));
+    : current[i] : Math.max(0, (t?.minPercent ?? 0) / 100 * net));
   const upper = inputs.map((_p, i) => frozen[i] ? lower[i] : Math.min((targets[i]?.maxPercent ?? 100) / 100 * net,
     constraints?.noIncreaseKeys?.has(base.positions[i].key) ? current[i] : 1));
-  if (buyOnly && lower.some((value, i) => value > upper[i] + 1e-10)) return block('Eine bestätigte Zielobergrenze liegt unter dem aktuellen Bestand; die reine Cash-Variante kann diese Vorgabe ohne Verkauf nicht einhalten.');
   if (lower.some((value, i) => value > upper[i] + 1e-10)) return block('Eine bestätigte Mindestgewichtung widerspricht der Nebenbedingung, eine belegte Konzentrationsposition nicht weiter aufzustocken. Bitte Zielband oder Konzentrationsentscheidung prüfen.');
   const fixedMinimum = lower.reduce((s, n) => s + n, 0);
   if (fixedMinimum > net - cashFloor + 1e-10) return block('Bestätigte Mindestgewichte oder bestehende Einzelanalyse-Szenarien sind mit Gebührenreserve und geschützter Liquidität nicht finanzierbar.');
@@ -360,7 +346,6 @@ function calculateForecastAllocation(request: PortfolioAnalysisRequest, forecast
     : decisions?.find(r => r.assetId === p.id)).filter((p): p is AssetRecommendation => !!p);
   const executed = buildPortfolioAllocation(request, candidates, previous, executionDecisions, optimizedTargets);
   if (executed.status === 'blocked') return block(executed.warnings[executed.warnings.length - 1]);
-  if (buyOnly && executed.positions.some(p => p.action === 'Verkaufen')) return block('Die reine Cash-Variante würde einen Verkauf erfordern und wurde deshalb nicht als Cash-Einsatz bewertet.');
   const after = executed.positions.map(p => (p.currentValueEUR! + (p.action === 'Kaufen' ? 1 : p.action === 'Verkaufen' ? -1 : 0) * (p.amountEUR ?? 0)) / total);
   const improvement = utility(after, executed.feesEUR) - utility(current, 0);
   // Fixed fees and the execution engine's minimum trade sizes can erase the continuous gain.

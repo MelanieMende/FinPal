@@ -161,57 +161,6 @@ it('keeps reviewed residual uncertainty visible without making it a risk gate', 
   expect(material.warnings.join(' ')).toContain('kein automatischer Handelsblocker');
 });
 
-it('compares a cash-only purchase independently without using sale proceeds or the protected reserve', () => {
-  const r = request();
-  r.profile.decisionDetails = { reserveEUR: 100, plannedWithdrawalsEUR: 50, confirmedAt: new Date().toISOString() };
-  const bitcoin = robustReturnForecastFixture('31', { referencePrice: 74456.65, targetPrice: 60000, annualVolatilityPercent: 10 });
-  const jinko = robustReturnForecastFixture('33', { referencePrice: 8.61, targetPrice: 100, annualVolatilityPercent: 10,
-    uncertainty: { method: 'analyst-consensus', analystCount: 30, targetLowPrice: 99, targetHighPrice: 101 } });
-  const plan = buildRobustForecastAllocation(r, [bitcoin, jinko], [], undefined, undefined, [], [
-    { key: '31', status: 'assessed', materialRisks: [], rationale: 'Synthetic assessment.', sources: bitcoin.forecastSources },
-    { key: '33', status: 'assessed', materialRisks: [], rationale: 'Synthetic assessment.', sources: jinko.forecastSources },
-  ]);
-  const comparison = plan.optimization!.robust!.cashOnlyComparison!;
-  expect(plan.optimization!.robust!.scenarioTrades.some(trade => trade.action === 'Verkaufen')).toBe(true);
-  expect(comparison.availableCashEUR).toBeCloseTo(117.54);
-  expect(comparison.scenarioTrades.length).toBeGreaterThan(0);
-  expect(comparison.scenarioTrades.every(trade => trade.action === 'Kaufen')).toBe(true);
-  expect(comparison.scenarioTrades.reduce((sum, trade) => sum + trade.amountEUR, comparison.feesEUR))
-    .toBeLessThanOrEqual(comparison.availableCashEUR + .01);
-  expect(comparison.remainingCashEUR).toBeGreaterThanOrEqual(150);
-  expect(comparison.stressChecks.length).toBeGreaterThan(0);
-  expect(validPortfolioAllocation(plan)).toBe(true);
-});
-
-it('rebuilds a selected executable partial plan without blocked sale proceeds', () => {
-  const r = request();
-  r.profile.decisionDetails = { reserveEUR: 100, plannedWithdrawalsEUR: 50, confirmedAt: new Date().toISOString() };
-  const bitcoin = robustReturnForecastFixture('31', { referencePrice: 74456.65, targetPrice: 60000, annualVolatilityPercent: 10 });
-  const jinko = robustReturnForecastFixture('33', { referencePrice: 8.61, targetPrice: 100, annualVolatilityPercent: 10,
-    uncertainty: { method: 'analyst-consensus', analystCount: 30, targetLowPrice: 99, targetHighPrice: 101 } });
-  const risks = [
-    { key: '31', status: 'assessed' as const, materialRisks: [] as string[], rationale: 'Synthetic assessment.', sources: bitcoin.forecastSources },
-    { key: '33', status: 'assessed' as const, materialRisks: [] as string[], rationale: 'Synthetic assessment.', sources: jinko.forecastSources },
-  ];
-  const first = buildRobustForecastAllocation(r, [bitcoin, jinko], [], undefined, undefined, [], risks);
-  const comparison = first.optimization!.robust!.cashOnlyComparison!;
-  expect(comparison.decisionStatus).toBe('stable-scenario');
-  const decisions = r.positions.map(position => {
-    const trade = comparison.scenarioTrades.find(candidate => candidate.key === String(position.id));
-    return { assetId: position.id, action: trade?.action ?? 'Halten' as 'Kaufen' | 'Halten',
-      plannedAmountEUR: trade?.amountEUR ?? null, rationale: 'Cash-Variante', risk: 'Geprueft', sourceIndexes: [] as number[] };
-  });
-  const selected = buildRobustForecastAllocation(r, [bitcoin, jinko], [], undefined, decisions, [], risks);
-  expect(selected.optimization!.robust!.decisionStatus).toBe('stable-scenario');
-  expect(selected.optimization!.robust!.scenarioTrades.every(trade => trade.action === 'Kaufen')).toBe(true);
-  expect(selected.assumptions.join(' ')).toContain('Ausführbarer Teilplan');
-  const correctedDecisions = decisions.map(decision => {
-    const trade = selected.optimization!.robust!.scenarioTrades.find(candidate => candidate.key === String(decision.assetId));
-    return trade ? { ...decision, action: trade.action, plannedAmountEUR: trade.amountEUR } : decision;
-  });
-  expect(allocationMismatch(selected, correctedDecisions)).toBeNull();
-});
-
 it('keeps funding- and scale-only buys eligible and resizes them to cash after a blocked sale', () => {
   const r = request();
   r.profile.decisionDetails = { reserveEUR: 100, plannedWithdrawalsEUR: 50, confirmedAt: new Date().toISOString() };

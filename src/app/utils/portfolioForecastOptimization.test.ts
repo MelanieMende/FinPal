@@ -172,7 +172,7 @@ it('reoptimizes around a cited concentration without inventing a universal posit
   const concentrated = returnForecastFixture('1', { targetPrice: 200, annualVolatilityPercent: 20 });
   const diversified = returnForecastFixture('2', { targetPrice: 160, annualVolatilityPercent: 20 });
   const unrestricted = buildForecastAllocation(r, [concentrated, diversified]);
-  const constrained = buildForecastAllocation(r, [concentrated, diversified], [], undefined, undefined, [], undefined, false,
+  const constrained = buildForecastAllocation(r, [concentrated, diversified], [], undefined, undefined, [], undefined,
     { noIncreaseKeys: new Set(['1']) });
   expect(unrestricted.positions[0].amountEUR).toBeGreaterThan(0);
   expect(constrained.positions[0]).toMatchObject({ action: 'Halten', amountEUR: null });

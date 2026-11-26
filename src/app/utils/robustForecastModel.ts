@@ -2,7 +2,6 @@ import type { AnalysisSource, AssetRecommendation, NewAssetRecommendation, Portf
 import { allocationCandidateKey, type PortfolioAllocation } from './portfolioAllocation';
 import { buildForecastAllocation, validReturnForecast, type ReturnForecast, type ForecastRiskModel } from './portfolioForecastOptimization';
 import { validCandidateMarketQuote } from './candidateMarketQuote';
-import { protectedCashEUR } from './decisionProfile';
 import { allRiskCheckNames, riskCheckLabels } from './assetRiskPolicy';
 
 export interface FundamentalRiskAssessment {
@@ -35,16 +34,7 @@ export interface RobustModelDetails {
   reviewReasons: string[];
   scenarioTrades: { key: string; action: 'Kaufen' | 'Verkaufen'; amountEUR: number; targetPercent: number | null }[];
   concentration?: { beforeLargestPercent: number; scenarioLargestPercent: number };
-  cashOnlyComparison?: {
-    availableCashEUR: number;
-    decisionStatus: 'stable-scenario' | 'review-required' | 'no-trades' | 'unavailable';
-    feesEUR: number;
-    remainingCashEUR: number;
-    scenarioTrades: RobustModelDetails['scenarioTrades'];
-    stressChecks: RobustModelDetails['stressChecks'];
-    baseUtilityImprovementEUR?: number;
-    reviewReasons: string[];
-  };
+
 }
 
 // Model assumptions, not fitted forecast accuracy or confidence intervals. Applied to BOTH methods.
@@ -163,7 +153,7 @@ export function readFundamentalRisks(value: unknown, sources: AnalysisSource[]):
 
 export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest, forecasts: ReturnForecast[] = [], candidates: NewAssetRecommendation[] = [],
   previous?: PortfolioAnalysisResult, decisions?: AssetRecommendation[], reviewedUnavailableKeys: string[] = [], fundamentals: FundamentalRiskAssessment[] = [],
-  variant: 'full' | 'cash-only' = 'full', frozenKeys: ReadonlySet<string> = new Set()): PortfolioAllocation {
+  frozenKeys: ReadonlySet<string> = new Set()): PortfolioAllocation {
   const explicitBlockers = new Map(fundamentals.filter(item => item.decisionBlocker).map(item => [item.key, item.decisionBlocker!]));
   const allFrozen = new Set([...frozenKeys, ...explicitBlockers.keys()]);
   const supplied = new Map<string, ReturnForecast>();
@@ -210,7 +200,7 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
     optimization: previous.allocationPlan.optimization && { ...previous.allocationPlan.optimization, forecasts: adjusted } } } : undefined;
   const concentrationKeys = new Set(fundamentals.filter(assessment => assessment.materialRisks.includes('concentration')).map(assessment => assessment.key));
   const plan = buildForecastAllocation(request, adjusted, modelCandidates, context, undefined, reviewedUnavailableKeys, riskModel,
-    variant === 'cash-only', { noIncreaseKeys: concentrationKeys, frozenKeys: allFrozen });
+    { noIncreaseKeys: concentrationKeys, frozenKeys: allFrozen });
   const details: RobustModelDetails = { version: 3, decisionStatus: 'no-trades', covarianceStatus: measured ? 'measured-eur' : 'unavailable',
     observations: measured?.observations ?? 0, covarianceShrinkage: measured?.shrinkage ?? null, estimates, stressChecks: [], reviewReasons: [], scenarioTrades: [] };
   plan.optimization!.robust = details;
@@ -227,23 +217,6 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
       allocation.optimization.reviewedUnavailableKeys = allocation.optimization.reviewedUnavailableKeys.filter(key => !explicitBlockers.has(key));
   };
   applyExplicitBlockers(plan);
-  if (variant === 'full' && request.targetAssetId === undefined) {
-    const cashPlan = buildRobustForecastAllocation(request, forecasts, candidates, previous, undefined, reviewedUnavailableKeys, fundamentals, 'cash-only', frozenKeys);
-    const cashDetails = cashPlan.optimization!.robust!;
-    details.cashOnlyComparison = {
-      availableCashEUR: Math.max(0, Math.round((request.profile.buyBudget - protectedCashEUR(request.profile)) * 100) / 100),
-      decisionStatus: cashPlan.status === 'blocked' ? 'unavailable' : cashDetails.decisionStatus,
-      feesEUR: cashDetails.scenarioTrades.length ? cashDetails.scenarioTrades.reduce((sum, trade) => sum + (cashPlan.positions.find(p => p.key === trade.key)?.feeEUR ?? 0), 0) : 0,
-      remainingCashEUR: cashDetails.scenarioTrades.length
-        ? Math.max(0, Math.round((request.profile.buyBudget - cashDetails.scenarioTrades.reduce((sum, trade) => sum + trade.amountEUR, 0)
-          - cashDetails.scenarioTrades.reduce((sum, trade) => sum + (cashPlan.positions.find(p => p.key === trade.key)?.feeEUR ?? 0), 0)) * 100) / 100)
-        : request.profile.buyBudget,
-      scenarioTrades: cashDetails.scenarioTrades,
-      stressChecks: cashDetails.stressChecks,
-      baseUtilityImprovementEUR: cashDetails.baseUtilityImprovementEUR,
-      reviewReasons: cashPlan.status === 'blocked' ? cashPlan.warnings.slice(-1) : cashDetails.reviewReasons,
-    };
-  }
   // Keep published/raw targets in the report; adjusted estimates are displayed separately.
   plan.optimization!.forecasts = [...supplied.values()].filter(f => plan.positions.some(p => p.key === f.key));
   if (!measured) {
@@ -349,7 +322,7 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
   if (assetSpecificBlocked.size && !globalReasons.length) {
     const nextFrozen = new Set([...frozenKeys, ...assetSpecificBlocked]);
     const partial = buildRobustForecastAllocation(request, forecasts, candidates, previous, decisions,
-      reviewedUnavailableKeys, fundamentals, variant, nextFrozen);
+      reviewedUnavailableKeys, fundamentals, nextFrozen);
     for (const key of assetSpecificBlocked) {
       const blocked = partial.positions.find(position => position.key === key);
       const original = plan.positions.find(position => position.key === key);
@@ -379,7 +352,7 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
       return modeled ? { ...decision, action: 'Kaufen' as const, plannedAmountEUR: modeled.amountEUR, executionBlocker: null } : decision;
     });
     const accepted = buildForecastAllocation(request, adjusted, modelCandidates, context, executionDecisions, reviewedUnavailableKeys, riskModel,
-      variant === 'cash-only', { noIncreaseKeys: concentrationKeys, frozenKeys: allFrozen });
+      { noIncreaseKeys: concentrationKeys, frozenKeys: allFrozen });
     const acceptedTrades = accepted.positions.filter(position => position.amountEUR !== null
       && (position.action === 'Kaufen' || position.action === 'Verkaufen'));
     accepted.optimization!.forecasts = plan.optimization!.forecasts;

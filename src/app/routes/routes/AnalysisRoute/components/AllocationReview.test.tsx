@@ -31,9 +31,7 @@ it('separates an unapproved scenario from actionable amounts and shows measured 
   const plan = buildRobustForecastAllocation(r, [robustReturnForecastFixture('1', { targetPrice: 100 })]);
   render(<><AllocationReview plan={plan} /><AssetOptimizationDetails plan={plan} allocationKey="1" /></>);
   expect(screen.getByText('Modellszenario mit offener Entscheidung')).toBeInTheDocument();
-  const cashComparison = within(screen.getByRole('region', { name: 'Vergleich nur freies Cash investieren' }));
-  expect(cashComparison.getByText(/Vergleich mit unverändertem Bestand, ohne Verkäufe oder Verkaufserlöse/)).toBeInTheDocument();
-  expect(cashComparison.getByText(/Frei nach geschützter Reserve:/)).toHaveTextContent('1.000,00 €');
+  expect(screen.queryByRole('region', { name: 'Vergleich nur freies Cash investieren' })).not.toBeInTheDocument();
   expect(screen.getByText(/gemessene EUR-Kovarianzen aus 365/)).toBeInTheDocument();
   expect(screen.getByText(/Rohsignal:.*Nach Grundgewichtung:.*Konfidenzgewichtet:.*Unsicherheitsproxy:/)).toBeInTheDocument();
   expect(screen.getByText(/20 Analysten · Kurszielspanne/)).toBeInTheDocument();

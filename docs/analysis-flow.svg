@@ -157,7 +157,7 @@
   <rect x="390" y="1622" width="420" height="94" rx="14" class="process"/>
   <rect x="724" y="1628" width="72" height="20" rx="10" class="ai-badge"/>
   <text x="760" y="1642" text-anchor="middle" class="ai-badge-text">KI</text>
-  <text x="600" y="1668" text-anchor="middle" class="node-title">Forecasts laden und Modell berechnen</text>
+  <text x="600" y="1668" text-anchor="middle" class="node-title">Forecasts laden und Teilportfolio berechnen</text>
   <text x="600" y="1691" text-anchor="middle" class="node-text">EUR-Kovarianz: kurze Historien und Unsicherheit</text>
   <text x="600" y="1710" text-anchor="middle" class="node-text">Gebühren, Reserve, Finanzierung und Stresstests</text>
 

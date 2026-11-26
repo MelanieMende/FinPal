@@ -97,6 +97,16 @@ function seedSavedAnalysis(input: PortfolioAnalysisRequest) {
   return savedReport;
 }
 
+it('restores older analyses without exposing the removed cash comparison', () => {
+  const saved = seedSavedAnalysis(request);
+  const robust = saved.allocationPlan!.optimization!.robust!;
+  (robust as typeof robust & { cashOnlyComparison?: unknown }).cashOnlyComparison = { legacy: true };
+  fs.writeFileSync(path.join(dir, 'portfolio-ai-last-analysis.json'), JSON.stringify({ version: 1, request, report: saved, snapshot: '' }));
+  const restored = new PortfolioAnalysisService(dir, jest.fn()).getLastResult();
+  expect(restored?.report.allocationPlan?.optimization?.robust).toBeDefined();
+  expect(restored?.report.allocationPlan?.optimization?.robust).not.toHaveProperty('cashOnlyComparison');
+});
+
 
 it('shows cached reports after a local analysis without attributing them to a different ISIN', async () => {
   const position = { ...request.positions[0], type: 'Stock' as const, isin: 'CA03880B1040', symbol: 'ABR' };

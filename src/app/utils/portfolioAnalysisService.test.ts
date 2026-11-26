@@ -85,6 +85,36 @@ let dir: string;
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-ai-test-')); jest.clearAllMocks(); });
 afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
+function seedSavedAnalysis(input: PortfolioAnalysisRequest) {
+  const savedReport: import('./portfolioAnalysis').PortfolioAnalysisResult = {
+    mode: 'ai', summary: 'Gespeicherte Analyse', infos: [], warnings: [], sources: [],
+    generatedAt: new Date().toISOString(), priceUpdatedAt: input.priceUpdatedAt, model: 'test-model',
+    recommendations: input.positions.map(position => ({ assetId: position.id, action: 'Halten', rationale: 'Gespeichert', risk: 'Offen', sourceIndexes: [] as number[] })),
+    newAssetRecommendations: [], fundamentalRisks: [],
+    allocationPlan: buildForecastAllocation(input, input.positions.map(position => robustReturnForecastFixture(String(position.id)))),
+  };
+  fs.writeFileSync(path.join(dir, 'portfolio-ai-last-analysis.json'), JSON.stringify({ version: 1, request: input, report: savedReport, snapshot: '' }));
+  return savedReport;
+}
+
+
+it('shows cached reports after a local analysis without attributing them to a different ISIN', async () => {
+  const position = { ...request.positions[0], type: 'Stock' as const, isin: 'CA03880B1040', symbol: 'ABR' };
+  const source = { title: 'Report', url: 'https://example.com/report.pdf' };
+  const fetchedAt = Date.now() - 3 * 86400000;
+  fs.writeFileSync(path.join(dir, 'portfolio-primary-risk-documents.json'), JSON.stringify({ version: 3, documents: [
+    { source, excerpt: 'Report', hash: 'hash', fetchedAt, period: null },
+  ] }));
+  fs.writeFileSync(path.join(dir, 'portfolio-primary-risk-assessments.json'), JSON.stringify({ version: 1, records: [
+    { key: String(position.id), isin: position.isin, fingerprint: 'old', checkedAt: fetchedAt, checks: [], sources: [source] },
+  ] }));
+  const service = new PortfolioAnalysisService(dir, jest.fn(), undefined, jest.fn().mockResolvedValue(robustReturnForecastFixture('1')));
+  seedSavedAnalysis({ ...request, positions: [position] });
+  const [status] = await service.getPrimaryDocumentStatus([position]);
+  expect(status).toMatchObject({ sources: [source], loadedAt: new Date(fetchedAt).toISOString(), needsRefresh: true });
+  expect((await service.getPrimaryDocumentStatus([{ ...position, isin: 'CA0000000000' }]))[0].sources).toEqual([]);
+});
+
 it('does not request forecasts for a concretely blocked holding and still analyzes another holding', async () => {
   const blockedReason = 'Die unklare Fortführung verhindert eine belastbare Entscheidung über dieses Asset.';
   const positions = [{ ...request.positions[0], type: 'Stock' as const, name: 'Blocked', isin: 'US0000000001' },
@@ -149,25 +179,6 @@ it('rechecks invalid risk evidence for a holding during the full analysis', asyn
   } finally { collect.mockRestore(); }
 });
 
-it('builds and persists a local quantitative analysis without an OpenAI request', async () => {
-  const mockedFetch = jest.fn();
-  const forecast = robustReturnForecastFixture('1', { targetPrice: 60 });
-  const marketProvider = jest.fn().mockResolvedValue(forecast);
-  const onlineProvider = jest.fn().mockResolvedValue({ assetId: 1, query: 'Asset', fetchedAt: Date.now(), searchStatus: 'completed', newsCount: 1,
-    text: 'Deterministische Suche', sources: [{ title: 'Aktuelle Meldung', url: 'https://example.com/news' }] });
-  const service = new PortfolioAnalysisService(dir, mockedFetch, undefined, marketProvider, undefined, onlineProvider);
-  const result = await service.analyzeLocal(request, undefined, JSON.stringify({ transactionIds: [10, 11] }));
-  expect(mockedFetch).not.toHaveBeenCalled();
-  expect(marketProvider).toHaveBeenCalledTimes(1);
-  expect(onlineProvider).toHaveBeenCalledWith(expect.objectContaining({ id: 1 }), { forceRefresh: false });
-  expect(result).toMatchObject({ mode: 'local', model: 'FinPal Local v4', newAssetRecommendations: [] });
-  expect(result.infos?.join(' ')).toContain('deterministische Onlinesuche');
-  expect(result.recommendations[0]).toMatchObject({ plannedAmountEUR: null, sourceIndexes: [expect.any(Number)], executionBaseline: { transactionIds: [10, 11] } });
-  expect(result.sources).toContainEqual({ title: 'Aktuelle Meldung', url: 'https://example.com/news' });
-  expect(result.allocationPlan?.optimization?.robust?.version).toBe(3);
-  expect(service.getLastResult()?.report.mode).toBe('local');
-});
-
 it('refreshes only the selected asset research and keeps the existing analysis recommendation', async () => {
   const oldResearch = { assetId: 1, query: 'Asset', fetchedAt: Date.now() - 60_000, searchStatus: 'completed' as const, newsCount: 1,
     text: 'Vorherige Recherche', sources: [{ title: 'Alte Quelle', url: 'https://example.com/old' }] };
@@ -176,7 +187,8 @@ it('refreshes only the selected asset research and keeps the existing analysis r
   const onlineProvider = jest.fn().mockResolvedValueOnce(oldResearch).mockResolvedValueOnce(newResearch);
   const service = new PortfolioAnalysisService(dir, jest.fn(), undefined,
     jest.fn().mockResolvedValue(robustReturnForecastFixture('1', { targetPrice: 60 })), undefined, onlineProvider);
-  const original = await service.analyzeLocal(request);
+  seedSavedAnalysis(request);
+  const original = await service.refreshOnlineResearch(request.positions[0]);
   const previousResearchTime = service.getResearchStatus(request.positions)[0].fetchedAt;
 
   const refreshed = await service.refreshOnlineResearch({
@@ -199,7 +211,7 @@ it('refreshes research for a newly held asset absent from the saved analysis', a
     sources: [{ title: 'Neue Quelle', url: 'https://example.com/new-holding' }] }));
   const service = new PortfolioAnalysisService(dir, jest.fn(), undefined,
     jest.fn().mockResolvedValue(robustReturnForecastFixture('1')), undefined, onlineProvider);
-  const original = await service.analyzeLocal(request);
+  const original = seedSavedAnalysis(request);
   const refreshed = await service.refreshOnlineResearch(addedAsset);
   expect(onlineProvider).toHaveBeenLastCalledWith(addedAsset, { forceRefresh: true });
   expect(refreshed.recommendations).toEqual(original.recommendations);
@@ -214,7 +226,7 @@ it('refreshes with current search identifiers and exposes the matching cached re
     sources: [{ title: 'Neue Quelle', url: 'https://example.com/new' }] }));
   const service = new PortfolioAnalysisService(dir, jest.fn(), undefined,
     jest.fn().mockResolvedValue(robustReturnForecastFixture('1')), undefined, onlineProvider);
-  await service.analyzeLocal(request);
+  seedSavedAnalysis(request);
   const current = { id: 1, name: 'Aktueller Name', isin: request.positions[0].isin, symbol: 'NEW', type: 'Stock' as const };
   await service.refreshOnlineResearch(current);
   expect(onlineProvider).toHaveBeenLastCalledWith(current, { forceRefresh: true });
@@ -226,7 +238,7 @@ it('saves a completed search with no sources and reports the empty result after 
     text: 'Keine Nachrichtentreffer.', sources: [] });
   const service = new PortfolioAnalysisService(dir, jest.fn(), undefined,
     jest.fn().mockResolvedValue(robustReturnForecastFixture('1')), undefined, onlineProvider);
-  await service.analyzeLocal(request);
+  seedSavedAnalysis(request);
   await service.refreshOnlineResearch(request.positions[0]);
   expect(new PortfolioAnalysisService(dir, jest.fn()).getResearchStatus(request.positions)[0])
     .toMatchObject({ text: 'Keine Nachrichtentreffer.', sources: [], fetchedAt: expect.any(String) });
@@ -235,7 +247,7 @@ it('saves a completed search with no sources and reports the empty result after 
 it('loads primary documents for a new holding without changing the saved portfolio analysis', async () => {
   const added = buildAnalysisPositions([{ ID: 2, name: 'New holding', type: 'Stock', isin: 'EXAMPLE', symbol: 'NEW', current_shares: 1, price: 20 }] as Asset[])[0];
   const service = new PortfolioAnalysisService(dir, jest.fn(), undefined, jest.fn().mockResolvedValue(robustReturnForecastFixture('1')));
-  const original = await service.analyzeLocal(request);
+  const original = seedSavedAnalysis(request);
   const source = { title: 'Issuer report', url: 'https://example.com/report' };
   const collect = jest.spyOn(PrimaryRiskResearch.prototype, 'collect').mockResolvedValueOnce({ documents: [{ source, excerpt: 'Report', hash: 'hash', fetchedAt: Date.now(), period: null }], discoveryChecked: true, gaps: [] })
     .mockResolvedValueOnce({ documents: [], discoveryChecked: false, gaps: ['Keine Primärquelle zugeordnet.'] });
@@ -253,7 +265,7 @@ it('loads primary documents for a new holding without changing the saved portfol
 it('records an empty primary document search without claiming reports were loaded', async () => {
   const added = buildAnalysisPositions([{ ID: 2, name: 'New holding', type: 'Stock', isin: 'EXAMPLE', symbol: 'NEW', current_shares: 1, price: 20 }] as Asset[])[0];
   const service = new PortfolioAnalysisService(dir, jest.fn(), undefined, jest.fn().mockResolvedValue(robustReturnForecastFixture('1')));
-  await service.analyzeLocal(request);
+  seedSavedAnalysis(request);
   const collect = jest.spyOn(PrimaryRiskResearch.prototype, 'collect').mockResolvedValue({ documents: [], discoveryChecked: false, gaps: ['Keine Primärquelle zugeordnet.'] });
   try {
     const updated = await service.refreshPrimaryRisk(added, undefined, undefined, true);
@@ -266,7 +278,7 @@ it('records an empty primary document search without claiming reports were loade
 it('checks the newly loaded document list during an individual refresh and keeps documents if the check fails', async () => {
   const added = buildAnalysisPositions([{ ID: 2, name: 'New holding', type: 'Stock', isin: 'EXAMPLE', symbol: 'NEW', current_shares: 1, price: 20 }] as Asset[])[0];
   const service = new PortfolioAnalysisService(dir, jest.fn(), undefined, jest.fn().mockResolvedValue(robustReturnForecastFixture('1')));
-  await service.analyzeLocal(request);
+  seedSavedAnalysis(request);
   const source = { title: 'New report', url: 'https://example.com/new-report' };
   const collect = jest.spyOn(PrimaryRiskResearch.prototype, 'collect').mockResolvedValue({ documents: [{ source, excerpt: 'Report', hash: 'hash', fetchedAt: Date.now(), period: null }], discoveryChecked: true, gaps: [] });
   const status = jest.spyOn(PrimaryRiskResearch.prototype, 'publicationStatus').mockReturnValue({ freshnessSupported: true, freshnessCheckedAt: null, freshnessCheckSucceeded: null, freshnessDue: true, newerReportAvailable: false, publicationCheckVerified: false });
@@ -286,7 +298,7 @@ it('assesses a new holding using its loaded documents and persists the result wi
   const fetcher = jest.fn().mockResolvedValue(structuredResponse(answer));
   const service = new PortfolioAnalysisService(dir, fetcher, undefined, jest.fn().mockResolvedValue(robustReturnForecastFixture('1')));
   service.saveKey('sk-testOnlyNotARealKey');
-  const original = await service.analyzeLocal(request);
+  const original = seedSavedAnalysis(request);
   const collect = jest.spyOn(PrimaryRiskResearch.prototype, 'collect').mockResolvedValue(documents);
   const cachedStatus = jest.spyOn(PrimaryRiskResearch.prototype, 'cachedStatus').mockReturnValue({ loadedAt: new Date().toISOString(), freshnessCheckedAt: new Date().toISOString(), needsRefresh: false });
   const reuse = jest.spyOn(PrimaryRiskResearch.prototype, 'reuseCached').mockReturnValue(documents);
@@ -317,7 +329,7 @@ it('rechecks a missing net income after a documented loss and retains the first 
     .mockResolvedValueOnce(structuredResponse({ checks, metrics: [{ name: 'net-income', value: -123, unit: 'Mio. USD', period: 'Neun Monate bis September 2026', documentIndex: 0, quote: 'Net loss was (123).' }], decisionBlocker: null }));
   const service = new PortfolioAnalysisService(dir, fetcher, undefined, jest.fn().mockResolvedValue(robustReturnForecastFixture('1')));
   service.saveKey('sk-testOnlyNotARealKey');
-  await service.analyzeLocal(request);
+  seedSavedAnalysis(request);
   const collect = jest.spyOn(PrimaryRiskResearch.prototype, 'collect').mockResolvedValue(documents);
   try {
     const updated = await service.refreshPrimaryRisk(added);
@@ -340,7 +352,7 @@ it('rechecks an invalid financing quote without turning missing continuity evide
     .mockResolvedValueOnce(structuredResponse({ checks: corrected, metrics: [], decisionBlocker: null }));
   const service = new PortfolioAnalysisService(dir, fetcher, undefined, jest.fn().mockResolvedValue(robustReturnForecastFixture('1')));
   service.saveKey('sk-testOnlyNotARealKey');
-  await service.analyzeLocal(request);
+  seedSavedAnalysis(request);
   const collect = jest.spyOn(PrimaryRiskResearch.prototype, 'collect').mockResolvedValue(documents);
   try {
     await service.refreshPrimaryRisk(added);
@@ -360,7 +372,7 @@ it('rechecks a missing debt maturity when the document contains a dated principa
     .mockResolvedValueOnce(structuredResponse({ checks, metrics: [{ name: 'debt-maturities', value: 2.2, unit: 'Mrd. USD', period: 'Stand 2026-09-30; Fälligkeit März 2034', documentIndex: 0, quote: excerpt }], decisionBlocker: null }));
   const service = new PortfolioAnalysisService(dir, fetcher, undefined, jest.fn().mockResolvedValue(robustReturnForecastFixture('1')));
   service.saveKey('sk-testOnlyNotARealKey');
-  await service.analyzeLocal(request);
+  seedSavedAnalysis(request);
   const collect = jest.spyOn(PrimaryRiskResearch.prototype, 'collect').mockResolvedValue(documents);
   try {
     await service.refreshPrimaryRisk(added);
@@ -378,7 +390,8 @@ it('does not replace cached research or the saved report when a refresh search f
   const onlineProvider = jest.fn().mockResolvedValueOnce(oldResearch).mockResolvedValueOnce(failedResearch);
   const service = new PortfolioAnalysisService(dir, jest.fn(), undefined,
     jest.fn().mockResolvedValue(robustReturnForecastFixture('1', { targetPrice: 60 })), undefined, onlineProvider);
-  const original = await service.analyzeLocal(request);
+  seedSavedAnalysis(request);
+  const original = await service.refreshOnlineResearch(request.positions[0]);
   const previousResearchTime = service.getResearchStatus(request.positions)[0].fetchedAt;
 
   await expect(service.refreshOnlineResearch({
@@ -522,7 +535,7 @@ it('uses current confirmed investor context when refreshing asset risks', async 
   const localRequest: PortfolioAnalysisRequest = { ...request, positions: position, investorContext: oldContext };
   const service = new PortfolioAnalysisService(dir, jest.fn(), undefined,
     jest.fn().mockResolvedValue(robustReturnForecastFixture('31', { targetPrice: 60000 })));
-  await service.analyzeLocal(localRequest);
+  seedSavedAnalysis(localRequest);
   const providerPolicy = 'Trade Republic Bank GmbH is a credit institution licensed in Germany and a crypto-asset services provider under Regulation (EU) 2023/1114 on Markets in Crypto-Assets (MiCAR).';
   const documents: RiskDocumentSet = { documents: [{ source: { title: 'Trade Republic Crypto Execution Policy',
     url: 'https://assets.traderepublic.com/assets/files/EN_ExecutionPolicy.pdf' }, excerpt: providerPolicy,

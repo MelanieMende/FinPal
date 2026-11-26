@@ -53,7 +53,6 @@ declare global {
       getPortfolioPrimaryDocumentStatus?(assets:import('./app/utils/portfolioAnalysis').ResearchAsset[]):Promise<import('./app/utils/portfolioAnalysis').PrimaryDocumentStatus[]>,
       forgetLastPortfolioAnalysis?():Promise<boolean>,
       analyzePortfolio?(request:import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest,snapshot?:string):Promise<import('./app/utils/portfolioAnalysis').PortfolioAnalysisResult>,
-      analyzePortfolioLocally?(request:import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest,snapshot?:string):Promise<import('./app/utils/portfolioAnalysis').PortfolioAnalysisResult>,
       refreshPortfolioForecast?(request:import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest,assetId?:number,snapshot?:string):Promise<import('./app/utils/portfolioAnalysis').PortfolioForecastRefreshResult>,
       refreshPortfolioPrimaryRisk?(asset:import('./app/utils/portfolioAnalysis').ResearchAsset,investorContext:import('./app/utils/investorFacts').InvestorContext,documentsOnly?:boolean,reasoningEffort?:import('./app/utils/portfolioAnalysis').ReasoningEffort):Promise<import('./app/utils/portfolioAnalysis').PortfolioAnalysisResult>,
       refreshPortfolioResearch?(asset:import('./app/utils/portfolioAnalysis').ResearchAsset):Promise<import('./app/utils/portfolioAnalysis').PortfolioAnalysisResult>,

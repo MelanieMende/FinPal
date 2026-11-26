@@ -101,7 +101,6 @@ contextBridge.exposeInMainWorld('API', {
   checkPortfolioPrimaryDocumentFreshness: (asset: import('./app/utils/portfolioAnalysis').ResearchAsset) => ipcRenderer.invoke('portfolio-ai:check-primary-freshness', asset),
   forgetLastPortfolioAnalysis: () => ipcRenderer.invoke('portfolio-ai:forget-result'),
   analyzePortfolio: (request: import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest, snapshot?: string) => ipcRenderer.invoke('portfolio-ai:analyze', request, snapshot),
-  analyzePortfolioLocally: (request: import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest, snapshot?: string) => ipcRenderer.invoke('portfolio-ai:analyze-local', request, snapshot),
   refreshPortfolioForecast: (request: import('./app/utils/portfolioAnalysis').PortfolioAnalysisRequest, assetId?: number, snapshot?: string) => ipcRenderer.invoke('portfolio-ai:refresh-forecast', request, assetId, snapshot),
   refreshPortfolioPrimaryRisk: (asset: import('./app/utils/portfolioAnalysis').ResearchAsset, investorContext: import('./app/utils/investorFacts').InvestorContext, documentsOnly?: boolean, reasoningEffort?: import('./app/utils/portfolioAnalysis').ReasoningEffort) =>
     ipcRenderer.invoke('portfolio-ai:refresh-risk', asset, investorContext, documentsOnly, reasoningEffort),

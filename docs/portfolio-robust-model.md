@@ -4,10 +4,6 @@ This model produces a conditional 12-month scenario, not an execution instructio
 
 Personal decision details can now be entered in the analysis profile. Explicit cash reserves and additional planned twelve-month withdrawals create an additive EUR cash floor for allocation and funding; this cash remains part of portfolio wealth. Other personal details inform qualitative review rather than a calibrated loss limit. See [the model validation plan](portfolio-model-validation.md) for the implementation scope, evidence still required, and the distinction between software checks and professional validation.
 
-## Local analysis mode
-
-FinPal can build the quantitative report without an OpenAI, ChatGPT or web-search request. This mode loads the configured direct market-data forecasts, calculates the v3 allocation and persists the report locally. It does not research current company news, issuer documents, tax sources, spreads or new investment candidates. Proposed model trades therefore remain open for qualitative review and are not exposed as approved orders. A later AI review is optional.
-
 ## Return evidence
 
 Both analyst signals and historical bootstrap signals receive a base weight of 0.25. For crypto, the unshrunk bootstrap median is used before this common adjustment; the already-shrunk legacy target is not shrunk a second time. Analyst signals receive an additional coverage weight `n / (n + 10)`. Analyst count is a coverage proxy, not a count of independent observations.

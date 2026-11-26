@@ -306,9 +306,6 @@ ipcMain.handle('portfolio-ai:forget-result', () => { portfolioAnalysis.forgetLas
 ipcMain.handle('portfolio-ai:analyze', (event, request: PortfolioAnalysisRequest, snapshot?: string) => portfolioAnalysis.analyze(request, progress => {
   if (!event.sender.isDestroyed()) event.sender.send('portfolio-ai:progress', progress);
 }, snapshot));
-ipcMain.handle('portfolio-ai:analyze-local', (event, request: PortfolioAnalysisRequest, snapshot?: string) => portfolioAnalysis.analyzeLocal(request, progress => {
-	if (!event.sender.isDestroyed()) event.sender.send('portfolio-ai:progress', progress);
-}, snapshot));
 ipcMain.handle('portfolio-ai:refresh-forecast', (_event, request: PortfolioAnalysisRequest, assetId?: number, snapshot?: string) =>
   portfolioAnalysis.refreshMarketForecast(request, assetId, snapshot));
 ipcMain.handle('portfolio-ai:refresh-risk', (event, asset: import('./app/utils/portfolioAnalysis').ResearchAsset,

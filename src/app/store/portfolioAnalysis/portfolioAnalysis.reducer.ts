@@ -21,11 +21,11 @@ function appendLogProgress(state: AnalysisState, progress: PortfolioAnalysisProg
   log.entries.push({ at: progress.lastActivityAt, progress, ...(progress.activeAssetId !== undefined ? { assetName: log.assetNames[progress.activeAssetId] } : {}) });
   if (log.entries.length > 1000) log.entries.splice(1, log.entries.length - 1000);
 }
-function startLog(state: AnalysisState, request: PortfolioAnalysisRequest, local: boolean) {
+function startLog(state: AnalysisState, request: PortfolioAnalysisRequest) {
   const assetNames = Object.fromEntries(request.positions.map(p => [p.id, p.name]));
   const scope = request.targetAssetId === undefined ? 'Gesamtportfolio' : assetNames[request.targetAssetId] ?? `Asset ${request.targetAssetId}`;
-  state.log = { startedAt: state.startedAt, status: 'running', title: `${local ? 'Lokale Analyse' : 'KI-Analyse'} · ${scope}`,
-    assetNames, entries: [{ at: state.startedAt, message: local ? 'Lokale Analyse gestartet.' : `KI-Analyse gestartet · ${request.provider === 'api' ? 'OpenAI API' : 'ChatGPT'} · ${request.provider === 'api' ? DEFAULT_ANALYSIS_MODEL : request.model || 'Kein Modell'} · Reasoning: ${request.reasoningEffort ?? 'low'}.` }] };
+  state.log = { startedAt: state.startedAt, status: 'running', title: `KI-Analyse · ${scope}`,
+    assetNames, entries: [{ at: state.startedAt, message: `KI-Analyse gestartet · ${request.provider === 'api' ? 'OpenAI API' : 'ChatGPT'} · ${request.provider === 'api' ? DEFAULT_ANALYSIS_MODEL : request.model || 'Kein Modell'} · Reasoning: ${request.reasoningEffort ?? 'low'}.` }] };
   appendLogProgress(state, state.progress!);
 }
 function finishLog(state: AnalysisState, status: 'completed' | 'failed', message: string) {
@@ -97,40 +97,6 @@ export const analyzePortfolio = createAsyncThunk<
     return { report, snapshot: refreshedSnapshot };
   } catch (error) {
     return rejectWithValue(error instanceof Error ? error.message : 'Die KI-Anfrage ist fehlgeschlagen.');
-  } finally { unsubscribe?.(); }
-}, { condition: (_args, { getState }) => !getState().portfolioAnalysis.progress });
-
-export const analyzePortfolioLocally = createAsyncThunk<
-  { report: PortfolioAnalysisResult; snapshot: string },
-  { request: PortfolioAnalysisRequest; snapshot: string },
-  { state: { portfolioAnalysis: AnalysisState; assets: Asset[]; transactions: Transaction[] }; dispatch: ThunkDispatch<{ portfolioAnalysis: AnalysisState; assets: Asset[]; transactions: Transaction[] }, unknown, UnknownAction>; rejectValue: string }
->('portfolioAnalysis/analyzeLocal', async ({ request, snapshot }, { dispatch, getState, requestId, rejectWithValue }) => {
-  let unsubscribe: (() => void) | undefined;
-  const transactionIds = getState().transactions.map(transaction => transaction.ID);
-  try {
-    unsubscribe = window.API.onPortfolioAnalysisProgress?.(progress => {
-      dispatch(analysisProgressReceived({ progress, requestId }));
-    });
-    await dispatch(loadPricesAndDividends({ assetIDs: request.positions.map(position => position.id), preferTradeRepublicPrice: false, includeDividends: false })).unwrap();
-    const refreshedRequest = { ...request, positions: buildAnalysisPositions(getState().assets),
-      priceUpdatedAt: localStorage.getItem(MARKET_PRICE_UPDATED_AT_KEY) ?? request.priceUpdatedAt };
-    if (request.investorContext) refreshedRequest.investorContext = {
-      ...request.investorContext,
-      assets: request.investorContext.assets.map(facts => {
-        const asset = getState().assets.find(a => a.ID === facts.assetId);
-        return asset ? { ...facts, resolvedTaxContext: resolveTaxContext(asset, facts, request.investorContext!.depotTaxContexts), acquisitionHistory: resolveAcquisitionHistory(asset, getState().transactions, facts, request.investorContext!.depotHistories) } : facts;
-      }),
-    };
-    let profileSnapshot: unknown = request.profile;
-    try { profileSnapshot = JSON.parse(snapshot).profile ?? profileSnapshot; } catch { /* Legacy caller. */ }
-    const refreshedSnapshot = JSON.stringify({ positions: refreshedRequest.positions, profile: profileSnapshot, priceUpdatedAt: refreshedRequest.priceUpdatedAt,
-      ...(refreshedRequest.investorContext ? { investorContext: refreshedRequest.investorContext } : {}), transactionIds });
-    dispatch(analysisProgressReceived({ progress: { stage: 'forecast', lastActivityAt: Date.now() }, requestId }));
-    if (!window.API.analyzePortfolioLocally) throw new Error('Bitte FinPal neu starten, um die lokale Analyse zu laden.');
-    const report = await window.API.analyzePortfolioLocally(refreshedRequest, refreshedSnapshot);
-    return { report, snapshot: refreshedSnapshot };
-  } catch (error) {
-    return rejectWithValue(error instanceof Error ? error.message : 'Die lokale Analyse ist fehlgeschlagen.');
   } finally { unsubscribe?.(); }
 }, { condition: (_args, { getState }) => !getState().portfolioAnalysis.progress });
 
@@ -230,7 +196,7 @@ const slice = createSlice({
       state.startedAt = Date.now();
       state.progress = { stage: 'prices', lastActivityAt: state.startedAt };
       state.requestId = action.meta.requestId;
-      startLog(state, action.meta.arg.request, false);
+      startLog(state, action.meta.arg.request);
       state.provider = action.meta.arg.request.provider;
       state.model = action.meta.arg.request.model ?? '';
       // Keep the previous report and its cards visible until the replacement is complete.
@@ -250,29 +216,6 @@ const slice = createSlice({
       state.targetAssetId = null;
       state.progress = null; state.requestId = null;
       state.error = action.payload ?? action.error.message ?? 'Die KI-Anfrage ist fehlgeschlagen.';
-    })
-    .addCase(analyzePortfolioLocally.pending, (state, action) => {
-      state.targetAssetId = null;
-      state.restoreBlocked = true;
-      state.startedAt = Date.now();
-      state.progress = { stage: 'prices', lastActivityAt: state.startedAt };
-      state.requestId = action.meta.requestId;
-      startLog(state, action.meta.arg.request, true);
-      state.error = null;
-    })
-    .addCase(analyzePortfolioLocally.fulfilled, (state, action) => {
-      finishLog(state, 'completed', 'Lokale Analyse abgeschlossen und Ergebnis gespeichert.');
-      state.targetAssetId = null;
-      state.progress = null; state.requestId = null;
-      state.lastResult = action.payload.report;
-      state.result = action.payload.report;
-      state.resultSnapshot = action.payload.snapshot;
-    })
-    .addCase(analyzePortfolioLocally.rejected, (state, action) => {
-      finishLog(state, 'failed', `Lokale Analyse fehlgeschlagen: ${action.payload ?? action.error.message ?? 'Unbekannter Fehler'}`);
-      state.targetAssetId = null;
-      state.progress = null; state.requestId = null;
-      state.error = action.payload ?? action.error.message ?? 'Die lokale Analyse ist fehlgeschlagen.';
     })
     .addCase(refreshPortfolioForecast.pending, (state, action) => {
       state.targetAssetId = action.meta.arg.assetId ?? null;

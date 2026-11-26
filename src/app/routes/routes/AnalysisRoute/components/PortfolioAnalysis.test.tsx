@@ -23,15 +23,6 @@ const assets = [
 const chatGpt = { connected: true, activeClientId: 'test-client', accounts: [{ clientId: 'test-client', label: 'Test account', connected: true }] };
 beforeEach(() => {
   localStorage.clear();
-  const localForecast = returnForecastFixture('1', { targetPrice: 60, referencePrice: 50 });
-  const builtLocalAllocationPlan = buildForecastAllocation({
-    provider: 'api', priceUpdatedAt: null,
-    profile: { goal: 'growth', risk: 'medium', horizonYears: 10, buyBudget: 0 },
-    positions: buildAnalysisPositions(assets),
-  }, [localForecast]);
-  const localAllocationPlan = { ...builtLocalAllocationPlan, optimization: builtLocalAllocationPlan.optimization && {
-    ...builtLocalAllocationPlan.optimization, forecasts: [localForecast],
-  } };
   window.API = {
     sendToDB: jest.fn(),
     sendToYahooFinanceAPI: jest.fn().mockResolvedValue(null),
@@ -40,10 +31,6 @@ beforeEach(() => {
     refreshPortfolioForecast: jest.fn(),
     refreshPortfolioPrimaryRisk: jest.fn(),
     refreshPortfolioResearch: jest.fn(),
-    analyzePortfolioLocally: jest.fn().mockResolvedValue({ mode: 'local', summary: 'Lokale Analyse', infos: [], warnings: [], sources: [{ title: 'Direkte Kursquelle', url: 'https://example.com/market-data' }], generatedAt: '2026-10-19T10:00:00Z', priceUpdatedAt: null, model: 'FinPal Local v4', allocationPlan: localAllocationPlan, recommendations: [
-      { assetId: 1, action: 'Halten', rationale: 'Lokal', risk: 'Keine Webquellen', sourceIndexes: [] },
-      { assetId: 2, action: 'Halten', rationale: 'Lokal', risk: 'Keine Webquellen', sourceIndexes: [] },
-    ] }),
     analyzePortfolio: jest.fn().mockResolvedValue({ summary: 'Diversifikation prüfen', warnings: ['Risiken berücksichtigen'], sources: [{ title: 'Report', url: 'https://example.com/report' }], generatedAt: '2026-10-02T10:00:00Z', priceUpdatedAt: null, model: 'account-model', recommendations: [
       { assetId: 1, action: 'Halten', rationale: 'Begründung', risk: 'Risiko', sourceIndexes: [0], tradeCheck: {
         costs: '100 EUR Marktwert, 1 EUR Gebühren entsprechen 1 %.', taxes: 'Verlusttöpfe unbekannt.', conclusion: 'Kein Verkauf zur Bereinigung.',
@@ -269,7 +256,7 @@ it('does not mark an analysis stale only because identical quotes were fetched a
   })));
 });
 
-it('persists personal decision details, restores them for local requests, and clears them with stale-result detection', async () => {
+it('persists personal decision details, restores them for analysis requests, and clears them with stale-result detection', async () => {
   localStorage.setItem(ANALYSIS_PROFILE_KEY, JSON.stringify({ goal: 'growth', risk: 'medium', horizonYears: '10', buyBudget: '999' }));
   const store = setupStore({ assets, cash: [{ ID: 1, date: '2026-10-01', type: 'Deposit', amount: 1000 }] });
   const first = render(<PortfolioAnalysis priceUpdatedAt={null} standalone />, { store });
@@ -287,38 +274,19 @@ it('persists personal decision details, restores them for local requests, and cl
   expect(screen.getByLabelText('Geschützte Liquiditätsreserve (EUR)')).toHaveValue(300);
   expect(screen.getByLabelText('Einheit für finanziell tragbaren Verlust')).toHaveValue('percent');
   expect(screen.getByLabelText('Finanziell tragbarer Verlust im erfassten Portfolio (%)')).toHaveValue(100);
-  fireEvent.click(screen.getByRole('button', { name: 'Lokal analysieren (ohne KI)' }));
-  await waitFor(() => expect(window.API.analyzePortfolioLocally).toHaveBeenCalledTimes(1));
-  expect(jest.mocked(window.API.analyzePortfolioLocally!).mock.calls[0][0].profile).toMatchObject({ buyBudget: 1000,
+  fillProfile();
+  await screen.findByText('Verbunden');
+  fireEvent.click(screen.getByRole('button', { name: 'Analyse starten' }));
+  await waitFor(() => expect(window.API.analyzePortfolio).toHaveBeenCalledTimes(1));
+  expect(jest.mocked(window.API.analyzePortfolio!).mock.calls[0][0].profile).toMatchObject({ buyBudget: 1000,
     decisionDetails: { reserveEUR: 300, plannedWithdrawalsEUR: 200, lossCapacityPercent: 100, experience: 'basic', confirmedAt: expect.any(String) } });
-  expect(jest.mocked(window.API.analyzePortfolioLocally!).mock.calls[0][0].profile.decisionDetails?.lossCapacityEUR).toBeUndefined();
+  expect(jest.mocked(window.API.analyzePortfolio!).mock.calls[0][0].profile.decisionDetails?.lossCapacityEUR).toBeUndefined();
   expect(screen.queryByText(/haben sich seit dieser Analyse geändert/)).not.toBeInTheDocument();
   fireEvent.click(screen.getByText('Persönliche Entscheidungsgrundlage ergänzen'));
   fireEvent.click(screen.getByRole('button', { name: 'Ergänzende Angaben löschen' }));
   expect(JSON.parse(localStorage.getItem(ANALYSIS_PROFILE_KEY)!).decisionDetails).toBeUndefined();
   expect(screen.getByLabelText('Geschützte Liquiditätsreserve (EUR)')).toHaveValue(null);
   expect(screen.getByText(/haben sich seit dieser Analyse geändert/)).toBeInTheDocument();
-});
-
-it('runs the local analysis without requiring a connected AI provider', async () => {
-  const store = setupStore({ assets });
-  render(<PortfolioAnalysis priceUpdatedAt={null} />, { store });
-  await open();
-  fireEvent.change(screen.getByLabelText('Anlageziel'), { target: { value: 'growth' } });
-  fireEvent.change(screen.getByLabelText('Risikobereitschaft'), { target: { value: 'medium' } });
-  fireEvent.change(screen.getByLabelText('Anlagedauer (Jahre)'), { target: { value: '10' } });
-  fireEvent.click(screen.getByRole('button', { name: 'Lokal analysieren (ohne KI)' }));
-  await waitFor(() => expect(window.API.analyzePortfolioLocally).toHaveBeenCalledTimes(1));
-  expect(screen.getByRole('status')).toHaveTextContent('1 von 2 Positionen mit Forecast · 1 direkte Datenquellen');
-  expect(screen.getByRole('status')).toHaveTextContent('deterministischen Onlinesuche');
-  expect(screen.getByText('Deterministisch gefundene Online- und Marktdatenquellen (1)')).toBeInTheDocument();
-  expect(screen.getByTestId('local-market-data-status-1')).toHaveTextContent('Lokaler Forecast');
-  expect(screen.getByTestId('local-market-data-status-2')).toHaveTextContent('ohne inhaltliche Bewertung');
-  expect(screen.queryAllByTestId('asset-research-status')).toHaveLength(0);
-  expect(window.API.analyzePortfolio).not.toHaveBeenCalled();
-  expect(jest.mocked(window.API.analyzePortfolioLocally!).mock.calls[0][0]).toMatchObject({
-    profile: { goal: 'growth', risk: 'medium', horizonYears: 10 },
-  });
 });
 
 it('shows actual per-asset research availability before analysis and in recommendation cards', async () => {
@@ -362,6 +330,16 @@ it('stops promising reuse exactly at the 24-hour deadline', () => {
   expect(screen.getByText(/Erfolgreich geladen am/)).toBeInTheDocument();
   rerender(<AssetResearchIndicator status={status} now={loaded + 86400000} />);
   expect(screen.getByText(/Keine erfolgreichen Suchdaten/)).toBeInTheDocument();
+});
+
+it('shows cached reports without a saved risk assessment', async () => {
+  const source = { title: 'Bericht aus dem Cache', url: 'https://example.com/report' };
+  render(<PrimaryDocumentsIndicator risk={{ key: '1', status: 'unknown', materialRisks: [], rationale: '', sources: [] }}
+    now={Date.now()} status={{ assetId: 1, loadedAt: new Date().toISOString(), needsRefresh: true, sources: [source], freshnessSupported: false }}
+    openSource={jest.fn()} onReload={jest.fn()} disabled={false} loading={false} forceReload={false} />);
+  expect(screen.getByText('Primärberichte: geladen · Aktualität offen')).toBeInTheDocument();
+  fireEvent.click(screen.getByText('Primärberichte: geladen · Aktualität offen'));
+  expect(await screen.findByRole('link', { name: source.title })).toBeInTheDocument();
 });
 
 it('shows a due report reload from the document load time even after a recent risk review', () => {

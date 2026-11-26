@@ -911,6 +911,10 @@ export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessme
 
 export class PrimaryRiskAssessmentCache {
   private readonly records = new Map<string, PrimaryRiskRecord>();
+  sourcesFor(position: Pick<AnalysisPosition, 'id' | 'isin'>): AnalysisSource[] {
+    const record = this.records.get(String(position.id));
+    return record && position.isin.trim() && record.isin === position.isin.trim().toUpperCase() ? record.sources : [];
+  }
   constructor(private readonly file: string) {
     try {
       if (fs.statSync(file).size > 4_000_000) return;

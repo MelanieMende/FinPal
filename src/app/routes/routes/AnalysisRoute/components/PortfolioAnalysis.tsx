@@ -3,7 +3,7 @@ import { Button, Card, Dialog, H5, Icon, Intent, Spinner, Tooltip } from '@bluep
 import { useAppSelector, useAppDispatch } from '../../../../hooks';
 import { ANALYSIS_TIMEOUT_MS, DEFAULT_ANALYSIS_MODEL, buildAnalysisPositions, validateAnalysisRequest, type AnalysisPosition, type AssetRecommendation, type AssetResearchStatus, type InvestmentProfile, type PortfolioAnalysisProgress } from '../../../../utils/portfolioAnalysis';
 import type { ChatGptModel, ChatGptStatus } from '../../../../utils/chatGptAuth';
-import { analyzePortfolio, analyzePortfolioLocally, refreshPortfolioForecast, refreshPortfolioPrimaryRisk, refreshPortfolioResearch, setAnalysisOpen, clearAnalysisResult } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
+import { analyzePortfolio, refreshPortfolioForecast, refreshPortfolioPrimaryRisk, refreshPortfolioResearch, setAnalysisOpen, clearAnalysisResult } from '../../../../store/portfolioAnalysis/portfolioAnalysis.reducer';
 import { formatSyncTime } from '../../../../utils/syncTimestamps';
 import { assessQuoteFreshness, isMarketClosedInfo } from '../../../../utils/quoteFreshness';
 import { isDescriptiveRiskInfo } from '../../../../utils/analysisMessages';
@@ -109,7 +109,7 @@ export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onRel
   const checkedAt = risk.primaryDocumentsCheckedAt ? Date.parse(risk.primaryDocumentsCheckedAt) : NaN;
   const loadedAt = status?.loadedAt ? Date.parse(status.loadedAt) : NaN;
   const freshnessCheckedAt = status?.freshnessCheckedAt ? Date.parse(status.freshnessCheckedAt) : NaN;
-  const current = !!risk.primaryDocuments?.length && !!status && status.publicationCheckVerified !== false && !status.newerReportAvailable && Number.isFinite(freshnessCheckedAt) && freshnessCheckedAt <= now
+  const current = !!(status?.sources ?? risk.primaryDocuments)?.length && !!status && status.publicationCheckVerified !== false && !status.newerReportAvailable && Number.isFinite(freshnessCheckedAt) && freshnessCheckedAt <= now
     && now - freshnessCheckedAt < 24 * 60 * 60 * 1000;
   const remainingMinutes = Math.max(0, Math.ceil((freshnessCheckedAt + 24 * 60 * 60 * 1000 - now) / 60000));
   const checkWithinWindow = Number.isFinite(freshnessCheckedAt) && freshnessCheckedAt <= now && now - freshnessCheckedAt < 24 * 60 * 60 * 1000;
@@ -119,7 +119,7 @@ export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onRel
   const publicationCheckUnverified = status?.freshnessSupported === true && status.publicationCheckVerified === false;
   const noPeriodicReports = status?.freshnessCoverage === 'sec-no-periodic-reports' && status.freshnessCheckSucceeded === true && checkWithinWindow;
   const prospectusIncomplete = status?.freshnessCoverage === 'sec-prospectus-incomplete' && status.freshnessCheckSucceeded === true && checkWithinWindow;
-  const documents = (risk.primaryDocuments ?? []).filter(source => source && typeof source.url === 'string' && typeof source.title === 'string');
+  const documents = (status?.sources ?? risk.primaryDocuments ?? []).filter(source => source && typeof source.url === 'string' && typeof source.title === 'string');
   return <section aria-label="Primärberichte" className="my-3 min-w-0 rounded border border-white/10 bg-slate-950/25 p-3">
     <div className="flex min-w-0 flex-wrap items-start gap-2">
     <details className="group min-w-0 flex-1" onToggle={event => setExpanded(event.currentTarget.open)}>
@@ -169,7 +169,7 @@ export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onRel
           ? <div className="flex flex-wrap gap-2" aria-label="Geladene Primärberichte">
             {documents.map((source, index) => <a key={`${source.url}-${index}`} href={source.url} onClick={event => openSource(event, source.url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">{source.title}</a>)}
           </div>
-          : <p className="m-0 text-xs text-gray-400">Keine geladenen Primärberichte in der gespeicherten Prüfung.</p>}
+          : <p className="m-0 text-xs text-gray-400">Keine zugeordneten Primärberichte im Cache.</p>}
         {!!risk.primaryDocumentGaps?.length && <ul className="m-0 pl-4 text-xs text-amber-200">{risk.primaryDocumentGaps.map((gap, index) => <li key={index} className="break-words">{gap}</li>)}</ul>}
       </div>
   </section>;
@@ -689,19 +689,6 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
     });
   }
 
-  function analyzeLocal() {
-    void run(async () => {
-      if (investorFactsError) throw new Error(investorFactsError);
-      if (!profile.horizonYears.trim() || !profile.buyBudget.trim()) throw new Error('Bitte Anlagedauer und Kaufbudget angeben.');
-      const request = { provider, model, positions, priceUpdatedAt, investorContext,
-        profile: investmentProfile(),
-      };
-      validateAnalysisRequest(request);
-      localStorage.setItem(ANALYSIS_PROFILE_KEY, JSON.stringify(profile));
-      await dispatch(analyzePortfolioLocally({ request, snapshot })).unwrap();
-    });
-  }
-
   function refreshForecast(assetId?: number) {
     void run(async () => {
       if (investorFactsError) throw new Error(investorFactsError);
@@ -915,10 +902,9 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
         {notice && <p role="status" className="text-sm text-amber-300">{notice}</p>}
         <div className="flex flex-wrap items-center gap-2">
           <Button intent={Intent.PRIMARY} loading={analyzing} disabled={busy || !positions.length} onClick={() => analyze()}>{result?.mode === 'local' ? 'Mit KI und Quellen prüfen' : 'Analyse starten'}</Button>
-          <Button icon="offline" disabled={busy || !positions.length} onClick={analyzeLocal}>Lokal analysieren (ohne KI)</Button>
           <Button icon="refresh" disabled={busy || !positions.length || !result} onClick={() => refreshForecast()}>Alle Forecasts neu laden</Button>
         </div>
-        <p className="mt-1 text-xs text-gray-400">„Lokal analysieren“ verwendet keine OpenAI- oder ChatGPT-Anfrage. Es sucht deterministisch online nach Name, ISIN und Ticker und berechnet das Modell lokal. „Analyse starten“ ergänzt eine qualitative KI-Auswertung. „Alle Forecasts neu laden“ aktualisiert Forecasts und lokale Zielgewichtung.</p>
+        <p className="mt-1 text-xs text-gray-400">Die Analyse verbindet Recherche und Portfoliomodell mit einer qualitativen KI-Auswertung. „Alle Forecasts neu laden“ aktualisiert Forecasts und Zielgewichtung.</p>
         <p className="mt-1 text-xs text-gray-400">Erfolgreiche deterministische Online-Suchen werden je Asset 24 Stunden wiederverwendet. Die anschließende KI-Auswertung startet keine eigene Websuche; Bestände, Kurse und Anlageprofil werden erneut ausgewertet.</p>
         {!result && positions.length > 0 && <section aria-label="Webrecherche je Asset" className="grid min-w-0 grid-cols-1 gap-3 lg:grid-cols-2">
           {positions.map(position => {

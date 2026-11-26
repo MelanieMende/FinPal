@@ -44,7 +44,7 @@ export default function DecisionProfileEditor({ value = {}, onChange, busy }: { 
     <label className="block min-w-0">Weitere Angaben zu Entnahmen, Verpflichtungen, Erfahrung und Steuerbesonderheiten
       <textarea className={`${fieldClass} mt-1`} rows={3} maxLength={3000} value={value.notes ?? ''} disabled={busy} onChange={event => update('notes', event.target.value)} />
     </label>
-    <p>Finanzielle Verlusttragfähigkeit und persönliche Verlusttoleranz sind getrennte Angaben. Sie garantieren keine Verlustbegrenzung. Die lokale Berechnung setzt den Cashschutz um; Verlustangaben und Erfahrung werden für eine spätere qualitative Prüfung gespeichert. Bei einer KI-Analyse werden die Angaben an den gewählten Anbieter zur Beurteilung übertragen; eine lokale Analyse überträgt sie nicht an eine KI.</p>
+    <p>Finanzielle Verlusttragfähigkeit und persönliche Verlusttoleranz sind getrennte Angaben. Sie garantieren keine Verlustbegrenzung. Die lokale Berechnung setzt den Cashschutz um; Verlustangaben und Erfahrung werden für eine spätere qualitative Prüfung gespeichert. Bei einer KI-Analyse werden die Angaben an den gewählten Anbieter zur Beurteilung übertragen.</p>
     {value.confirmedAt && <p>Zuletzt angegeben: {new Date(value.confirmedAt).toLocaleString('de-DE')}</p>}
     <button type="button" className="max-w-full whitespace-normal rounded border border-white/20 px-3 py-2" disabled={busy || !value.confirmedAt} onClick={() => onChange(undefined)}>Ergänzende Angaben löschen</button>
   </details>;

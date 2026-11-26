@@ -379,10 +379,11 @@ export class PortfolioAnalysisService {
       const risk = saved?.report.fundamentalRisks?.find(item => item.key === String(asset.id));
       const matchesAddedAsset = !savedPosition && risk?.primaryDocumentIdentity?.type === asset.type
         && risk.primaryDocumentIdentity.isin === asset.isin.trim().toUpperCase();
-      const sources = position || matchesAddedAsset ? risk?.primaryDocuments ?? [] : [];
+      const known = position || matchesAddedAsset ? risk?.primaryDocuments ?? [] : [];
+      const sources = this.primaryRiskResearch.cachedSources(asset, [...known, ...this.primaryRiskCache.sourcesFor(asset)]);
       const status = this.primaryRiskResearch.cachedStatus(asset, sources);
       const publication = this.primaryRiskResearch.publicationStatus(asset, sources);
-      return { assetId: asset.id, ...status, ...publication,
+      return { assetId: asset.id, sources, ...status, ...publication,
         needsRefresh: status.needsRefresh || publication.newerReportAvailable };
     }));
   }
@@ -397,10 +398,10 @@ export class PortfolioAnalysisService {
       : risk?.primaryDocumentIdentity?.type === asset.type && risk.primaryDocumentIdentity.isin === asset.isin.trim().toUpperCase();
     if (!matches) throw new Error('Das Asset wurde seit der gespeicherten Analyse geändert oder es wurden noch keine Primärberichte geladen.');
     const position = savedPosition ?? asset;
-    const sources = risk?.primaryDocuments ?? [];
+    const sources = this.primaryRiskResearch.cachedSources(asset, [...(risk?.primaryDocuments ?? []), ...this.primaryRiskCache.sourcesFor(asset)]);
     const publication = await this.primaryRiskResearch.checkPublicationFreshness(position, sources);
     const status = this.primaryRiskResearch.cachedStatus(position, sources);
-    return { assetId: asset.id, ...status, ...publication, needsRefresh: status.needsRefresh || publication.newerReportAvailable };
+    return { assetId: asset.id, sources, ...status, ...publication, needsRefresh: status.needsRefresh || publication.newerReportAvailable };
   }
   constructor(dataPath: string, private readonly requestFetch: typeof fetch = fetch, private readonly chatGptAuth?: ChatGptAuth,
     private readonly marketForecastProvider?: MarketForecastProvider,
@@ -510,87 +511,6 @@ export class PortfolioAnalysisService {
     } catch {
       throw new Error('Die Analyse wurde erstellt, konnte aber nicht dauerhaft gespeichert werden. Bitte den FinPal-Datenordner prüfen.');
     } finally { if (fs.existsSync(temp)) fs.unlinkSync(temp); }
-  }
-
-  async analyzeLocal(request: PortfolioAnalysisRequest, onProgress?: (progress: PortfolioAnalysisProgress) => void, snapshot = ''): Promise<PortfolioAnalysisResult> {
-    validateAnalysisRequest(request);
-    if (request.targetAssetId !== undefined) throw new Error('Die lokale Analyse wird für das gesamte Portfolio erstellt.');
-    if (typeof snapshot !== 'string' || snapshot.length > 1_000_000) throw new Error('Der Analyse-Datenstand ist ungültig.');
-    if (!this.marketForecastProvider) throw new Error('Der lokale Forecast-Anbieter ist nicht verfügbar. Bitte FinPal neu starten.');
-    if (this.running) throw new Error('Eine Portfolio-Analyse oder Forecast-Aktualisierung läuft bereits.');
-    this.running = true;
-    try {
-      onProgress?.({ stage: 'forecast', lastActivityAt: Date.now() });
-      const forecasts = (await Promise.all(request.positions.map(position =>
-        this.marketForecastProvider!(position, { forceRefresh: request.refreshMarketForecasts === true }).catch((): null => null))))
-        .filter((forecast): forecast is ReturnForecast => !!forecast);
-      onProgress?.({ stage: 'research', researchCompleted: 0, researchTotal: request.positions.length, lastActivityAt: Date.now() });
-      const onlineResearch: DeterministicResearchResult[] = [];
-      const localSecurities = buildResearchSecurities(request.positions);
-      if (this.deterministicResearchProvider) for (const [index, position] of request.positions.entries()) {
-        onProgress?.({ stage: 'research', activeAssetId: position.id, researchCompleted: index, researchTotal: request.positions.length, lastActivityAt: Date.now() });
-        try {
-          const found = await this.deterministicResearchProvider(position, { forceRefresh: request.refreshMarketForecasts === true });
-          onlineResearch.push(found);
-          this.cacheDeterministicResearch(localSecurities[index], found);
-        }
-        catch { /* A failed search must not discard the quantitative local analysis. */ }
-        onProgress?.({ stage: 'research', researchCompleted: index + 1, researchTotal: request.positions.length, lastActivityAt: Date.now() });
-      }
-      const allocationPlan = buildForecastAllocation(request, forecasts, [], undefined, undefined, [], []);
-      const sources = [...new Map([...forecasts.flatMap(forecast => [
-        ...forecast.forecastSources, ...forecast.volatilitySources, ...(forecast.riskHistory?.sources ?? []),
-      ]), ...onlineResearch.flatMap(result => result.sources)].map(source => [source.url, source])).values()];
-      const unavailable = request.positions.filter(position => !forecasts.some(forecast => forecast.key === String(position.id)));
-      let transactionIds: number[] | undefined;
-      try {
-        const ids = JSON.parse(snapshot).transactionIds;
-        if (Array.isArray(ids) && ids.every(Number.isInteger)) transactionIds = ids;
-      } catch { /* Snapshot without a transaction baseline. */ }
-      const recommendations = request.positions.map<AssetRecommendation>(position => {
-        const modeled = allocationPlan.positions.find(item => item.key === String(position.id));
-        const hasValue = modeled?.currentValueEUR !== null && position.price !== null;
-        const scenarioTrade = modeled && ['Kaufen', 'Verkaufen'].includes(modeled.action);
-        const action: AssetRecommendation['action'] = !hasValue || !modeled || modeled.action === 'Prüfen' || scenarioTrade ? 'Prüfen' : 'Halten';
-        const rationale = !hasValue
-          ? 'Eine vollständige lokale EUR-Bewertung fehlt. Deshalb kann keine quantitative Handlung abgeleitet werden.'
-          : scenarioTrade
-            ? `${modeled.action} ist ein lokales Modellszenario. Ohne aktuelle qualitative Quellen-, Produkt-, Kosten- und Steuerprüfung bleibt die Entscheidung offen.`
-            : modeled.reason || 'Das lokale Modell berechnet unter den vorhandenen Daten keine wirtschaftlich belastbare Umschichtung.';
-        const researchedUrls = new Set(onlineResearch.find(result => result.assetId === position.id)?.sources.map(source => source.url) ?? []);
-        return { assetId: position.id, action, plannedAmountEUR: null as number | null, rationale,
-          risk: 'Online-Suchtreffer wurden ohne semantische Auswertung gesammelt. Unternehmensmeldungen, Fondsunterlagen, Steuern und Spreads müssen vor einer Handlung inhaltlich geprüft werden.',
-          sourceIndexes: sources.map((source, index) => researchedUrls.has(source.url) ? index : -1).filter(index => index >= 0), executionBaseline: { shares: position.shares, ...(transactionIds ? { transactionIds } : {}) } };
-      });
-      const infos = [
-        this.deterministicResearchProvider
-          ? 'Diese Analyse wurde ohne OpenAI oder ChatGPT erstellt. Eine deterministische Onlinesuche nach Name, ISIN und Ticker wurde ausgeführt.'
-          : 'Diese Analyse wurde ohne OpenAI oder ChatGPT erstellt. Der Anbieter für die deterministische Onlinesuche war nicht verfügbar.',
-        'Berechnet wurden verfügbare Kursmodelle, historische Volatilitäten, EUR-Kovarianzen, bestätigte Zielbandbreiten, Gebühren und Budget.',
-        ...(this.deterministicResearchProvider ? [`Für ${onlineResearch.filter(result => result.searchStatus === 'completed').length} von ${request.positions.length} Positionen wurde die Onlinesuche abgeschlossen; dabei wurden ${onlineResearch.reduce((sum, result) => sum + result.newsCount, 0)} aktuelle Nachrichtentreffer erfasst.`] : []),
-        ...(unavailable.length ? [`Für ${unavailable.length} Position(en) war kein vollständiges lokales Forecastmodell verfügbar; diese Positionen wurden nicht mit Ersatzwerten ergänzt.`] : []),
-      ];
-      const warnings = [...new Set([
-        ...allocationPlan.warnings,
-        this.deterministicResearchProvider
-          ? 'Die Onlinesuche sammelt Treffer und bekannte Primärquellen, bewertet deren Inhalt aber nicht. Unternehmensmeldungen, Emittentenunterlagen, Steuern, Spreads und neue Anlageideen benötigen weiterhin eine qualitative Prüfung.'
-          : 'Aktuelle Unternehmensmeldungen, Emittentenunterlagen, Steuerquellen, Spreads und neue Anlageideen wurden nicht online gesucht.',
-        ...(onlineResearch.some(result => result.searchStatus === 'failed') ? [`Die Nachrichtensuche ist für ${onlineResearch.filter(result => result.searchStatus === 'failed').length} Position(en) fehlgeschlagen; vorhandene feste Quellen und Marktdaten bleiben sichtbar.`] : []),
-      ])];
-      const report: PortfolioAnalysisResult = {
-        mode: 'local',
-        summary: allocationPlan.status === 'calculated'
-          ? 'Lokale quantitative Portfolioanalyse mit deterministischer Onlinesuche abgeschlossen. Das Ergebnis zeigt Modellgewichtungen, gefundene Quellen und offene Entscheidungen; es enthält keine KI-Auswertung und keine Ausführungsfreigabe.'
-          : 'Die lokale quantitative Portfolioanalyse konnte nur teilweise berechnet werden. Fehlende lokale Kurs- oder Risikodaten wurden offengelassen.',
-        infos, warnings, recommendations, newAssetRecommendations: [], fundamentalRisks: [], allocationPlan, sources,
-        generatedAt: new Date().toISOString(), priceUpdatedAt: request.priceUpdatedAt, model: 'FinPal Local v4',
-      };
-      report.fundingCheck = checkPortfolioFunding(request, report);
-      this.saveLastResult(report, request, snapshot);
-      return report;
-    } finally {
-      this.running = false;
-    }
   }
 
   private async recoverRiskAssessment(position: import('./portfolioAnalysis').AnalysisPosition, set: RiskDocumentSet, record: PrimaryRiskRecord,

@@ -557,6 +557,12 @@ export class PrimaryRiskResearch {
       fs.renameSync(temporary, this.file);
     } finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
   }
+  cachedSources(position: Pick<AnalysisPosition, 'isin' | 'type'>, known: AnalysisSource[]): AnalysisSource[] {
+    const isin = position.isin.trim().toUpperCase();
+    const knownUrls = new Set(known.map(source => source.url));
+    return [...this.cache.values()].filter(doc => (isin && doc.identity === isin) || knownUrls.has(doc.source.url))
+      .map(doc => doc.source);
+  }
   reuseCached(position: Pick<AnalysisPosition, 'isin' | 'type' | 'symbol'>, sources: AnalysisSource[]): RiskDocumentSet | null {
     if (!sources.length) return null;
     const isin = position.isin.trim().toUpperCase();
@@ -574,7 +580,8 @@ export class PrimaryRiskResearch {
   }
   cachedStatus(position: Pick<AnalysisPosition, 'isin' | 'type' | 'symbol'>, sources: AnalysisSource[]): { loadedAt: string | null; freshnessCheckedAt: string | null; needsRefresh: boolean } {
     const set = this.reuseCached(position, sources);
-    const loadedAt = set?.documents.length ? Math.min(...set.documents.map(document => document.fetchedAt)) : NaN;
+    const present = sources.map(source => this.cache.get(source.url)).filter((document): document is RiskDocument => !!document);
+    const loadedAt = present.length ? Math.min(...present.map(document => document.fetchedAt)) : NaN;
     // A legacy successful download is itself an actual source check.
     const checkedAt = set?.documents.length ? Math.min(...set.documents.map(document => document.freshnessCheckedAt ?? document.fetchedAt)) : NaN;
     return { loadedAt: Number.isFinite(loadedAt) ? new Date(loadedAt).toISOString() : null,
@@ -1095,7 +1102,7 @@ export class PrimaryRiskResearch {
           ...(position.isin.trim().toUpperCase() === 'IE00B3WJKG14' ? { excerptVersion: 3 } : {}),
           ...(position.isin.trim().toUpperCase() === 'IE00B8GKDB10' ? { excerptVersion: 2 } : {}),
           ...(position.isin.trim().toUpperCase() === APOLLO_ELTIF_ISIN ? { excerptVersion: 3 } : {}),
-          ...(position.type !== 'Stock' ? { identity: position.isin.trim().toUpperCase() } : {}) };
+          ...(position.isin.trim() ? { identity: position.isin.trim().toUpperCase() } : {}) };
         this.cache.set(url, document);
         documents.push(document);
         try { this.save(); } catch { /* Keep the successful fetch for this run. */ }

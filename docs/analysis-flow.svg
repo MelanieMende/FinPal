@@ -79,7 +79,8 @@
   <text x="850" y="747" class="edge-label">Ja</text>
   <rect x="780" y="862" width="360" height="82" rx="14" class="research"/>
   <text x="960" y="896" text-anchor="middle" class="node-title">Aktualität neu prüfen</text>
-  <text x="960" y="921" text-anchor="middle" class="node-text">Veröffentlichungsstand abgleichen</text>
+  <text x="960" y="913" text-anchor="middle" class="node-text">SEC / FinancialFilings</text>
+  <text x="960" y="932" text-anchor="middle" class="small">Seitenweise; erfolgreiche Prüfung gilt als aktuell</text>
   <path d="M960 944 V1020 H755" class="edge"/>
 
   <polygon points="600,965 755,1020 600,1075 445,1020" class="decision"/>
@@ -93,7 +94,7 @@
   <rect x="390" y="1112" width="420" height="90" rx="14" class="research"/>
   <text x="600" y="1145" text-anchor="middle" class="node-title">Primärberichte laden / Cache anzeigen</text>
   <path d="M410 1158 H790" stroke="#c4b5fd" stroke-width="1.5"/>
-  <text x="600" y="1185" text-anchor="middle" class="node-text">Relevante Auszüge erstellen</text>
+  <text x="600" y="1185" text-anchor="middle" class="node-text">Anbieterfunde bleiben bis zur Übernahme offen</text>
 
   <path d="M600 1202 V1250" class="edge"/>
   <g transform="translate(0 110)">
@@ -101,7 +102,7 @@
   <rect x="724" y="1146" width="72" height="20" rx="10" class="ai-badge"/>
   <text x="760" y="1160" text-anchor="middle" class="ai-badge-text">KI</text>
   <text x="600" y="1180" text-anchor="middle" class="node-title">Primärbelege und Risiken auswerten</text>
-  <text x="600" y="1203" text-anchor="middle" class="node-text">Risikobefund erstellen und lokal validieren</text>
+  <text x="600" y="1203" text-anchor="middle" class="node-text">Perioden · Fälligkeiten · nicht anwendbar prüfen</text>
   <text x="600" y="1222" text-anchor="middle" class="small">BTC-Unterlagen: Bestätigung höchstens 3 Monate gültig</text>
 
   <path d="M600 1226 V1280" class="edge"/>
@@ -138,7 +139,7 @@
   <path d="M600 1390 V1420" class="edge"/>
   <rect x="430" y="1422" width="340" height="118" rx="14" class="warning"/>
   <text x="600" y="1453" text-anchor="middle" class="node-title">Restunsicherheit</text>
-  <text x="600" y="1480" text-anchor="middle" class="node-text">Poolanteile belegen keine Miner-Kontrolle</text>
+  <text x="600" y="1480" text-anchor="middle" class="node-text">Geprüfte Auszüge: Umfang klar benennen</text>
   <text x="600" y="1505" text-anchor="middle" class="node-text">als geprüfte Restunsicherheit dokumentieren</text>
   <text x="600" y="1530" text-anchor="middle" class="small">Kein automatischer Blocker</text>
 

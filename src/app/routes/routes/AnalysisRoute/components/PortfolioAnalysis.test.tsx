@@ -207,6 +207,39 @@ it('shows missing maturity evidence as an open point rather than a reported metr
   expect(within(open).queryByText(/Liquidität: 95/)).not.toBeInTheDocument();
 });
 
+it('keeps a non-applicable margin out of open points while showing documented periods and payable maturities', () => {
+  render(<RiskReview risk={{ key: '91', status: 'unknown', materialRisks: ['loss-making'], sources: [], rationale: [
+    'Marge: nicht anwendbar (Keine operative Umsatzquelle.)',
+    'Regulatorische Risiken: offen (Genehmigungsrisiko bleibt offen.)',
+    'Periodenergebnis: -131672 CAD, Periode 3 Monate bis 2026-04-30',
+    'Lieferantenverbindlichkeiten: Fälligkeit ungefähr 30 bis 90 Tage oder auf Abruf; Finanzschulden sind davon getrennt. Stand 2026-04-30.',
+    'Finanzschulden: Betrag und Fälligkeit von Finanzschulden sind nicht belegt.',
+  ].join('\n') }} openSource={jest.fn()} />);
+  const open = screen.getByLabelText('Offene Prüfpunkte');
+  expect(within(open).getByText(/Regulatorische Risiken: offen/)).toBeVisible();
+  expect(within(open).getByText(/Finanzschulden: Betrag und Fälligkeit/)).toBeVisible();
+  expect(within(open).queryByText(/Marge: nicht anwendbar/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText('Befunde anzeigen'));
+  expect(screen.getByText(/Periodenergebnis: -131672 CAD/)).toBeVisible();
+  expect(screen.getByText(/Lieferantenverbindlichkeiten: Fälligkeit ungefähr 30 bis 90/)).toBeVisible();
+  expect(screen.getByText(/Marge: nicht anwendbar/)).toBeVisible();
+});
+
+it('groups reviewed regulatory and debt uncertainty separately from material risks', () => {
+  render(<RiskReview risk={{ key: '1', status: 'unknown', decisionReadiness: 'reviewed-uncertainty',
+    materialRisks: ['financing'], sources: [], rationale: [
+      'Finanzierung: Risiko belegt (Externe Finanzierung erforderlich.)',
+      'Regulatorische Risiken: geprüfte Restunsicherheit (Kein aktuelles Ereignis belegt.)',
+      'Finanzschulden: geprüfte Restunsicherheit (Betrag und Fälligkeit nicht belegt.)',
+    ].join('\n') }} openSource={jest.fn()} />);
+  expect(screen.queryByLabelText('Offene Prüfpunkte')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText('Befunde anzeigen'));
+  const group = screen.getByText('Geprüfte Restunsicherheiten').parentElement!;
+  expect(within(group).getByText(/Regulatorische Risiken: geprüfte Restunsicherheit/)).toBeVisible();
+  expect(within(group).getByText(/Finanzschulden: geprüfte Restunsicherheit/)).toBeVisible();
+  expect(screen.getByText(/Finanzierung: Risiko belegt/)).toBeVisible();
+});
+
 it('replaces the missing risk review notice while work is in progress', () => {
   const risk: import('../../../../utils/robustForecastModel').FundamentalRiskAssessment = { key: '1', status: 'unknown', materialRisks: [], rationale: 'Noch kein Befund.', sources: [] };
   const { rerender } = render(<RiskReview risk={risk} notReviewed openSource={jest.fn()} />);
@@ -340,6 +373,27 @@ it('shows cached reports without a saved risk assessment', async () => {
   expect(screen.getByText('Primärberichte: geladen · Aktualität offen')).toBeInTheDocument();
   fireEvent.click(screen.getByText('Primärberichte: geladen · Aktualität offen'));
   expect(await screen.findByRole('link', { name: source.title })).toBeInTheDocument();
+});
+
+it('explains a failed primary report freshness check', () => {
+  render(<PrimaryDocumentsIndicator risk={{ key: '1', status: 'unknown', materialRisks: [], rationale: '', sources: [] }}
+    now={Date.now()} status={{ assetId: 1, loadedAt: null, needsRefresh: true, freshnessSupported: true,
+      publicationCheckVerified: false, freshnessCheckSucceeded: false, freshnessError: 'FinancialFilings-Abfrage fehlgeschlagen (HTTP 403).' }}
+    openSource={jest.fn()} onReload={jest.fn()} disabled={false} loading={false} forceReload={false} />);
+  expect(screen.getByText(/FinancialFilings-Abfrage fehlgeschlagen \(HTTP 403\)/)).toBeInTheDocument();
+});
+
+it('shows a successful FinancialFilings check as current without a manual SEDAR action', () => {
+  const now = Date.now();
+  const source = { title: 'Bericht', url: 'https://example.com/report' };
+  render(<PrimaryDocumentsIndicator risk={{ key: '1', status: 'unknown', materialRisks: [], rationale: '', sources: [] }}
+    now={now} status={{ assetId: 1, loadedAt: new Date(now).toISOString(), sources: [source], needsRefresh: false,
+      freshnessSupported: true, freshnessMethod: 'financialfilings', freshnessCheckedAt: new Date(now).toISOString(),
+      freshnessCheckSucceeded: true, publicationCheckVerified: true }} openSource={jest.fn()} onReload={jest.fn()}
+    disabled={false} loading={false} forceReload={false} />);
+  expect(screen.getByText('Primärberichte: geladen · aktuell')).toBeInTheDocument();
+  expect(screen.queryByText(/Vollständigkeit offen/)).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /SEDAR/ })).not.toBeInTheDocument();
 });
 
 it('shows a due report reload from the document load time even after a recent risk review', () => {

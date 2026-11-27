@@ -91,6 +91,8 @@ contextBridge.exposeInMainWorld('API', {
   getPortfolioResearchStatus: (assets: import('./app/utils/portfolioAnalysis').ResearchAsset[]) => ipcRenderer.invoke('portfolio-ai:research-status', assets),
   savePortfolioAIKey: (key: string) => ipcRenderer.invoke('portfolio-ai:save-key', key),
   forgetPortfolioAIKey: () => ipcRenderer.invoke('portfolio-ai:forget-key'),
+  savePortfolioFilingsKey: (key: string) => ipcRenderer.invoke('portfolio-ai:save-filings-key', key),
+  forgetPortfolioFilingsKey: () => ipcRenderer.invoke('portfolio-ai:forget-filings-key'),
   signInPortfolioChatGpt: (clientId?: string) => ipcRenderer.invoke('portfolio-ai:chatgpt-sign-in', clientId),
   cancelPortfolioChatGptSignIn: () => ipcRenderer.invoke('portfolio-ai:chatgpt-cancel'),
   signOutPortfolioChatGpt: () => ipcRenderer.invoke('portfolio-ai:chatgpt-sign-out'),

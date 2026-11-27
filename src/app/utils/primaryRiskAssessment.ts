@@ -50,6 +50,8 @@ export interface RiskCheck {
   reason: string;
   documentIndex: number | null;
   quote: string;
+  notApplicable?: boolean;
+  reviewedResidual?: boolean;
 }
 export interface RiskMetric {
   name: string;
@@ -70,6 +72,7 @@ export interface PrimaryRiskRecord {
   checks: RiskCheck[];
   decisionBlocker?: { flag: RiskCheckName; reason: string };
   metrics: RiskMetric[];
+  documentNotes?: { kind: 'payables-maturity'; period: string; text: string; documentIndex: number; quote: string }[];
   gaps: string[];
   sources: AnalysisSource[];
 }
@@ -103,6 +106,82 @@ function quoteContainsValue(quote: string, value: number): boolean {
       unsigned.replace(/,/g, '.')]);
     return [...candidates].some(candidate => (accountingNegative ? -Number(candidate) : Number(candidate)) === value);
   });
+}
+
+/** Extract only unambiguous, dated narrative evidence; never infer debt from trade payables. */
+function enrichStockDocumentEvidence(position: AnalysisPosition, record: PrimaryRiskRecord, documents: RiskDocument[]): PrimaryRiskRecord {
+  if (position.type !== 'Stock') return record;
+  const latestPeriod = documents.map(doc => doc.period).filter((period): period is string => !!period && /^\d{4}-\d{2}-\d{2}$/.test(period)).sort().pop();
+  if (!latestPeriod) return record;
+  const latest = documents.map((doc, index) => ({ doc, index })).filter(({ doc }) => doc.period === latestPeriod);
+  let checks = record.checks;
+  let metrics = record.metrics;
+  let gaps = record.gaps;
+  let notes = record.documentNotes ?? [];
+  const lowMargin = checks.find(check => check.flag === 'low-margin' && check.finding === 'unknown');
+  const regulatory = checks.find(check => check.flag === 'regulatory' && check.finding === 'unknown');
+  if (regulatory && /(?:kein|nicht).{0,90}(?:konkret|aktuell|schadensereignis)|(?:konkret|aktuell|schadensereignis).{0,90}nicht belegt/i.test(regulatory.reason)) {
+    for (const { doc, index } of latest) {
+      const match = /(?:regulatory risks|governmental laws and regulations|regulatory requirements)/i.exec(doc.excerpt);
+      if (!match || !validQuote(match[0], doc)) continue;
+      if (!regulatory.reviewedResidual || regulatory.documentIndex !== index || regulatory.quote !== match[0])
+        checks = checks.map(check => check === regulatory ? { ...check, documentIndex: index, quote: match[0], reviewedResidual: true } : check);
+      break;
+    }
+  }
+  if (lowMargin && !lowMargin.notApplicable) {
+    for (const { doc, index } of latest) {
+      const match = /(?:the\s+)?company\s+has\s+no\s+source\s+of\s+operating\s+revenue/i.exec(doc.excerpt);
+      if (!match || !validQuote(match[0], doc)) continue;
+      checks = checks.map(check => check === lowMargin ? { ...check, notApplicable: true, documentIndex: index, quote: match[0],
+        reason: `Zum ${latestPeriod} berichtet das Unternehmen keine operative Umsatzquelle; eine Umsatzmarge ist daher nicht sinnvoll berechenbar.` } : check);
+      gaps = gaps.filter(gap => !/^(low-margin|operating-margin):/.test(gap));
+      break;
+    }
+  }
+  if (!metrics.some(metric => metric.name === 'net-income')) {
+    for (const { doc, index } of latest) {
+      const match = /(?:during|for)\s+the\s+(three|six|nine|twelve)\s+months\s+ended\s+([A-Za-z]+\s+\d{1,2},\s+\d{4}),?\s+(?:the\s+company\s+)?(?:recorded|reported)\s+(?:a\s+)?net\s+(loss|income|profit)\s+of\s+\$\s*([\d,]+)/i.exec(doc.excerpt);
+      if (!match || !validQuote(match[0], doc) || !Number.isFinite(Date.parse(`${match[2]} UTC`)) || new Date(`${match[2]} UTC`).toISOString().slice(0, 10) !== latestPeriod) continue;
+      const value = Number(match[4].replace(/,/g, '')) * (match[3].toLowerCase() === 'loss' ? -1 : 1);
+      if (!Number.isSafeInteger(value)) continue;
+      const corroborated = latest.some(({ doc: candidate }) => /expressed in Canadian dollars/i.test(candidate.excerpt)
+        && [...candidate.excerpt.matchAll(/net\s+(?:income|loss)[\s\S]{0,180}/ig)].some(found => quoteContainsValue(found[0], value)));
+      if (!corroborated) continue;
+      const months = { three: 3, six: 6, nine: 9, twelve: 12 }[match[1].toLowerCase() as 'three' | 'six' | 'nine' | 'twelve'];
+      metrics = [...metrics, { name: 'net-income', value, unit: 'CAD', period: `${months} Monate bis ${latestPeriod}`, documentIndex: index, quote: match[0] }];
+      gaps = gaps.filter(gap => !gap.startsWith('net-income:'));
+      break;
+    }
+  }
+  if (!metrics.some(metric => metric.name === 'net-income' && metric.period === `6 Monate bis ${latestPeriod}`)) {
+    for (const { doc, index } of latest) {
+      const table = /for\s+the\s+three\s+and\s+six\s+months\s+ended\s+([A-Za-z]+\s+\d{1,2},\s+\d{4})\s+and\s+(\d{4})[\s\S]{0,500}?note\s+(\d{4})\s+(\d{4})\s+(\d{4})\s+(\d{4})[\s\S]{0,2400}?(net\s+income\s*\(loss\)\s+and\s+comprehensive\s+income\s*\(loss\)\s+for\s+the\s+period\s+(\(?[\d,]+\)?)\s+(\(?[\d,]+\)?)\s+(\(?[\d,]+\)?)\s+(\(?[\d,]+\)?))/i.exec(doc.excerpt);
+      if (!table || !/expressed in Canadian dollars/i.test(table[0]) || !Number.isFinite(Date.parse(`${table[1]} UTC`))
+        || new Date(`${table[1]} UTC`).toISOString().slice(0, 10) !== latestPeriod
+        || table[3] !== latestPeriod.slice(0, 4) || table[5] !== table[3] || table[4] !== table[2] || table[6] !== table[2]
+        || !validQuote(table[7], doc)) continue;
+      const token = table[10];
+      const value = Number(token.replace(/[(),]/g, '')) * (token.startsWith('(') ? -1 : 1);
+      if (!Number.isSafeInteger(value) || !quoteContainsValue(table[7], value)) continue;
+      metrics = [...metrics, { name: 'net-income', value, unit: 'CAD', period: `6 Monate bis ${latestPeriod}`, documentIndex: index, quote: table[7] }];
+      gaps = gaps.filter(gap => !gap.startsWith('net-income:'));
+      break;
+    }
+  }
+  for (const { doc, index } of latest) {
+    const match = /accounts payable have\s+contractual\s+maturities\s+of\s+approximately\s+(\d+)\s+to\s+(\d+)\s+days\s+or\s+are\s+due\s+on\s+demand/i.exec(doc.excerpt);
+    if (!match || !validQuote(match[0], doc)) continue;
+    const lower = Number(match[1]), upper = Number(match[2]);
+    if (lower <= 0 || upper < lower || upper > 3650) continue;
+    notes = [{ kind: 'payables-maturity', period: latestPeriod, documentIndex: index, quote: match[0],
+      text: `Lieferantenverbindlichkeiten: Fälligkeit ungefähr ${lower} bis ${upper} Tage oder auf Abruf; Finanzschulden sind davon getrennt.` }];
+    gaps = gaps.map(gap => gap.startsWith('debt-maturities:') ? 'debt-maturities: Betrag und Fälligkeit von Finanzschulden sind nicht belegt.' : gap);
+    break;
+  }
+  if (checks === record.checks && metrics === record.metrics && JSON.stringify(gaps) === JSON.stringify(record.gaps)
+    && JSON.stringify(notes) === JSON.stringify(record.documentNotes ?? [])) return record;
+  return { ...record, checks, metrics, gaps, documentNotes: notes, status: gaps.length ? 'unknown' : 'assessed' };
 }
 function munichReCashFromBalanceSheet(position: AnalysisPosition, documents: RiskDocument[]): RiskMetric | null {
   if (!isInsuranceStock(position)) return null;
@@ -742,17 +821,17 @@ export function validateRiskAssessment(position: AnalysisPosition, set: RiskDocu
   }
   if (!set.discoveryChecked && !isBitcoinResearchPosition(position))
     gaps.push('Neueste Primärberichte konnten nicht verlässlich abgeglichen werden.');
-  return { key, isin: riskInstrumentId(position), fingerprint: riskFingerprint(position, set), documentsFingerprint: primaryDocumentsFingerprint(set),
+  return enrichStockDocumentEvidence(position, { key, isin: riskInstrumentId(position), fingerprint: riskFingerprint(position, set), documentsFingerprint: primaryDocumentsFingerprint(set),
     ...(isSpaceX(position) ? { excerptVersion: set.documents.find(spaceXQuarter)?.excerptVersion } : {}),
     ...(decisionBlocker ? { decisionBlocker } : {}),
     checkedAt: now, status: gaps.length ? 'unknown' : 'assessed', checks, metrics, gaps: [...new Set(gaps)],
-    sources: set.documents.map(doc => doc.source) };
+    sources: set.documents.map(doc => doc.source) }, set.documents);
 }
 export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessment {
   const decisionBlocker = record.decisionBlocker && record.checks.some(check => check.flag === record.decisionBlocker!.flag && check.finding === 'unknown')
     ? record.decisionBlocker : undefined;
   const findings = { risk: 'Risiko belegt', 'no-risk': 'kein wesentliches Risiko belegt', unknown: 'offen' };
-  const metricLabels: Record<string, string> = { 'net-income': 'Periodengewinn', 'operating-margin': 'operative Marge', cash: 'Liquidität', 'debt-maturities': 'Fälligkeiten', 'combined-ratio': 'Combined Ratio', 'solvency-ratio': 'Solvenzquote' };
+  const metricLabels: Record<string, string> = { 'net-income': 'Periodenergebnis', 'operating-margin': 'operative Marge', cash: 'Liquidität', 'debt-maturities': 'Fälligkeiten', 'combined-ratio': 'Combined Ratio', 'solvency-ratio': 'Solvenzquote' };
   const reviewedBitcoinStructuralRisk = (check: RiskCheck) => record.isin === 'BTC' && check.finding === 'risk' && (
     (check.flag === 'protocol'
       && /strukturell/i.test(check.reason)
@@ -885,14 +964,24 @@ export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessme
   const reviewedBitcoinConcentration = (check: RiskCheck) => record.isin === 'BTC' && check.flag === 'concentration'
     && check.finding === 'unknown' && record.sources.some(source => source.url === bitcoinMiningPoolSource.url)
     && /Mining pool shares.*7 Tage/i.test(check.reason) && /Hashing-Kontrolle bleibt offen/i.test(check.reason);
+  const reviewedDebtResidual = (record.documentNotes ?? []).some(note => note.kind === 'payables-maturity');
+  const reviewedStockResidual = record.status === 'unknown' && record.sources.length > 0
+    && record.checks.every(check => check.finding !== 'unknown' || check.notApplicable || (check.flag === 'regulatory' && check.reviewedResidual))
+    && record.gaps.length > 0 && record.gaps.every(gap => gap.startsWith('regulatory:')
+      ? record.checks.some(check => check.flag === 'regulatory' && check.finding === 'unknown' && check.reviewedResidual && check.documentIndex !== null)
+      : gap.startsWith('debt-maturities:') && reviewedDebtResidual);
   const details = record.sources.length ? record.checks.map(check =>
-    `${check.flag === 'identity' && record.checks.some(item => item.flag === 'protocol') ? 'Netzwerk und Coin' : riskCheckLabels[check.flag]}: ${reviewedBitcoinConcentration(check) ? 'geprÃ¼fte Restunsicherheit' : findings[check.finding]} (${shorten(check.reason, 230)})`) : [];
+    `${check.flag === 'identity' && record.checks.some(item => item.flag === 'protocol') ? 'Netzwerk und Coin' : riskCheckLabels[check.flag]}: ${check.notApplicable ? 'nicht anwendbar' : (reviewedBitcoinConcentration(check) || check.reviewedResidual) ? 'geprüfte Restunsicherheit' : findings[check.finding]} (${shorten(check.reason, 400)})`) : [];
   const metrics = record.metrics.map(metric =>
     `${metricLabels[metric.name] ?? metric.name}: ${metric.value} ${metric.unit}, Periode ${metric.period}`);
   const checkedUnknown = new Set(record.checks.filter(check => check.finding === 'unknown').map(check => check.flag));
   const gaps = record.sources.length ? record.gaps.filter(gap => !checkedUnknown.has(gap.split(':', 1)[0] as RiskCheckName))
     : record.gaps.filter(gap => !/^(?:loss-making|low-margin|underwriting|solvency|financing|going-concern|regulatory|net-income|operating-margin|combined-ratio|solvency-ratio|cash|debt-maturities):/.test(gap));
-  const lines = [...(decisionBlocker ? [`Konkreter Datenblocker: ${decisionBlocker.reason}`] : []), ...details, ...metrics, ...gaps];
+  const notes = (record.documentNotes ?? []).map(note => `${note.text} Stand ${note.period}.`);
+  const lines = [...(decisionBlocker ? [`Konkreter Datenblocker: ${decisionBlocker.reason}`] : []), ...details, ...metrics, ...notes,
+    ...gaps.map(gap => gap.startsWith('debt-maturities:') ? reviewedDebtResidual
+      ? 'Finanzschulden: geprüfte Restunsicherheit (In den geprüften Berichtsauszügen sind Betrag und Fälligkeit nicht belegt; daraus folgt nicht, dass keine Finanzschulden bestehen.)'
+      : gap.replace('debt-maturities:', 'Finanzschulden:') : gap)];
   const visible: string[] = [];
   for (const line of lines) {
     if ([...visible, line].join('\n').length > 2900) break;
@@ -903,7 +992,7 @@ export function riskForModel(record: PrimaryRiskRecord): FundamentalRiskAssessme
     primaryDocumentsCheckedAt: new Date(record.checkedAt).toISOString(), primaryDocuments: record.sources,
     ...(record.isin === 'US84615Q1031' && record.excerptVersion ? { primaryExcerptVersion: record.excerptVersion } : {}),
     ...(record.documentsFingerprint ? { primaryDocumentsFingerprint: record.documentsFingerprint, primaryDocumentsFingerprintVersion: 2 as const } : {}),
-    ...(!decisionBlocker && (reviewedMunichUncertainty || reviewedMondelezUncertainty || reviewedMcdUncertainty || reviewedNovoUncertainty || reviewedLufthansaUncertainty || reviewedBitcoinUncertainty || reviewedApolloUncertainty)
+    ...(!decisionBlocker && (reviewedStockResidual || reviewedMunichUncertainty || reviewedMondelezUncertainty || reviewedMcdUncertainty || reviewedNovoUncertainty || reviewedLufthansaUncertainty || reviewedBitcoinUncertainty || reviewedApolloUncertainty)
       ? { decisionReadiness: 'reviewed-uncertainty' as const } : {}),
     ...(decisionBlocker ? { decisionBlocker } : {}),
     materialRisks, ...(structuralRisks.length ? { structuralRisks } : {}), rationale: visible.join('\n'), sources: record.sources };
@@ -986,6 +1075,8 @@ export class PrimaryRiskAssessmentCache {
         this.set(record);
       }
     }
+    const enriched = enrichStockDocumentEvidence(position, record, set.documents);
+    if (enriched !== record) { record = enriched; this.set(record); }
     // Retry transient source failures after a day. A reviewed evidence gap remains
     // reusable until the source documents or policy change.
     if (record.status === 'unknown' && Date.now() - record.checkedAt >= 24 * 60 * 60 * 1000

@@ -130,8 +130,8 @@ const createWindow = async () => {
   mainWindow.once('ready-to-show', () => {
 
     mainWindow.show()
-    // Open the DevTools automatically if developing
-    if (dev) {
+    // DevTools are optional: opening them during startup can crash Electron.
+    if (dev && process.env.FINPAL_DEVTOOLS === '1') {
       mainWindow.webContents.on('did-frame-finish-load', () => {
         mainWindow.webContents.openDevTools();
         mainWindow.webContents.once('devtools-opened', () => {
@@ -293,6 +293,8 @@ ipcMain.handle('portfolio-ai:status', () => ({ ...portfolioAnalysis.status(), ch
 ipcMain.handle('portfolio-ai:research-status', (_event, assets: import('./app/utils/portfolioAnalysis').ResearchAsset[]) => portfolioAnalysis.getResearchStatus(assets));
 ipcMain.handle('portfolio-ai:save-key', (_event, key: string) => { portfolioAnalysis.saveKey(key); return true; });
 ipcMain.handle('portfolio-ai:forget-key', () => { portfolioAnalysis.forgetKey(); return true; });
+ipcMain.handle('portfolio-ai:save-filings-key', (_event, key: string) => { portfolioAnalysis.saveFilingsKey(key); return true; });
+ipcMain.handle('portfolio-ai:forget-filings-key', () => { portfolioAnalysis.forgetFilingsKey(); return true; });
 ipcMain.handle('portfolio-ai:chatgpt-sign-in', (_event, clientId?: string) => chatGptAuth.signIn(clientId));
 ipcMain.handle('portfolio-ai:chatgpt-cancel', () => { chatGptAuth.cancelSignIn(); return true; });
 ipcMain.handle('portfolio-ai:chatgpt-sign-out', () => chatGptAuth.signOut());

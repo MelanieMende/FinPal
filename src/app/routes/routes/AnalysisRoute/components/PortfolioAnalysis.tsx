@@ -121,13 +121,13 @@ export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onRel
   const prospectusIncomplete = status?.freshnessCoverage === 'sec-prospectus-incomplete' && status.freshnessCheckSucceeded === true && checkWithinWindow;
   const documents = (status?.sources ?? risk.primaryDocuments ?? []).filter(source => source && typeof source.url === 'string' && typeof source.title === 'string');
   return <section aria-label="Primärberichte" className="my-3 min-w-0 rounded border border-white/10 bg-slate-950/25 p-3">
-    <div className="flex min-w-0 flex-wrap items-start gap-2">
-    <details className="group min-w-0 flex-1" onToggle={event => setExpanded(event.currentTarget.open)}>
+    <div className="flex min-w-0 flex-col gap-2">
+    <details className="group min-w-0" onToggle={event => setExpanded(event.currentTarget.open)}>
       <summary aria-controls={`primary-documents-details-${risk.key}`} className={`flex min-w-0 cursor-pointer list-none items-center gap-2 text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 ${current && !excerptNeedsRefresh && !newReportAwaitingReview ? 'text-emerald-300' : 'text-amber-300'}`}>
         <Icon icon={current && !excerptNeedsRefresh && !newReportAwaitingReview ? 'tick-circle' : 'refresh'} size={14} aria-hidden="true" />
         <span className="min-w-0 break-words">Primärberichte: {loading && forceReload ? 'wird ausgeführt'
           : excerptNeedsRefresh ? 'neuer Auszug erforderlich'
-            : reportVersionAvailable ? 'neuer Bericht verfügbar · neu laden'
+            : reportVersionAvailable ? status?.freshnessMethod === 'financialfilings' ? 'möglicherweise neuere Berichte gefunden' : 'neuer Bericht verfügbar · neu laden'
               : newReportAwaitingReview ? 'Berichte geladen · Risikoprüfung ausstehend'
                 : noPeriodicReports || prospectusIncomplete ? 'SEC-Verzeichnis geprüft · Prospektaktualität offen'
                 : publicationCheckUnverified ? 'Aktualität prüfen'
@@ -135,8 +135,8 @@ export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onRel
         <Icon icon="chevron-right" size={12} aria-hidden="true" className="ml-auto shrink-0 text-gray-500 transition-transform group-open:rotate-90" />
       </summary>
     </details>
-    <div className="ml-auto flex flex-wrap gap-2">
-    <Button small icon="refresh" loading={checking} disabled={disabled || loading || checking || status?.freshnessSupported === false} aria-label="Aktualität der Primärberichte prüfen" onClick={onCheck}>
+    <div className="flex min-w-0 flex-wrap gap-2">
+    <Button small icon="refresh" loading={checking} disabled={disabled || loading || checking || status?.freshnessSupported === false || !documents.length} aria-label="Aktualität der Primärberichte prüfen" onClick={onCheck}>
       Aktualität prüfen
     </Button>
     <Button className="shrink-0" small icon={loading ? undefined : 'refresh'} disabled={disabled || loading} aria-label="Primärberichte neu laden" onClick={onReload}>
@@ -145,16 +145,20 @@ export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onRel
     </div>
     </div>
       <div id={`primary-documents-details-${risk.key}`} hidden={!expanded} className="mt-2 min-w-0 space-y-2 border-t border-white/10 pt-2">
+        {status?.freshnessMethod === 'financialfilings' && <div className="space-y-1 text-xs text-amber-200">
+          <p className="m-0">Berichtsverzeichnis von FinancialFilings abgefragt.</p>
+          {status.discoveredReports?.map(source => <p className="m-0 break-all" key={source.url}><a href={source.url} onClick={event => openSource(event, source.url)} target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline">{source.title}</a></p>)}
+        </div>}
         {newReportAwaitingReview
           ? <p className="m-0 text-xs text-amber-200">Berichte wurden neu geladen. Die inhaltliche Risikoprüfung steht noch aus; bitte „Risiken neu prüfen“ wählen.</p>
           : reportVersionAvailable
-            ? <p className="m-0 text-xs text-amber-200">Ein neuer Bericht ist verfügbar. Bitte die Berichte neu laden und danach die Risiken erneut prüfen.</p>
+            ? <p className="m-0 text-xs text-amber-200">{status?.freshnessMethod === 'financialfilings' ? 'Der Anbieter meldet möglicherweise neuere Berichte. Die Treffer müssen geprüft werden und werden noch nicht automatisch übernommen.' : 'Ein neuer Bericht ist verfügbar. Bitte die Berichte neu laden und danach die Risiken erneut prüfen.'}</p>
             : prospectusIncomplete
               ? <p className="m-0 text-xs text-amber-200">Neuere SEC-Veröffentlichungen konnten dem Wertpapier nicht eindeutig zugeordnet werden. Die Aktualität der geladenen Prospekte bleibt offen.</p>
             : noPeriodicReports
               ? <p className="m-0 text-xs text-amber-200">Im SEC-Verzeichnis wurden noch keine regelmäßigen Geschäftsberichte gefunden. Der geladene Prospekt ist dort verzeichnet; mögliche Änderungen am Prospekt wurden nicht automatisch geprüft.</p>
             : publicationCheckUnverified
-              ? <p className="m-0 text-xs text-amber-200">{status?.freshnessCheckSucceeded === false ? 'Der letzte Abgleich ist fehlgeschlagen. Eine manuelle Wiederholung ist möglich.' : 'Für diese Berichte liegt kein gültiger Abgleich vor. Bitte die Aktualität prüfen.'}</p>
+              ? <p className="m-0 text-xs text-amber-200">{status?.freshnessCheckSucceeded === false ? `Der letzte Abgleich ist fehlgeschlagen.${status.freshnessError ? ` ${status.freshnessError}` : ''} Eine manuelle Wiederholung ist möglich.` : 'Für diese Berichte liegt kein gültiger Abgleich vor. Bitte die Aktualität prüfen.'}</p>
           : status?.freshnessSupported === false
           ? <p className="m-0 text-xs text-gray-400">Ein automatischer Abgleich auf neue Berichte ist für dieses Asset noch nicht verfügbar.</p>
           : !Number.isFinite(loadedAt)
@@ -190,7 +194,7 @@ const riskLineLabels: Record<string, string> = {
   credit: 'Bonität', terms: 'Bedingungen', seniority: 'Rang', protocol: 'Protokoll', custody: 'Verwahrung',
   underwriting: 'Versicherungstechnik', solvency: 'Solvenz',
 };
-const metricPrefixes = ['Periodengewinn:', 'operative Marge:', 'Liquidität:', 'Fälligkeiten:', 'Combined Ratio:', 'Solvenzquote:', 'debt-maturities:'];
+const metricPrefixes = ['Periodengewinn:', 'Periodenergebnis:', 'operative Marge:', 'Liquidität:', 'Fälligkeiten:', 'Combined Ratio:', 'Solvenzquote:', 'debt-maturities:'];
 export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, checkStatus, reviewPending = false, primaryDocumentsStep, notReviewed = false }: { risk: FundamentalRiskAssessment;
   openSource: (event: React.MouseEvent<HTMLAnchorElement>, url: string) => void; onRefreshRisk?: () => void; refreshDisabled?: boolean; checkStatus?: string; reviewPending?: boolean;
   primaryDocumentsStep?: React.ReactNode; notReviewed?: boolean }) {
@@ -243,10 +247,6 @@ export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, c
           <Icon icon={tone.icon} size={14} aria-hidden="true" /> {tone.title}
         </p>
       </div>
-      <div className="flex min-w-0 flex-wrap items-center gap-2">
-        {onRefreshRisk && <Button small icon="refresh" disabled={refreshDisabled} onClick={onRefreshRisk}
-          aria-label={`Unternehmens- und Produktrisiken für Asset ${risk.key} ${notReviewed ? 'prüfen' : 'neu prüfen'}`}>{notReviewed ? 'Risiken prüfen' : 'Risiken neu prüfen'}</Button>}
-      </div>
     </div>
     {primaryDocumentsStep}
     {checkStatus && <div role="status" data-testid={`asset-risk-loading-${risk.key}`} className="mx-3 mb-0 mt-2 flex items-center gap-2 rounded border border-sky-400/25 bg-sky-500/10 px-2.5 py-2 text-xs text-sky-200">
@@ -295,6 +295,10 @@ export function RiskReview({ risk, openSource, onRefreshRisk, refreshDisabled, c
         </div>}
       </div>
     </details>}
+    {onRefreshRisk && <div className="px-3 pb-3 pt-2">
+      <Button small icon="refresh" disabled={refreshDisabled} onClick={onRefreshRisk}
+        aria-label={`Unternehmens- und Produktrisiken für Asset ${risk.key} ${notReviewed ? 'prüfen' : 'neu prüfen'}`}>{notReviewed ? 'Risiken prüfen' : 'Risiken neu prüfen'}</Button>
+    </div>}
   </section>;
 }
 const isCostBlockedHold = (recommendation: AssetRecommendation) => {
@@ -533,6 +537,8 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
   const [apiKey, setApiKey] = useState('');
   const [connectionSettingsOpen, setConnectionSettingsOpen] = useState(false);
   const [hasKey, setHasKey] = useState(false);
+  const [hasFilingsKey, setHasFilingsKey] = useState(false);
+  const [filingsKey, setFilingsKey] = useState('');
   const [secureStorage, setSecureStorage] = useState(false);
   const [actionBusy, setBusy] = useState(false);
   const busy = actionBusy || progress !== null;
@@ -607,7 +613,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
     if (!window.API.getPortfolioAIStatus) throw new Error('Bitte FinPal vollständig neu starten, um die KI-Anbindung zu laden.');
     const status = await window.API.getPortfolioAIStatus();
     if (!alive.current) return;
-    setHasKey(status.hasApiKey); setSecureStorage(status.secureStorageAvailable); setChatGpt(status.chatGpt);
+    setHasKey(status.hasApiKey); setHasFilingsKey(status.hasFilingsKey === true); setSecureStorage(status.secureStorageAvailable); setChatGpt(status.chatGpt);
     if (status.chatGpt.connected) {
       const available = await window.API.getPortfolioChatGptModels();
       if (!alive.current) return;
@@ -857,6 +863,15 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
             forgetApiKey={() => void run(async () => { await window.API.forgetPortfolioAIKey(); setApiKey(''); await refreshStatus(); })}
             openUsage={e => openSource(e, 'https://chatgpt.com/settings/usage')} />
         </Dialog>
+        <details className="min-w-0 rounded border border-white/10 p-3 text-xs text-gray-300">
+          <summary className="cursor-pointer font-semibold">FinancialFilings für kanadische Berichte {hasFilingsKey ? '· Schlüssel gespeichert' : '· nicht eingerichtet'}</summary>
+          <p>Die API-Nutzung unterliegt den Bedingungen und dem Kontingent des Anbieters. Der Schlüssel wird lokal verschlüsselt gespeichert.</p>
+          <label className="block">FinancialFilings-API-Schlüssel<input type="password" autoComplete="off" className={`${inputClass} mt-1`} value={filingsKey} onChange={event => setFilingsKey(event.target.value)} disabled={busy} /></label>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button small disabled={busy || !secureStorage || !filingsKey.trim()} onClick={() => void run(async () => { if (!window.API.savePortfolioFilingsKey) throw new Error('Bitte FinPal neu starten.'); await window.API.savePortfolioFilingsKey(filingsKey); setFilingsKey(''); await refreshStatus(); if (window.API.getPortfolioPrimaryDocumentStatus) setPrimaryDocumentStatus(await window.API.getPortfolioPrimaryDocumentStatus(JSON.parse(researchAssets))); })}>Schlüssel speichern</Button>
+            {hasFilingsKey && <Button small disabled={busy} onClick={() => void run(async () => { await window.API.forgetPortfolioFilingsKey?.(); setFilingsKey(''); await refreshStatus(); if (window.API.getPortfolioPrimaryDocumentStatus) setPrimaryDocumentStatus(await window.API.getPortfolioPrimaryDocumentStatus(JSON.parse(researchAssets))); })}>Schlüssel entfernen</Button>}
+          </div>
+        </details>
         <div className="analysis-fields" data-testid="analysis-profile-fields">
           <label className="text-xs text-gray-300">Anlageziel
             <select className={`${inputClass} mt-1`} style={{ colorScheme: 'dark' }} value={profile.goal} disabled={busy} onChange={e => updateProfile('goal', e.target.value)}>

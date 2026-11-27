@@ -196,6 +196,66 @@ it('reads parenthesized losses as negative figures in filing evidence', () => {
   expect(validateRiskAssessment(arbor, filing, { ...response, metrics: [{ ...response.metrics[0], value: 420586 }] }).metrics).toEqual([]);
 });
 
+it('distinguishes an unavailable margin, dated losses and trade payable maturities for any qualifying stock', () => {
+  const stock = { ...position, id: 91, name: 'Example Explorer', isin: 'CA0000000001' };
+  const financials = `For the three and six months ended April 30, 2026 and 2025
+    (Unaudited - Expressed in Canadian Dollars)
+    Note 2026 2025 2026 2025
+    NET INCOME (LOSS) AND COMPREHENSIVE INCOME (LOSS) FOR THE PERIOD (131,672) 404,258 (420,586) 548,607
+    The Company has no source of operating revenue.
+    Accounts payable have contractual maturities of approximately 30 to 90 days or are due on demand.`;
+  const management = 'During the three months ended April 30, 2026, the Company recorded net loss of $131,672 compared with net income of $404,258.';
+  const set: RiskDocumentSet = { documents: [{ ...document, period: '2026-04-30', excerpt: financials },
+    { ...document, source: { title: 'Management report', url: 'https://example.com/management' }, period: '2026-04-30', excerpt: management }], discoveryChecked: true, gaps: [] };
+  const checks = riskChecksForPosition(stock).map(flag => ({ flag, finding: 'unknown', reason: flag === 'regulatory' ? 'Genehmigungsrisiko bleibt offen.' : 'Offen.', documentIndex: null as number | null, quote: '' }));
+  const result = validateRiskAssessment(stock, set, { checks, metrics: [] });
+  expect(result.metrics).toEqual(expect.arrayContaining([
+    expect.objectContaining({ name: 'net-income', value: -131672, period: '3 Monate bis 2026-04-30', unit: 'CAD' }),
+    expect.objectContaining({ name: 'net-income', value: -420586, period: '6 Monate bis 2026-04-30', unit: 'CAD' }),
+  ]));
+  expect(result.checks.find(check => check.flag === 'low-margin')).toMatchObject({ notApplicable: true, documentIndex: 0 });
+  expect(result.gaps).not.toEqual(expect.arrayContaining([expect.stringMatching(/^(low-margin|operating-margin|net-income):/)]));
+  expect(result.gaps).toEqual(expect.arrayContaining([expect.stringMatching(/^regulatory:/), expect.stringMatching(/^debt-maturities: Betrag und Fälligkeit von Finanzschulden/)]));
+  expect(result.documentNotes?.[0]).toMatchObject({ kind: 'payables-maturity', period: '2026-04-30', text: expect.stringContaining('30 bis 90 Tage') });
+  expect(result.metrics.find(metric => metric.name === 'debt-maturities')).toBeUndefined();
+  expect(riskForModel(result).rationale).toContain('Marge: nicht anwendbar');
+  const unverified = validateRiskAssessment(stock, { ...set, documents: set.documents.map(doc => ({ ...doc, excerpt: doc.excerpt.replace('Expressed in Canadian Dollars', 'currency not stated') })) }, { checks, metrics: [] });
+  expect(unverified.metrics.some(metric => metric.name === 'net-income')).toBe(false);
+});
+
+it('shows documented residual uncertainty alongside material stock risks without inventing a debt value', () => {
+  const stock = { ...position, isin: 'CA0000000001' };
+  const excerpt = `The Company has no source of operating revenue. Regulatory risks include changing governmental laws and regulations.
+    Accounts payable have contractual maturities of approximately 30 to 90 days or are due on demand.
+    The Company recorded net loss of 100. Financing depends on cash and equity 100. Material uncertainty on ability to continue as a going concern. Cash and cash equivalents 500.`;
+  const set: RiskDocumentSet = { documents: [{ ...document, period: '2026-04-30', excerpt }], discoveryChecked: true, gaps: [] };
+  const checks = [
+    { flag: 'loss-making', finding: 'risk', reason: 'Verlust', documentIndex: 0, quote: 'The Company recorded net loss of 100' },
+    { flag: 'low-margin', finding: 'unknown', reason: 'Offen', documentIndex: null, quote: '' },
+    { flag: 'financing', finding: 'risk', reason: 'Finanzierung', documentIndex: 0, quote: 'Financing depends on cash and equity 100' },
+    { flag: 'going-concern', finding: 'risk', reason: 'Fortführung', documentIndex: 0, quote: 'Material uncertainty on ability to continue as a going concern' },
+    { flag: 'regulatory', finding: 'unknown', reason: 'Ein konkretes aktuelles regulatorisches Schadensereignis ist in den gelieferten Auszügen nicht belegt.', documentIndex: null, quote: '' },
+  ];
+  const metrics = [{ name: 'cash', value: 500, unit: 'CAD', period: '2026-04-30', documentIndex: 0, quote: 'Cash and cash equivalents 500.' },
+    { name: 'net-income', value: -100, unit: 'CAD', period: '2026-04-30', documentIndex: 0, quote: 'Net loss (100)' }];
+  const complete = validateRiskAssessment(stock, set, { checks, metrics });
+  // Supply an independently validated loss metric for this synthetic example.
+  complete.gaps = complete.gaps.filter(gap => !gap.startsWith('net-income:'));
+  const result = riskForModel(complete);
+  expect(result.decisionReadiness).toBe('reviewed-uncertainty');
+  expect(result.materialRisks).toEqual(expect.arrayContaining(['loss-making', 'financing', 'going-concern']));
+  expect(result.rationale).toContain('Regulatorische Risiken: geprüfte Restunsicherheit');
+  expect(result.rationale).toContain('Finanzschulden: geprüfte Restunsicherheit');
+  expect(result.rationale).toContain('daraus folgt nicht, dass keine Finanzschulden bestehen');
+  expect(riskForModel({ ...complete, gaps: [...complete.gaps, 'cash: Kein Beleg'] }).decisionReadiness).toBeUndefined();
+  expect(riskForModel({ ...complete, gaps: complete.gaps.filter(gap => !gap.startsWith('debt-maturities:')) }).decisionReadiness).toBe('reviewed-uncertainty');
+  expect(riskForModel({ ...complete, gaps: complete.gaps.filter(gap => !gap.startsWith('regulatory:')),
+    checks: complete.checks.map(check => check.flag === 'regulatory' ? { ...check, finding: 'risk' as const } : check) }).decisionReadiness).toBe('reviewed-uncertainty');
+  expect(riskForModel({ ...complete, decisionBlocker: { flag: 'regulatory', reason: 'Eine konkret ben?tigte Genehmigung ist nicht gekl?rt.' } }).decisionReadiness).toBeUndefined();
+  const missing = validateRiskAssessment(stock, { ...set, documents: [{ ...set.documents[0], excerpt: excerpt.replace('Regulatory risks', 'Other issues').replace('governmental laws and regulations', 'operational issues') }] }, { checks, metrics });
+  expect(missing.checks.find(check => check.flag === 'regulatory')?.reviewedResidual).toBeUndefined();
+});
+
 it('recovers SpaceX financial and regulatory evidence from the exact cached SEC quarter', () => {
   const spacex = { ...position, id: 34, name: 'SpaceX', isin: 'US84615Q1031', symbol: 'SPCX' };
   const filing: RiskDocumentSet = { documents: [{ ...document, period: '2026-09-30', source: { title: 'SEC 10-Q 2026-09-30',

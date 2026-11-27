@@ -342,6 +342,7 @@ export function validateAnalysisResult(value: unknown, request: PortfolioAnalysi
 
 export class PortfolioAnalysisService {
   private readonly keyFile: string;
+  private readonly filingsKeyFile: string;
   private readonly resultFile: string;
   private running = false;
   private readonly researchCache: PortfolioResearchCache;
@@ -408,13 +409,24 @@ export class PortfolioAnalysisService {
     private readonly candidateMarketQuoteProvider?: CandidateMarketQuoteProvider,
     private readonly deterministicResearchProvider?: DeterministicResearchProvider) {
     this.keyFile = path.join(dataPath, 'portfolio-ai-key.bin');
+    this.filingsKeyFile = path.join(dataPath, 'portfolio-filings-key.bin');
     this.resultFile = path.join(dataPath, 'portfolio-ai-last-analysis.json');
     this.researchCache = new PortfolioResearchCache(path.join(dataPath, 'portfolio-ai-research-cache.json'));
     this.primaryRiskResearch = new PrimaryRiskResearch(path.join(dataPath, 'portfolio-primary-risk-documents.json'), requestFetch,
-      Date.now, new TradeRepublicContractDocumentStore(dataPath));
+      Date.now, new TradeRepublicContractDocumentStore(dataPath), () => {
+        if (!fs.existsSync(this.filingsKeyFile) || !safeStorage.isEncryptionAvailable()) return null;
+        try { return safeStorage.decryptString(fs.readFileSync(this.filingsKeyFile)); } catch { return null; }
+      });
     this.primaryRiskCache = new PrimaryRiskAssessmentCache(path.join(dataPath, 'portfolio-primary-risk-assessments.json'));
   }
-  status() { return { hasApiKey: fs.existsSync(this.keyFile), secureStorageAvailable: safeStorage.isEncryptionAvailable(), model: DEFAULT_ANALYSIS_MODEL }; }
+  status() { return { hasApiKey: fs.existsSync(this.keyFile), hasFilingsKey: fs.existsSync(this.filingsKeyFile), secureStorageAvailable: safeStorage.isEncryptionAvailable(), model: DEFAULT_ANALYSIS_MODEL }; }
+  saveFilingsKey(key: string): void {
+    if (typeof key !== 'string' || key.trim().length < 8 || key.trim().length > 500 || /\s/.test(key.trim())) throw new Error('Bitte einen gültigen FinancialFilings-API-Schlüssel eingeben.');
+    if (!safeStorage.isEncryptionAvailable()) throw new Error('Die sichere Schlüsselspeicherung ist nicht verfügbar.');
+    fs.mkdirSync(path.dirname(this.filingsKeyFile), { recursive: true });
+    fs.writeFileSync(this.filingsKeyFile, safeStorage.encryptString(key.trim()), { mode: 0o600 });
+  }
+  forgetFilingsKey(): void { if (fs.existsSync(this.filingsKeyFile)) fs.unlinkSync(this.filingsKeyFile); }
   saveKey(key: string): void {
     if (typeof key !== 'string' || !/^sk-[A-Za-z0-9_-]{10,500}$/.test(key.trim())) throw new Error('Bitte einen gültigen OpenAI-API-Schlüssel eingeben.');
     if (!safeStorage.isEncryptionAvailable()) throw new Error('Die sichere Schlüsselspeicherung ist auf diesem System nicht verfügbar.');
@@ -487,6 +499,23 @@ export class PortfolioAnalysisService {
         report.fundamentalRisks = Array.isArray(report.fundamentalRisks) ? readFundamentalRisks(report.fundamentalRisks.map(risk => ({ ...risk,
           sourceIndexes: Array.isArray(risk?.sources) ? risk.sources.map(source => report.sources.findIndex(s => s.url === source.url)) : [],
         })), report.sources) : [];
+        // Show newly extracted facts from the same verified evidence without changing a saved investment decision.
+        report.fundamentalRisks = report.fundamentalRisks.map(risk => {
+          try {
+            const position = saved.request.positions.find((item: import('./portfolioAnalysis').AnalysisPosition) => String(item.id) === risk.key);
+            if (!position || !risk.primaryDocuments?.length || risk.primaryDocumentsChanged || !risk.primaryDocumentsCheckedAt
+              || risk.primaryDocumentsFingerprintVersion !== 2) return risk;
+            const set = this.primaryRiskResearch.reuseCached(position, risk.primaryDocuments);
+            if (!set || primaryDocumentsFingerprint(set) !== risk.primaryDocumentsFingerprint) return risk;
+            const record = this.primaryRiskCache.get(position, set);
+            if (!record || new Date(record.checkedAt).toISOString() !== risk.primaryDocumentsCheckedAt
+              || !(record.documentNotes?.length || record.checks.some(check => check.notApplicable))) return risk;
+            const updated = riskForModel(record);
+            if (JSON.stringify(updated.materialRisks) !== JSON.stringify(risk.materialRisks)
+              || JSON.stringify(updated.decisionBlocker ?? null) !== JSON.stringify(risk.decisionBlocker ?? null)) return risk;
+            return { ...risk, rationale: updated.rationale, ...(updated.decisionReadiness ? { decisionReadiness: updated.decisionReadiness } : {}) };
+          } catch { return risk; }
+        });
       }
       if (report.allocationPlan && !validPortfolioAllocation(report.allocationPlan)) delete report.allocationPlan;
       const robust = report.allocationPlan?.optimization?.robust;

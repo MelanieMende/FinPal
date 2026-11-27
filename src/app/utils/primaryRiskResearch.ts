@@ -511,21 +511,21 @@ function secUrls(cik: string, value: SecSubmission): { url: string; title: strin
 
 export class PrimaryRiskResearch {
   private readonly cache = new Map<string, RiskDocument>();
-  private readonly freshnessChecks = new Map<string, { sources: string[]; checkedAt: number; newerReportAvailable: boolean; succeeded?: boolean; coverage?: 'sec-no-periodic-reports' | 'sec-prospectus-incomplete' }>();
+  private readonly freshnessChecks = new Map<string, { sources: string[]; checkedAt: number; newerReportAvailable: boolean; succeeded?: boolean; error?: string; method?: 'financialfilings'; discovered?: AnalysisSource[]; coverage?: 'sec-no-periodic-reports' | 'sec-prospectus-incomplete' | 'provider-incomplete' }>();
   private readonly freshnessInFlight = new Map<string, Promise<ReturnType<PrimaryRiskResearch['publicationStatus']>>>();
   private readonly submissions = new Map<string, { fetchedAt: number; filings: ReturnType<typeof secUrls> }>();
   private readonly cikCache = new Map<string, { fetchedAt: number; cik: string | null; prospectus?: string; newerProspectus?: { url: string; title: string } }>();
   private lufthansaReportIndexCache?: { fetchedAt: number; latestPeriod: string | null; verified: boolean };
   private tickerDirectory?: Promise<Array<{ cik_str: number; ticker: string; title: string }>>;
   constructor(private readonly file: string, private readonly requestFetch: typeof fetch = fetch, private readonly now = Date.now,
-    private readonly tradeRepublicContractDocuments?: TradeRepublicContractDocumentStore) {
+    private readonly tradeRepublicContractDocuments?: TradeRepublicContractDocumentStore, private readonly filingsKey?: () => string | null) {
     try {
       if (fs.statSync(file).size > 20_000_000) return;
       const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
       if (saved.version === 3 && Array.isArray(saved.freshnessChecks)) for (const entry of saved.freshnessChecks) {
         if (typeof entry?.isin === 'string' && Array.isArray(entry.sources) && entry.sources.every((source: unknown) => typeof source === 'string')
           && Number.isFinite(entry.checkedAt) && typeof entry.newerReportAvailable === 'boolean'
-          && (entry.succeeded === undefined || typeof entry.succeeded === 'boolean')) this.freshnessChecks.set(entry.isin, entry);
+          && entry.method !== 'manual-sedar' && (entry.succeeded === undefined || typeof entry.succeeded === 'boolean')) this.freshnessChecks.set(entry.isin, entry);
       }
       if (saved.version === 3 && Array.isArray(saved.documents)) for (const doc of saved.documents.slice(-120)) {
         if (doc && typeof doc.source?.url === 'string' && typeof doc.excerpt === 'string' && typeof doc.hash === 'string'
@@ -590,17 +590,21 @@ export class PrimaryRiskResearch {
   }
   publicationStatus(position: Pick<AnalysisPosition, 'isin' | 'type'>, sources: AnalysisSource[]) {
     const isin = position.isin.trim().toUpperCase();
-    const supported = isin === 'DE0008232125' || (position.type === 'Stock' && !!(SEC_CIK_BY_ISIN[isin] || this.cikCache.get(isin)?.cik));
+    const canadianApi = position.type === 'Stock' && /^CA[A-Z0-9]{10}$/.test(isin) && !!this.filingsKey?.();
+    const supported = canadianApi || isin === 'DE0008232125' || (position.type === 'Stock' && !!(SEC_CIK_BY_ISIN[isin] || this.cikCache.get(isin)?.cik));
     const urls = sources.map(source => source.url).sort();
     const saved = this.freshnessChecks.get(isin);
     const matching = saved && JSON.stringify(saved.sources) === JSON.stringify(urls) ? saved : undefined;
     const fresh = !!matching && matching.checkedAt <= this.now() && this.now() - matching.checkedAt < DAY;
     const succeeded = saved ? saved.succeeded !== false : null;
     return { freshnessSupported: supported, freshnessCheckedAt: saved ? new Date(saved.checkedAt).toISOString() : null,
+      ...(matching?.method ? { freshnessMethod: matching.method } : {}),
+      ...(matching?.discovered ? { discoveredReports: matching.discovered } : {}),
+      ...(matching?.succeeded === false && matching.error ? { freshnessError: matching.error } : {}),
       freshnessCheckSucceeded: succeeded, freshnessDue: !fresh,
-      ...(matching?.coverage === 'sec-no-periodic-reports' || matching?.coverage === 'sec-prospectus-incomplete' ? { freshnessCoverage: matching.coverage } : {}),
+      ...(matching?.coverage && matching.coverage !== 'provider-incomplete' ? { freshnessCoverage: matching.coverage } : {}),
       newerReportAvailable: !!matching && matching.newerReportAvailable,
-      publicationCheckVerified: !!matching && succeeded === true && fresh && !matching.coverage };
+      publicationCheckVerified: !!matching && succeeded === true && fresh && (!matching.coverage || matching.method === 'financialfilings' && matching.coverage === 'provider-incomplete') };
   }
   async checkPublicationFreshness(position: Pick<AnalysisPosition, 'isin' | 'type'>, sources: AnalysisSource[]) {
     const isin = position.isin.trim().toUpperCase();
@@ -616,6 +620,71 @@ export class PrimaryRiskResearch {
     const supported = this.publicationStatus(position, sources).freshnessSupported;
     if (!supported) throw new Error('Für dieses Asset ist noch keine automatische Prüfung auf neue Berichte verfügbar.');
     try {
+      if (position.type === 'Stock' && /^CA[A-Z0-9]{10}$/.test(isin) && this.filingsKey?.()) {
+        const key = this.filingsKey();
+        const known = new Set(sources.map(source => source.url));
+        const rows: any[] = [];
+        let complete = false;
+        let expectedCount: number | undefined;
+        let lastDate = Infinity;
+        for (let page = 1; page <= 20; page++) {
+          const url = `https://api.financialreports.eu/filings/?company_isin=${encodeURIComponent(isin)}&page_size=100&view=full&ordering=-release_datetime&page=${page}`;
+          const response = await this.requestFetch(url, { headers: { 'X-API-Key': key!, Accept: 'application/json' }, signal: AbortSignal.timeout(15000), redirect: 'error' });
+          if (!response.ok) throw new Error(`FinancialFilings-Abfrage fehlgeschlagen (HTTP ${response.status}).`);
+          const payload = JSON.parse((await readResponseBuffer(response, 2_000_000)).toString('utf8'));
+          const batch: any[] = Array.isArray(payload) ? payload : payload?.results;
+          if (!Array.isArray(batch) || !batch.length || (!Array.isArray(payload) && (!Number.isInteger(payload.count) || (expectedCount !== undefined && payload.count !== expectedCount))))
+            throw new Error('Das Einreichungsverzeichnis ist leer, unvollständig oder während der Prüfung geändert worden.');
+          if (!Array.isArray(payload)) expectedCount = payload.count;
+          for (const row of batch) {
+            const date = Date.parse(row?.release_datetime);
+            if (!Number.isFinite(date) || date > lastDate) throw new Error('Die Reihenfolge der Einreichungen ist unvollständig oder ungültig.');
+            lastDate = date;
+          }
+          rows.push(...batch);
+          if (!Array.isArray(payload) && (rows.length > expectedCount! || (!payload.next && rows.length !== expectedCount)))
+            throw new Error('Das Einreichungsverzeichnis ist unvollständig oder während der Prüfung geändert worden.');
+          const present = new Set(rows.map(row => row.document_url ?? row.document));
+          if ([...known].every(url => present.has(url))) {
+            const oldestLoaded = Math.min(...rows.filter(row => known.has(row.document_url ?? row.document)).map(row => Date.parse(row.release_datetime)));
+            if (lastDate < oldestLoaded || (!Array.isArray(payload) && !payload.next)) { complete = true; break; }
+          }
+          if (Array.isArray(payload) || !payload.next) { complete = !Array.isArray(payload) && rows.length === expectedCount; break; }
+        }
+        if (!complete) throw new Error('Das Einreichungsverzeichnis ist unvollständig; nicht alle geladenen Berichte konnten abgeglichen werden.');
+        const valid = rows.filter(row => Array.isArray(row?.company?.isins) && row.company.isins.some((value: unknown) => typeof value === 'string' && value.toUpperCase() === isin)
+          && typeof row.title === 'string' && typeof (row.document_url ?? row.document) === 'string' && Number.isFinite(Date.parse(row.release_datetime)));
+        if (valid.length !== rows.length || !valid.some(row => known.has(row.document_url ?? row.document)))
+          throw new Error('Die Einreichungen oder geladenen Berichte konnten dem Wertpapier nicht eindeutig zugeordnet werden.');
+        const kind = (row: any): string | null => {
+          const title = String(row.title ?? '').toLowerCase();
+          const code = String(row.filing_type?.code ?? '').toUpperCase();
+          if (/certification|certificate|\b52-109\b/.test(title)) return null;
+          if (code === 'MDA' || /\bmd&a\b|management.?s? discussion/.test(title))
+            return /annual|year.end/.test(title) ? 'annual-mda' : /interim|quarter|half.year/.test(title) ? 'interim-mda' : null;
+          if (code === '10-K' || /annual financial statements/.test(title)) return 'annual-statements';
+          if (code === 'IR' || /interim financial statements/.test(title)) return 'interim-statements';
+          return null;
+        };
+        const loaded = valid.filter(row => known.has(row.document_url ?? row.document));
+        const latestLoaded = Math.max(...loaded.map(row => Date.parse(row.release_datetime)));
+        const discovered: AnalysisSource[] = valid.filter(row => {
+          if (known.has(row.document_url ?? row.document)) return false;
+          const type = kind(row);
+          if (!type) return false;
+          const sameKind = loaded.filter(item => kind(item) === type);
+          if (!sameKind.length) return Date.parse(row.release_datetime) > latestLoaded;
+          const periods = sameKind.map(item => item.period_ending_date).filter((value: unknown) => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)).sort();
+          const period = typeof row.period_ending_date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(row.period_ending_date) ? row.period_ending_date : null;
+          if (period && periods.length && period !== periods[periods.length - 1]) return period > periods[periods.length - 1];
+          return Date.parse(row.release_datetime) > Math.max(...sameKind.map(item => Date.parse(item.release_datetime)));
+        })
+          .flatMap(row => { try { const parsed = new URL(row.document_url ?? row.document); return parsed.protocol === 'https:' && parsed.hostname === 'cdn.financialreports.eu' && !parsed.username && !parsed.password ? [{ title: row.title, url: parsed.href }] : []; } catch { return []; } });
+        this.freshnessChecks.set(isin, { sources: sources.map(source => source.url).sort(), checkedAt: this.now(), newerReportAvailable: discovered.length > 0,
+          succeeded: true, method: 'financialfilings', discovered });
+        this.save();
+        return this.publicationStatus(position, sources);
+      }
       let newerReportAvailable: boolean;
       let coverage: 'sec-prospectus-incomplete' | undefined;
       if (isin === 'DE0008232125') {
@@ -685,7 +754,9 @@ export class PrimaryRiskResearch {
       const prior = this.freshnessChecks.get(isin);
       const currentSources = sources.map(source => source.url).sort();
       const previousFinding = prior && JSON.stringify(prior.sources) === JSON.stringify(currentSources) && prior.newerReportAvailable;
-      this.freshnessChecks.set(isin, { sources: currentSources, checkedAt: this.now(), newerReportAvailable: !!previousFinding, succeeded: false });
+      const message = error instanceof Error && /^(FinancialFilings-Abfrage fehlgeschlagen \(HTTP \d+\)|Das Einreichungsverzeichnis|Die Einreichungen|Die Reihenfolge)/.test(error.message)
+        ? error.message.slice(0, 300) : 'Der Abruf oder die Verarbeitung der Berichtsdaten ist fehlgeschlagen.';
+      this.freshnessChecks.set(isin, { sources: currentSources, checkedAt: this.now(), newerReportAvailable: !!previousFinding, succeeded: false, error: message });
       try { this.save(); } catch { /* The failed attempt remains visible during this run. */ }
       throw error;
     }

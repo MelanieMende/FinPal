@@ -85,6 +85,17 @@ let dir: string;
 beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-ai-test-')); jest.clearAllMocks(); });
 afterEach(() => { fs.rmSync(dir, { recursive: true, force: true }); });
 
+it('stores the FinancialFilings key encrypted separately and removes it', () => {
+  const service = new PortfolioAnalysisService(dir, jest.fn());
+  service.saveFilingsKey('filings-secret-test');
+  const keyFile = path.join(dir, 'portfolio-filings-key.bin');
+  expect(service.status().hasFilingsKey).toBe(true);
+  expect(fs.readFileSync(keyFile, 'utf8')).not.toContain('filings-secret-test');
+  expect(safeStorage.encryptString).toHaveBeenCalledWith('filings-secret-test');
+  service.forgetFilingsKey();
+  expect(service.status().hasFilingsKey).toBe(false);
+});
+
 function seedSavedAnalysis(input: PortfolioAnalysisRequest) {
   const savedReport: import('./portfolioAnalysis').PortfolioAnalysisResult = {
     mode: 'ai', summary: 'Gespeicherte Analyse', infos: [], warnings: [], sources: [],

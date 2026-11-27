@@ -4,6 +4,65 @@ import os from 'node:os';
 import path from 'node:path';
 import type { AnalysisPosition } from './portfolioAnalysis';
 import { PrimaryRiskResearch, riskExcerpt } from './primaryRiskResearch';
+
+it('checks Canadian filings by exact ISIN and exposes possible newer reports without claiming complete coverage', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-filings-'));
+  try {
+    const isin = 'CA03880B1040';
+    const old = { title: 'Interim financial statements', url: 'https://cdn.financialreports.eu/old.pdf' };
+    const row = (url: string, date: string, title: string) => ({ title, document_url: url, release_datetime: date, company: { isins: [isin] }, filing_type: { code: 'IR' } });
+    const fetcher = jest.fn().mockResolvedValueOnce(new Response(JSON.stringify({ count: 2, next: 'page 2', results: [
+      row('https://cdn.financialreports.eu/new.pdf', '2026-10-01T00:00:00Z', 'Interim financial statements'),
+    ] }))).mockResolvedValueOnce(new Response(JSON.stringify({ count: 2, next: null, results: [row(old.url, '2026-06-10T00:00:00Z', old.title)] })));
+    const research = new PrimaryRiskResearch(path.join(dir, 'documents.json'), fetcher, Date.now, undefined, () => 'test-key');
+    const status = await research.checkPublicationFreshness({ isin, type: 'Stock' }, [old]);
+    expect(status).toMatchObject({ freshnessMethod: 'financialfilings', publicationCheckVerified: true, newerReportAvailable: true,
+      discoveredReports: [{ title: 'Interim financial statements', url: 'https://cdn.financialreports.eu/new.pdf' }] });
+    expect(fetcher.mock.calls[0][0]).toContain('company_isin=CA03880B1040');
+    expect(fetcher.mock.calls[0][1].headers['X-API-Key']).toBe('test-key');
+    expect(fetcher.mock.calls[1][0]).toContain('page=2');
+    fetcher.mockResolvedValueOnce(new Response(JSON.stringify({ count: 2, next: null, results: [row('https://cdn.financialreports.eu/other.pdf', '2026-06-10', old.title)] })));
+    await expect(research.checkPublicationFreshness({ isin, type: 'Stock' }, [old])).rejects.toThrow('unvollständig');
+    expect(research.publicationStatus({ isin, type: 'Stock' }, [old]).publicationCheckVerified).toBe(false);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+it('does not classify older Canadian reports or interim certifications as newer', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-filings-periods-'));
+  try {
+    const isin = 'CA03880B1040';
+    const old = { title: 'Interim financial statements', url: 'https://cdn.financialreports.eu/current.pdf' };
+    const row = (title: string, url: string, date: string, period: string | null, code: string) => ({ title, document_url: url, release_datetime: date, period_ending_date: period, company: { isins: [isin] }, filing_type: { code } });
+    const fetcher = jest.fn().mockResolvedValue(new Response(JSON.stringify({ count: 3, next: null, results: [
+      row('Certification of interim filings', 'https://cdn.financialreports.eu/cert.pdf', '2026-06-11', null, 'IR'),
+      row(old.title, old.url, '2026-06-10', '2026-04-30', 'IR'),
+      row('Interim financial statements', 'https://cdn.financialreports.eu/older.pdf', '2026-03-20', '2026-01-31', 'IR'),
+    ] })));
+    const research = new PrimaryRiskResearch(path.join(dir, 'documents.json'), fetcher, Date.now, undefined, () => 'test-key');
+    const status = await research.checkPublicationFreshness({ isin, type: 'Stock' }, [old]);
+    expect(status).toMatchObject({ newerReportAvailable: false, discoveredReports: [], publicationCheckVerified: true });
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+it('accepts a matching successful FinancialFilings check, including a legacy cached check, for 24 hours', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-filings-cached-'));
+  try {
+    const file = path.join(dir, 'documents.json');
+    const now = Date.now();
+    const position = { isin: 'CA03880B1040', type: 'Stock' as const };
+    const source = { title: 'Bericht', url: 'https://example.com/report.pdf' };
+    fs.writeFileSync(file, JSON.stringify({ version: 3, documents: [], freshnessChecks: [{ isin: position.isin, sources: [source.url],
+      checkedAt: now, newerReportAvailable: false, succeeded: true, method: 'financialfilings', coverage: 'provider-incomplete' }] }));
+    const research = new PrimaryRiskResearch(file, jest.fn(), () => now + 1, undefined, () => 'test-key');
+    expect(research.publicationStatus(position, [source])).toMatchObject({ publicationCheckVerified: true, newerReportAvailable: false });
+    expect(research.publicationStatus(position, [{ ...source, url: source.url + '?new' }]).publicationCheckVerified).toBe(false);
+    expect(new PrimaryRiskResearch(file, jest.fn(), () => now + 86400000, undefined, () => 'test-key').publicationStatus(position, [source]).publicationCheckVerified).toBe(false);
+    fs.writeFileSync(file, JSON.stringify({ version: 3, documents: [], freshnessChecks: [{ isin: position.isin, sources: [source.url],
+      checkedAt: now, newerReportAvailable: false, succeeded: true, method: 'manual-sedar' }] }));
+    expect(new PrimaryRiskResearch(file, jest.fn(), () => now + 1, undefined, () => 'test-key').publicationStatus(position, [source]).publicationCheckVerified).toBe(false);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 import { knownResearchSources } from './portfolioResearch';
 import { TradeRepublicContractDocumentStore } from './tradeRepublicContractDocuments';
 

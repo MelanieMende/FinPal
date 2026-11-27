@@ -42,6 +42,22 @@ async function checkInChromium(html, output) {
           const root = document.querySelector('[data-testid="portfolio-analysis"]') || document.querySelector('[data-testid="ai-connection-settings"]') || document.querySelector('[data-testid="asset-overlay-layout"]');
           const fields = [...root.querySelectorAll('input,select,textarea,button')];
           const errors = [];
+          for (const reports of root.querySelectorAll('section[aria-label="Primärberichte"]')) {
+            const summary = reports.querySelector('summary');
+            for (const button of reports.querySelectorAll(':scope > div:first-child > div > button')) {
+              if (summary && button.getBoundingClientRect().top < summary.getBoundingClientRect().bottom - 1)
+                errors.push('Primärbericht-Buttons stehen nicht unter dem Statustext');
+            }
+          }
+          for (const risk of root.querySelectorAll('section[aria-label="Unternehmens- und Produktrisiken"]')) {
+            const action = risk.querySelector(':scope > div:last-child > button');
+            if (!action) { errors.push('Risikoprüfung-Button fehlt am unteren Rand'); continue; }
+            const previous = action.parentElement.previousElementSibling;
+            if (previous && action.getBoundingClientRect().top < previous.getBoundingClientRect().bottom - 1)
+              errors.push('Risikoprüfung-Button steht nicht unter dem Inhalt');
+            if (action.getBoundingClientRect().left > risk.getBoundingClientRect().left + 20)
+              errors.push('Risikoprüfung-Button steht nicht links');
+          }
           if (main.getBoundingClientRect().right > innerWidth + 1) errors.push('Container exceeds viewport');
           if (root.getBoundingClientRect().right > main.getBoundingClientRect().right + 1) errors.push('Form exceeds parent');
           if (main.scrollWidth > main.clientWidth + 1) errors.push('Form exceeds its container: ' + main.scrollWidth + '/' + main.clientWidth);
@@ -136,12 +152,21 @@ async function checkInChromium(html, output) {
           const suffix = zoom === 1 ? '' : '-125';
           const screenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'analysis-900' + suffix + '.png'), screenshot.toPNG());
+          await scrollToSection('section[aria-label="Primärberichte"]:last-child');
+          const primaryScreenshot = await window.webContents.capturePage();
+          fs.writeFileSync(path.join(output, 'primary-documents-900' + suffix + '.png'), primaryScreenshot.toPNG());
           await scrollToSection('[data-testid="decision-profile-fields"]');
           const decisionScreenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'decision-profile-900' + suffix + '.png'), decisionScreenshot.toPNG());
           await scrollToSection('[data-testid="investor-facts-1"]');
           const assetScreenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'asset-fields-900' + suffix + '.png'), assetScreenshot.toPNG());
+          await scrollToSection('section[aria-label="Unternehmens- und Produktrisiken"]');
+          const riskScreenshot = await window.webContents.capturePage();
+          fs.writeFileSync(path.join(output, 'risk-review-900' + suffix + '.png'), riskScreenshot.toPNG());
+          await scrollToSection('section[aria-label="Unternehmens- und Produktrisiken"] > div:last-child > button');
+          const riskActionScreenshot = await window.webContents.capturePage();
+          fs.writeFileSync(path.join(output, 'risk-action-900' + suffix + '.png'), riskActionScreenshot.toPNG());
           await scrollToSection('[aria-label="Berechnete Zielgewichtung"]');
           const allocationScreenshot = await window.webContents.capturePage();
           fs.writeFileSync(path.join(output, 'allocation-900' + suffix + '.png'), allocationScreenshot.toPNG());
@@ -203,7 +228,7 @@ async function buildAndCheck() {
     import { setupStore } from './src/app/store';
     import PortfolioAnalysis from './src/app/routes/routes/AnalysisRoute/components/PortfolioAnalysis';
     import { AIConnectionSettings } from './src/app/routes/routes/AnalysisRoute/components/PortfolioAnalysis';
-    import { AssetResearchIndicator } from './src/app/routes/routes/AnalysisRoute/components/PortfolioAnalysis';
+    import { AssetResearchIndicator, PrimaryDocumentsIndicator } from './src/app/routes/routes/AnalysisRoute/components/PortfolioAnalysis';
     import CreateAndEditAssetOverlay from './src/app/routes/routes/AssetsRoute/components/CreateAndEditAssetOverlay';
     import * as appStateReducer from './src/app/store/appState/appState.reducer';
     import * as assetCreationReducer from './src/app/store/assetCreation/assetCreation.reducer';
@@ -260,12 +285,15 @@ async function buildAndCheck() {
         appState: { ...state.appState, database: 'layout-fixture' },
         portfolioAnalysis: { ...state.portfolioAnalysis, provider, result } });
       const loaded = Date.now() - 3600000;
-      return renderToStaticMarkup(<Provider store={store}><PortfolioAnalysis standalone priceUpdatedAt={null} />
+      return renderToStaticMarkup(<Provider store={store}><div data-testid="portfolio-analysis"><PortfolioAnalysis standalone priceUpdatedAt={null} />
         <section aria-label="Webrecherche Layoutprüfung" className="min-w-0 space-y-3 rounded-lg border border-white/10 p-4">
           <AssetResearchIndicator status={{ assetId: 1, fetchedAt: new Date(loaded).toISOString(), expiresAt: new Date(loaded + 86400000).toISOString() }} now={Date.now()} />
           <AssetResearchIndicator status={{ assetId: 2, fetchedAt: null, expiresAt: null }} now={Date.now()} />
         </section>
-      </Provider>);
+        <PrimaryDocumentsIndicator risk={{ key: '1', status: 'unknown', materialRisks: [], rationale: '', sources: [] }} now={Date.now()}
+          status={{ assetId: 1, loadedAt: new Date().toISOString(), needsRefresh: true, sources: [{ title: 'Bericht', url: 'https://example.com/report.pdf' }], freshnessSupported: true, publicationCheckVerified: false }}
+          openSource={() => {}} onReload={() => {}} onCheck={() => {}} onManualCheck={() => {}} disabled={false} checking={false} loading={false} forceReload={false} />
+      </div></Provider>);
     }
     export function renderSettings(provider) {
       const chatGpt = { connected: true, activeClientId: 'layout-account', accounts: [{ clientId: 'layout-account', label: 'Very Long Connected Account Name For Layout Validation', connected: true }] };

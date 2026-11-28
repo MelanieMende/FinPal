@@ -20,6 +20,7 @@ import { useInvestorFacts } from '../../../../utils/useInvestorFacts';
 import { buildInvestorContext } from '../../../../utils/investorFacts';
 import { allocationCandidateKey } from '../../../../utils/portfolioAllocation';
 import type { FundamentalRiskAssessment } from '../../../../utils/robustForecastModel';
+import { displayResearchSourceTitle } from '../../../../utils/researchSourceLabel';
 
 export const ANALYSIS_PROFILE_KEY = 'finpal.portfolioAnalysis.profile.v1';
 export const ANALYSIS_REASONING_KEY = 'finpal.portfolioAnalysis.reasoning.v1';
@@ -127,7 +128,7 @@ export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onRel
         <Icon icon={current && !excerptNeedsRefresh && !newReportAwaitingReview ? 'tick-circle' : 'refresh'} size={14} aria-hidden="true" />
         <span className="min-w-0 break-words">Primärberichte: {loading && forceReload ? 'wird ausgeführt'
           : excerptNeedsRefresh ? 'neuer Auszug erforderlich'
-            : reportVersionAvailable ? status?.freshnessMethod === 'financialfilings' ? 'möglicherweise neuere Berichte gefunden' : 'neuer Bericht verfügbar · neu laden'
+            : reportVersionAvailable ? status?.freshnessMethod === 'financialfilings' ? 'möglicherweise neuere Berichte gefunden' : status?.freshnessMethod === 'ishares' ? 'neue oder geänderte Unterlagen · neu laden' : 'neuer Bericht verfügbar · neu laden'
               : newReportAwaitingReview ? 'Berichte geladen · Risikoprüfung ausstehend'
                 : noPeriodicReports || prospectusIncomplete ? 'SEC-Verzeichnis geprüft · Prospektaktualität offen'
                 : publicationCheckUnverified ? 'Aktualität prüfen'
@@ -145,14 +146,14 @@ export function PrimaryDocumentsIndicator({ risk, now, status, openSource, onRel
     </div>
     </div>
       <div id={`primary-documents-details-${risk.key}`} hidden={!expanded} className="mt-2 min-w-0 space-y-2 border-t border-white/10 pt-2">
-        {status?.freshnessMethod === 'financialfilings' && <div className="space-y-1 text-xs text-amber-200">
-          <p className="m-0">Berichtsverzeichnis von FinancialFilings abgefragt.</p>
+        {(status?.freshnessMethod === 'financialfilings' || status?.freshnessMethod === 'ishares') && <div className="space-y-1 text-xs text-amber-200">
+          <p className="m-0">{status.freshnessMethod === 'ishares' ? 'iShares-Dokumentenverzeichnis und geladene PDFs abgeglichen.' : 'Berichtsverzeichnis von FinancialFilings abgefragt.'}</p>
           {status.discoveredReports?.map(source => <p className="m-0 break-all" key={source.url}><a href={source.url} onClick={event => openSource(event, source.url)} target="_blank" rel="noopener noreferrer" className="text-indigo-300 underline">{source.title}</a></p>)}
         </div>}
         {newReportAwaitingReview
           ? <p className="m-0 text-xs text-amber-200">Berichte wurden neu geladen. Die inhaltliche Risikoprüfung steht noch aus; bitte „Risiken neu prüfen“ wählen.</p>
           : reportVersionAvailable
-            ? <p className="m-0 text-xs text-amber-200">{status?.freshnessMethod === 'financialfilings' ? 'Der Anbieter meldet möglicherweise neuere Berichte. Die Treffer müssen geprüft werden und werden noch nicht automatisch übernommen.' : 'Ein neuer Bericht ist verfügbar. Bitte die Berichte neu laden und danach die Risiken erneut prüfen.'}</p>
+            ? <p className="m-0 text-xs text-amber-200">{status?.freshnessMethod === 'financialfilings' ? 'Der Anbieter meldet möglicherweise neuere Berichte. Die Treffer müssen geprüft werden und werden noch nicht automatisch übernommen.' : status?.freshnessMethod === 'ishares' ? 'iShares führt noch nicht geladene oder geänderte Unterlagen. Bitte die Berichte neu laden und danach die Risiken erneut prüfen.' : 'Ein neuer Bericht ist verfügbar. Bitte die Berichte neu laden und danach die Risiken erneut prüfen.'}</p>
             : prospectusIncomplete
               ? <p className="m-0 text-xs text-amber-200">Neuere SEC-Veröffentlichungen konnten dem Wertpapier nicht eindeutig zugeordnet werden. Die Aktualität der geladenen Prospekte bleibt offen.</p>
             : noPeriodicReports
@@ -989,6 +990,8 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                 key: String(rec.assetId), status: 'unknown' as const, materialRisks: [],
                 rationale: 'Keine gespeicherte Risikoprüfung verfügbar.', sources: [],
               };
+              // Local reports written by earlier versions stored the research disclaimer as an asset risk.
+              const researchNotice = result.mode === 'local' && rec.risk === 'Online-Suchtreffer wurden ohne semantische Auswertung gesammelt. Unternehmensmeldungen, Fondsunterlagen, Steuern und Spreads müssen vor einer Handlung inhaltlich geprüft werden.' ? rec.risk : null;
               return <article key={rec.assetId} className="min-w-0 rounded-lg border border-white/10 p-4">
               <div className="flex justify-between items-start gap-3"><span className="font-bold text-sm text-white">{assetName}</span>
                 {savedRecommendation ? <AssetRecommendationStatus recommendation={rec} assetName={assetName} />
@@ -1043,14 +1046,15 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
                       <Icon icon="chevron-right" size={12} aria-hidden="true" className="ml-auto shrink-0 text-gray-500 transition-transform group-open:rotate-90" />
                     </summary>
                     <div className="mt-2 min-w-0 space-y-2 border-t border-white/10 pt-2">
+                      {researchNotice && <p className="m-0 text-xs text-gray-400">Hinweis: {researchNotice}</p>}
                       {refreshingResearch
                         ? <div role="status" data-testid={`asset-research-loading-${rec.assetId}`} className="mb-0 flex items-center gap-2 text-xs text-sky-200"><Spinner size={14} /> {assetProgress?.message}</div>
                         : result.mode === 'local'
                           ? <p className="my-1 text-xs text-gray-400" data-testid={`local-market-data-status-${rec.assetId}`}>{localForecastKeys.has(String(rec.assetId)) ? 'Lokaler Forecast und deterministisch gefundene Onlinequellen vorhanden.' : 'Kein vollständiger lokaler Forecast verfügbar; Onlinequellen werden ohne inhaltliche Bewertung angezeigt.'}</p>
                           : <AssetResearchIndicator status={research} now={now} />}
                       {!refreshingResearch && reusable && research?.text && <p className="m-0 whitespace-pre-wrap break-words text-xs text-gray-300">{research.text}</p>}
-                      {!refreshingResearch && reusable && !!research?.sources?.length && <div className="flex flex-wrap gap-2" aria-label={`Online-Suchquellen für ${assetName}`}>
-                        {research.sources.map(source => <a key={source.url} href={source.url} onClick={e => openSource(e, source.url)} target="_blank" rel="noopener noreferrer" className="text-xs text-indigo-300 underline">{source.title}</a>)}
+                      {!refreshingResearch && reusable && !!research?.sources?.length && <div className="flex min-w-0 flex-col items-start gap-2" aria-label={`Online-Suchquellen für ${assetName}`}>
+                        {research.sources.map(source => <a key={source.url} href={source.url} onClick={e => openSource(e, source.url)} target="_blank" rel="noopener noreferrer" className="max-w-full break-all text-xs text-indigo-300 underline">{displayResearchSourceTitle(source)}</a>)}
                       </div>}
                       {!refreshingResearch && reusable && !!research?.sources?.length && <p className="m-0 text-xs text-gray-400">Links können automatisch erzeugt sein; ihre Erreichbarkeit und inhaltliche Eignung wurden nicht geprüft.</p>}
                       {!refreshingResearch && reusable && !research?.sources?.length && <p className="m-0 text-xs text-gray-400">Bei dieser Suche wurden keine verwendbaren Quellen gefunden.</p>}
@@ -1098,7 +1102,7 @@ export default function PortfolioAnalysis({ priceUpdatedAt, standalone = false }
               {rec.updatedAt && <p className="text-xs text-gray-400">Einzelanalyse vom {formatSyncTime(rec.updatedAt)} · {rec.model}. Portfolio-Zusammenfassung und übrige Empfehlungen stammen aus der Gesamtanalyse.</p>}
               <EltifValuation position={positions.find(position => position.id === rec.assetId)} evidence={rec.navEvidence} />
               <AnalysisMessages infos={rec.infos} warnings={rec.warnings} />
-              {savedRecommendation && <p className="text-xs text-amber-200 whitespace-pre-wrap">Risiken: {rec.risk}</p>}
+              {savedRecommendation && !researchNotice && <p className="text-xs text-amber-200 whitespace-pre-wrap">Risiken: {rec.risk}</p>}
               {rec.tradeCheck && <div className="rounded border border-white/10 bg-slate-950/30 p-3 text-xs text-gray-300 space-y-2" aria-label="Kosten- und Steuerprüfung">
                 <p className="m-0"><span className="font-bold text-white">Kosten:</span> {rec.tradeCheck.costs}</p>
                 <p className="m-0"><span className="font-bold text-white">Steuern:</span> {rec.tradeCheck.taxes}</p>

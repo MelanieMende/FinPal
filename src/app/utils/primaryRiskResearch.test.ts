@@ -2,8 +2,59 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import type { AnalysisPosition } from './portfolioAnalysis';
 import { PrimaryRiskResearch, riskExcerpt } from './primaryRiskResearch';
+
+it('checks an iShares directory, loads the matching fund documents and detects changes at stable URLs', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-ishares-'));
+  const file = path.join(dir, 'documents.json');
+  const isin = 'IE00B3WJKG14';
+  const position = { id: 19, name: 'S&P 500 Information Technology', symbol: 'QDVE', isin, type: 'ETF' } as AnalysisPosition;
+  const page = 'https://www.ishares.com/de/privatanleger/de/produkte/280510/example';
+  const entry = (label: string, material: string, url: string) => ({ label, material, url });
+  const directory = [entry('PRIIP KID', 'EUPRIIP', `documents/kiid/fund-${isin.toLowerCase()}-de.pdf`),
+    entry('Verkaufsprospekt', 'Prospectus', 'documents/prospectus/ishares-v-plc-prospectus-de-de.pdf'),
+    entry('iShares V plc - Annual Report', 'Annual Report', 'documents/annual-report/ishares-v-plc-annual-report-de-at-de-30-nov-25.pdf'),
+    entry('iShares V plc - Annual Report', 'Annual Report', 'documents/annual-report/ishares-v-plc-annual-report-de-at-de-30-nov-24.pdf')];
+  const html = `<html>${isin} ${directory.map(item => JSON.stringify(item).replace(/"/g, '&quot;')).join(' ')}</html>`;
+  const pageSource = { title: 'Produktseite', url: page };
+  const pdf = `%PDF-1.4 iShares V plc S&P 500 Information Technology ${isin} Risiken Risiko Kursrisiko Anlageziel`;
+  let changed = false;
+  let broken = false;
+  let wrongIsin = false;
+  const fetcher = jest.fn(async (input: RequestInfo | URL) => {
+    const url = String(input);
+    if (url === page) return new Response(broken ? '<html>incomplete</html>' : wrongIsin ? html.split(isin.toLowerCase()).join('ie00b3wjkg15') : html, { headers: { 'content-type': 'text/html' } });
+    return new Response(pdf + (changed && url.includes('/kiid/') ? ' changed' : ''), { headers: { 'content-type': 'application/pdf' } });
+  });
+  try {
+    const now = Date.now();
+    fs.writeFileSync(file, JSON.stringify({ version: 3, documents: [{ source: pageSource, excerpt: `Risk ${isin}`, hash: createHash('sha256').update(html).digest('hex'), fetchedAt: now, period: null, identity: isin },
+      { source: { title: 'Altes KID', url: 'https://www.ishares.com/ch/literature/kiid/old.pdf' }, excerpt: `Risk ${isin}`,
+        hash: createHash('sha256').update(pdf).digest('hex'), fetchedAt: now, period: null, identity: isin }], freshnessChecks: [] }));
+    let research = new PrimaryRiskResearch(file, fetcher as typeof fetch, () => now);
+    const first = await research.checkPublicationFreshness(position, [pageSource]);
+    expect(first).toMatchObject({ freshnessSupported: true, freshnessMethod: 'ishares', newerReportAvailable: true, publicationCheckVerified: true });
+    expect(first.discoveredReports).toHaveLength(3);
+    expect(first.discoveredReports?.some(source => source.url.includes('30-nov-24'))).toBe(false);
+    const loaded = await research.collect(position, undefined, [pageSource], true);
+    const sources = loaded.documents.map(document => document.source);
+    expect(sources).toHaveLength(4);
+    research = new PrimaryRiskResearch(file, fetcher as typeof fetch, () => now);
+    expect(await research.checkPublicationFreshness(position, sources)).toMatchObject({ publicationCheckVerified: true, newerReportAvailable: false });
+    expect(research.cachedSources(position, sources).map(source => source.url).sort()).toEqual(sources.map(source => source.url).sort());
+    changed = true;
+    expect(await research.checkPublicationFreshness(position, sources)).toMatchObject({ newerReportAvailable: true,
+      discoveredReports: [expect.objectContaining({ url: expect.stringContaining('/kiid/') })] });
+    wrongIsin = true;
+    await expect(research.checkPublicationFreshness(position, sources)).rejects.toThrow('unvollständig');
+    wrongIsin = false;
+    broken = true;
+    await expect(research.checkPublicationFreshness(position, sources)).rejects.toThrow();
+    expect(research.publicationStatus(position, sources)).toMatchObject({ freshnessCheckSucceeded: false, publicationCheckVerified: false, newerReportAvailable: true });
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
 
 it('checks Canadian filings by exact ISIN and exposes possible newer reports without claiming complete coverage', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-filings-'));

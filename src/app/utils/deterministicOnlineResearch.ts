@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { ResearchAsset, AnalysisSource } from './portfolioAnalysis';
 import { knownResearchSources } from './portfolioResearch';
+import { researchLinkLabel, displayResearchSourceTitle } from './researchSourceLabel';
 
 type SearchNews = { title: string; publisher?: string; link: string; providerPublishTime?: Date | string | number; relatedTickers?: string[] };
 export interface OnlineSearchClient {
@@ -73,7 +74,8 @@ export function createDeterministicOnlineResearchProvider(client: OnlineSearchCl
     // fresh discovery cache when a newly required primary source is added.
     const key = JSON.stringify({ id: position.id, identity, knownSources: knownResearchSources(position) });
     const cached = cache.get(key);
-    if (!options.forceRefresh && cached && cached.searchStatus === 'completed' && cached.fetchedAt <= now() && now() - cached.fetchedAt < ttl) return { ...cached, cacheStatus: 'reused' };
+    if (!options.forceRefresh && cached && cached.searchStatus === 'completed' && cached.fetchedAt <= now() && now() - cached.fetchedAt < ttl)
+      return { ...cached, sources: cached.sources.map(source => ({ ...source, title: displayResearchSourceTitle(source) })), cacheStatus: 'reused' };
     let result: { news?: SearchNews[] } = {};
     let fallbackQuery: string | undefined;
     let searchStatus: DeterministicResearchResult['searchStatus'] = 'completed';
@@ -120,7 +122,7 @@ export function createDeterministicOnlineResearchProvider(client: OnlineSearchCl
       const url = safeUrl(value);
       if (url && !sources.some(source => source.url === url)) sources.push({ title: safeText(title, new URL(url).hostname), url });
     };
-    for (const value of knownResearchSources(position)) add(`Bekannte Primärquelle für ${position.name}`, value);
+    for (const value of knownResearchSources(position)) add(researchLinkLabel(value), value);
     if (position.symbol.trim()) {
       const symbol = encodeURIComponent(position.symbol.trim());
       add(`Yahoo Finance: Historische Kurse für ${position.symbol} (Link ungeprüft)`, `https://finance.yahoo.com/quote/${symbol}/history/`);

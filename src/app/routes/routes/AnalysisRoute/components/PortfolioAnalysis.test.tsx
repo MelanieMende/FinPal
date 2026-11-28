@@ -83,6 +83,27 @@ it('shows cached search results for a held asset without a saved recommendation'
   expect(within(section).getByRole('link', { name: 'Gefundene Meldung' })).toHaveAttribute('href', 'https://example.com/news');
 });
 
+it('distinguishes old cached research links without calling them primary sources', async () => {
+  const report = await window.API.analyzePortfolio!({} as never);
+  window.API.getPortfolioResearchStatus = jest.fn().mockResolvedValue([{ assetId: 1,
+    fetchedAt: new Date(Date.now() - 1000).toISOString(), expiresAt: new Date(Date.now() + 60000).toISOString(),
+    text: 'Keine Nachrichtentreffer', sources: [
+      { title: 'Bekannte Primärquelle für Stock Asset', url: 'https://example.com/' },
+      { title: 'Bekannte Primärquelle für Stock Asset', url: 'https://example.com/reports/annual.pdf' },
+    ] }]);
+  const request: import('../../../../utils/portfolioAnalysis').PortfolioAnalysisRequest = { provider: 'api', positions: buildAnalysisPositions(assets), priceUpdatedAt: null,
+    profile: { goal: 'growth', risk: 'medium', horizonYears: 10, buyBudget: 0 } };
+  const store = setupStore({ assets });
+  store.dispatch(analyzePortfolio.fulfilled({ report, snapshot: '' }, 'initial', { request, snapshot: '' }));
+  render(<PortfolioAnalysis standalone priceUpdatedAt={null} />, { store });
+  const section = screen.getByRole('region', { name: 'Online-Recherche für Stock Asset' });
+  await waitFor(() => expect(within(section).getByText('Online-Recherche: gültig')).toBeInTheDocument());
+  fireEvent.click(within(section).getByText('Online-Recherche: gültig'));
+  expect(within(section).getByRole('link', { name: 'Bekannter Recherchelink: example.com' })).toHaveAttribute('href', 'https://example.com/');
+  expect(within(section).getByRole('link', { name: 'Bekannter Recherchelink: example.com/reports/annual.pdf' })).toHaveAttribute('href', 'https://example.com/reports/annual.pdf');
+  expect(within(section).queryByText(/Bekannte Primärquelle/)).not.toBeInTheDocument();
+});
+
 it('shows the running analysis log and restores the last log after a restart', async () => {
   const { store, unmount } = render(<PortfolioAnalysis priceUpdatedAt={null} />, { preloadedState: { assets } });
   await open();
@@ -1231,4 +1252,26 @@ it.each([true, false])('shows separate ELTIF broker price and NAV status (NAV ev
     expect(store.getState().assets[0].price).toBe(109.395);
     if (evidenced) expect(screen.getAllByRole('link', { name: '[0] Report' })).toHaveLength(2);
   } finally { clock.mockRestore(); }
+});
+
+
+it('places a saved local research disclaimer inside the expandable research section while retaining asset risks', async () => {
+  const report = await window.API.analyzePortfolio!({} as never);
+  report.mode = 'local';
+  report.recommendations[0].risk = 'Online-Suchtreffer wurden ohne semantische Auswertung gesammelt. Unternehmensmeldungen, Fondsunterlagen, Steuern und Spreads müssen vor einer Handlung inhaltlich geprüft werden.';
+  report.recommendations[1].risk = 'Eigenes Marktrisiko';
+  const request: import('../../../../utils/portfolioAnalysis').PortfolioAnalysisRequest = { provider: 'api', positions: buildAnalysisPositions(assets), priceUpdatedAt: null,
+    profile: { goal: 'growth', risk: 'medium', horizonYears: 10, buyBudget: 0 } };
+  const store = setupStore({ assets });
+  store.dispatch(analyzePortfolio.fulfilled({ report, snapshot: '' }, 'initial', { request, snapshot: '' }));
+  render(<PortfolioAnalysis standalone priceUpdatedAt={null} />, { store });
+  const research = screen.getByRole('region', { name: 'Online-Recherche für Stock Asset' });
+  const details = within(research).getByTestId('asset-research-details-1');
+  const notice = within(details).getByText(/Hinweis: Online-Suchtreffer/);
+  expect(details).not.toHaveAttribute('open');
+  expect(notice).not.toBeVisible();
+  fireEvent.click(within(details).getByText(/Online-Recherche:/));
+  expect(notice).toBeVisible();
+  expect(screen.queryByText(/Risiken: Online-Suchtreffer/)).not.toBeInTheDocument();
+  expect(screen.getByText('Risiken: Eigenes Marktrisiko')).toBeInTheDocument();
 });

@@ -32,6 +32,43 @@ export interface RiskDocumentSet {
 const DAY = 24 * 60 * 60 * 1000;
 const MAX_BYTES = 16_000_000;
 const MAX_DOCUMENTS = 4;
+/** iShares embeds the product document directory as HTML-escaped JSON. */
+function iSharesDirectory(html: string, isin: string): AnalysisSource[] {
+  const decoded = html.replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&#39;|&apos;/g, "'");
+  const entries: Array<{ label: string; material: string; url: string }> = [];
+  for (const match of decoded.matchAll(/\{"label":"[^{}]*?"\}/g)) {
+    try {
+      const value = JSON.parse(match[0]);
+      if (typeof value.label === 'string' && typeof value.url === 'string' && typeof value.material === 'string') entries.push(value);
+    } catch { /* Ignore unrelated or malformed embedded data. */ }
+  }
+  const kid = entries.find(entry => entry.material === 'EUPRIIP' && entry.url.toUpperCase().includes(isin));
+  const prospectus = entries.find(entry => entry.material === 'Prospectus' && /-prospectus-de-de\.pdf$/i.test(entry.url));
+  const months = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+  const issuer = prospectus?.url.match(/\/([^/]+)-prospectus-de-de\.pdf$/i)?.[1];
+  const annuals = entries.flatMap(entry => {
+    const date = /-(\d{1,2})-([a-z]{3})-(\d{2,4})\.pdf$/i.exec(entry.url);
+    if (entry.material !== 'Annual Report' || !date || !issuer || !entry.url.toLowerCase().includes(`/${issuer.toLowerCase()}-annual-report-`)) return [];
+    const month = months.indexOf(date[2].toLowerCase());
+    if (month < 0) return [];
+    const year = Number(date[3]) < 100 ? 2000 + Number(date[3]) : Number(date[3]);
+    const timestamp = Date.UTC(year, month, Number(date[1]));
+    if (new Date(timestamp).getUTCDate() !== Number(date[1])) return [];
+    return [{ entry, timestamp }];
+  }).sort((a, b) => b.timestamp - a.timestamp);
+  if (!kid || !prospectus || !annuals.length) throw new Error('Das iShares-Dokumentenverzeichnis ist unvollständig oder nicht eindeutig zugeordnet.');
+  return [kid, prospectus, annuals[0].entry].map(entry => {
+    if (!/^documents\/(?:kiid|prospectus|annual-report)\/[a-z0-9._-]+\.pdf$/i.test(entry.url))
+      throw new Error('Ungültiger iShares-Dokumentenlink.');
+    return { title: entry.label, url: `https://www.ishares.com/gls-download/literature/${entry.url.slice('documents/'.length)}` };
+  });
+}
+function iSharesProductPage(sources: AnalysisSource[]): string | undefined {
+  return sources.map(source => source.url).find(url => {
+    try { const parsed = new URL(url); return parsed.protocol === 'https:' && parsed.hostname === 'www.ishares.com'
+      && !parsed.username && !parsed.password && /\/produkte\/\d+(?:\/|$)/i.test(parsed.pathname); } catch { return false; }
+  });
+}
 function logSpaceX(step: string, details: Record<string, string | number | boolean | null> = {}) {
   console.info('[primary-risk:spacex]', JSON.stringify({ step, at: new Date().toISOString(), ...details }));
 }
@@ -511,7 +548,7 @@ function secUrls(cik: string, value: SecSubmission): { url: string; title: strin
 
 export class PrimaryRiskResearch {
   private readonly cache = new Map<string, RiskDocument>();
-  private readonly freshnessChecks = new Map<string, { sources: string[]; checkedAt: number; newerReportAvailable: boolean; succeeded?: boolean; error?: string; method?: 'financialfilings'; discovered?: AnalysisSource[]; coverage?: 'sec-no-periodic-reports' | 'sec-prospectus-incomplete' | 'provider-incomplete' }>();
+  private readonly freshnessChecks = new Map<string, { sources: string[]; checkedAt: number; newerReportAvailable: boolean; succeeded?: boolean; error?: string; method?: 'financialfilings' | 'ishares'; discovered?: AnalysisSource[]; directory?: AnalysisSource[]; coverage?: 'sec-no-periodic-reports' | 'sec-prospectus-incomplete' | 'provider-incomplete' }>();
   private readonly freshnessInFlight = new Map<string, Promise<ReturnType<PrimaryRiskResearch['publicationStatus']>>>();
   private readonly submissions = new Map<string, { fetchedAt: number; filings: ReturnType<typeof secUrls> }>();
   private readonly cikCache = new Map<string, { fetchedAt: number; cik: string | null; prospectus?: string; newerProspectus?: { url: string; title: string } }>();
@@ -560,7 +597,16 @@ export class PrimaryRiskResearch {
   cachedSources(position: Pick<AnalysisPosition, 'isin' | 'type'>, known: AnalysisSource[]): AnalysisSource[] {
     const isin = position.isin.trim().toUpperCase();
     const knownUrls = new Set(known.map(source => source.url));
-    return [...this.cache.values()].filter(doc => (isin && doc.identity === isin) || knownUrls.has(doc.source.url))
+    const directory = this.freshnessChecks.get(isin);
+    const selected = position.type === 'ETF' && directory?.method === 'ishares' && directory.directory?.length
+      && directory.directory.every(source => knownUrls.has(source.url)) ? new Set(directory.directory.map(source => source.url)) : null;
+    const isProviderDocument = (value: string) => {
+      try { const url = new URL(value); return url.hostname === 'www.ishares.com' && /\/literature\/(?:kiid|prospectus|annual-report)\//i.test(url.pathname); }
+      catch { return false; }
+    };
+    return [...this.cache.values()].filter(doc => ((isin && doc.identity === isin) || knownUrls.has(doc.source.url))
+      && (!selected || !isProviderDocument(doc.source.url)
+        || selected.has(doc.source.url)))
       .map(doc => doc.source);
   }
   reuseCached(position: Pick<AnalysisPosition, 'isin' | 'type' | 'symbol'>, sources: AnalysisSource[]): RiskDocumentSet | null {
@@ -591,7 +637,7 @@ export class PrimaryRiskResearch {
   publicationStatus(position: Pick<AnalysisPosition, 'isin' | 'type'>, sources: AnalysisSource[]) {
     const isin = position.isin.trim().toUpperCase();
     const canadianApi = position.type === 'Stock' && /^CA[A-Z0-9]{10}$/.test(isin) && !!this.filingsKey?.();
-    const supported = canadianApi || isin === 'DE0008232125' || (position.type === 'Stock' && !!(SEC_CIK_BY_ISIN[isin] || this.cikCache.get(isin)?.cik));
+    const supported = (position.type === 'ETF' && !!iSharesProductPage(sources)) || canadianApi || isin === 'DE0008232125' || (position.type === 'Stock' && !!(SEC_CIK_BY_ISIN[isin] || this.cikCache.get(isin)?.cik));
     const urls = sources.map(source => source.url).sort();
     const saved = this.freshnessChecks.get(isin);
     const matching = saved && JSON.stringify(saved.sources) === JSON.stringify(urls) ? saved : undefined;
@@ -620,6 +666,32 @@ export class PrimaryRiskResearch {
     const supported = this.publicationStatus(position, sources).freshnessSupported;
     if (!supported) throw new Error('Für dieses Asset ist noch keine automatische Prüfung auf neue Berichte verfügbar.');
     try {
+      const productPage = position.type === 'ETF' ? iSharesProductPage(sources) : undefined;
+      if (productPage) {
+        const response = await this.requestFetch(productPage, { headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' }, signal: AbortSignal.timeout(15000) });
+        if (!response.ok || (response.url && !iSharesProductPage([{ title: '', url: response.url }]))) throw new Error('iShares-Produktseite nicht erreichbar.');
+        const html = (await readResponseBuffer(response, 5_000_000)).toString('utf8');
+        const directory = iSharesDirectory(html, isin);
+        const known = new Set(sources.map(source => source.url.split('?')[0]));
+        const discovered = directory.filter(source => !known.has(source.url));
+        // Compare the actual bytes of every loaded provider PDF, including stable URLs.
+        for (const source of sources) {
+          let url: URL;
+          try { url = new URL(source.url); } catch { throw new Error('Ungültige Dokumentenquelle.'); }
+          if (url.hostname !== 'www.ishares.com' || !/\.pdf$/i.test(url.pathname)) continue;
+          const saved = this.cache.get(source.url);
+          if (!saved || saved.identity !== isin || !/^[a-f0-9]{64}$/i.test(saved.hash)) throw new Error('Ein gespeicherter Dokumentenstand ist nicht vergleichbar.');
+          const document = await this.requestFetch(source.url, { headers: { 'User-Agent': 'FinPal Desktop/1.0 (portfolio research)' }, signal: AbortSignal.timeout(30000) });
+          if (!document.ok || (document.url && new URL(document.url).hostname !== 'www.ishares.com')) throw new Error('iShares-Dokument nicht erreichbar.');
+          const bytes = await readResponseBuffer(document, MAX_BYTES);
+          if (bytes.subarray(0, 5).toString() !== '%PDF-') throw new Error('Ungültiges iShares-PDF.');
+          if (createHash('sha256').update(bytes).digest('hex') !== saved.hash && !discovered.some(item => item.url === source.url)) discovered.push(source);
+        }
+        this.freshnessChecks.set(isin, { sources: sources.map(source => source.url).sort(), checkedAt: this.now(), newerReportAvailable: discovered.length > 0,
+          succeeded: true, method: 'ishares', discovered, directory });
+        this.save();
+        return this.publicationStatus(position, sources);
+      }
       if (position.type === 'Stock' && /^CA[A-Z0-9]{10}$/.test(isin) && this.filingsKey?.()) {
         const key = this.filingsKey();
         const known = new Set(sources.map(source => source.url));
@@ -756,7 +828,9 @@ export class PrimaryRiskResearch {
       const previousFinding = prior && JSON.stringify(prior.sources) === JSON.stringify(currentSources) && prior.newerReportAvailable;
       const message = error instanceof Error && /^(FinancialFilings-Abfrage fehlgeschlagen \(HTTP \d+\)|Das Einreichungsverzeichnis|Die Einreichungen|Die Reihenfolge)/.test(error.message)
         ? error.message.slice(0, 300) : 'Der Abruf oder die Verarbeitung der Berichtsdaten ist fehlgeschlagen.';
-      this.freshnessChecks.set(isin, { sources: currentSources, checkedAt: this.now(), newerReportAvailable: !!previousFinding, succeeded: false, error: message });
+      const sameSources = prior && JSON.stringify(prior.sources) === JSON.stringify(currentSources);
+      this.freshnessChecks.set(isin, { sources: currentSources, checkedAt: this.now(), newerReportAvailable: !!previousFinding, succeeded: false, error: message,
+        ...(sameSources && prior.method === 'ishares' ? { method: prior.method, discovered: prior.discovered, directory: prior.directory } : {}) });
       try { this.save(); } catch { /* The failed attempt remains visible during this run. */ }
       throw error;
     }
@@ -985,6 +1059,18 @@ export class PrimaryRiskResearch {
     const candidates = [...curated].filter(url => allowedDocumentUrl(url, curated, issuerHost, cik) &&
       (/\.(?:htm|html|pdf)(?:$|\?|\/)/i.test(url) ||
         (position.isin.trim().toUpperCase() === 'US47759T1007' && url.includes('/news-release-details/jinkosolar-announces-'))));
+    const providerDirectory = this.freshnessChecks.get(isin);
+    if (position.type === 'ETF' && providerDirectory?.method === 'ishares' && providerDirectory.succeeded
+      && providerDirectory.directory && iSharesProductPage(providerDirectory.sources.map(url => ({ title: '', url })))) {
+      candidates.unshift(iSharesProductPage(providerDirectory.sources.map(url => ({ title: '', url })))!);
+      for (const source of providerDirectory.directory.slice().reverse()) {
+        try {
+          const url = new URL(source.url);
+          if (url.protocol === 'https:' && url.hostname === 'www.ishares.com' && !url.username && !url.password
+            && /^\/gls-download\/literature\/(?:kiid|prospectus|annual-report)\/[a-z0-9._-]+\.pdf$/i.test(url.pathname)) candidates.unshift(url.href);
+        } catch { /* Ignore damaged cached entries. */ }
+      }
+    }
     if (position.isin.trim().toUpperCase() === APOLLO_ELTIF_ISIN && curated.has(APOLLO_ELTIF_KID_ARCHIVE))
       candidates.unshift(APOLLO_ELTIF_KID_ARCHIVE);
     if (position.isin.trim().toUpperCase() === 'DE0008232125') {
@@ -1126,7 +1212,19 @@ export class PrimaryRiskResearch {
         const apolloCompanion = position.isin.trim().toUpperCase() === APOLLO_ELTIF_ISIN && url === APOLLO_ELTIF_PAGE
           && /Apollo Global Private Markets ELTIF/i.test(plain)
           && documents.some(document => document.identity === APOLLO_ELTIF_ISIN && document.source.url === APOLLO_ELTIF_KID_ARCHIVE);
-        if (position.type !== 'Stock' && !treasuryGeneral && !apolloCompanion && !plain.toUpperCase().includes(position.isin.trim().toUpperCase())
+        // Umbrella reports may identify the fund and management company but omit class ISINs.
+        // Accept only the exact documents from the previously verified product directory,
+        // and independently confirm both names in the document itself.
+        const directoryEntry = providerDirectory?.method === 'ishares' && providerDirectory.succeeded
+          ? providerDirectory.directory?.find(item => item.url === url) : undefined;
+        const annualTitle = providerDirectory?.directory?.find(item => /\/annual-report\//.test(item.url))?.title;
+        const issuerName = annualTitle?.split(' - ')[0]?.trim() ?? '';
+        const normalize = (value: string) => value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+        const fundName = normalize(position.name);
+        const umbrellaDocument = !!directoryEntry && /\/(?:prospectus|annual-report)\//.test(new URL(url).pathname)
+          && normalize(issuerName).length >= 8 && fundName.length >= 12
+          && normalize(plain).includes(normalize(issuerName)) && normalize(plain).includes(fundName);
+        if (position.type !== 'Stock' && !treasuryGeneral && !apolloCompanion && !umbrellaDocument && !plain.toUpperCase().includes(position.isin.trim().toUpperCase())
           && !(position.type === 'Bond' && plain.includes(position.isin.trim().slice(2, -1)))) throw new Error('Instrument identity not confirmed');
         if (position.isin.trim().toUpperCase() === 'DE0008430026' && !/Munich Re|Münchener Rückversicherungs/i.test(plain))
           throw new Error('Issuer identity not confirmed');
@@ -1143,6 +1241,7 @@ export class PrimaryRiskResearch {
         if (spaceX) { onSpaceXStep?.('risk-excerpt'); logSpaceX('risk-excerpt-start', { textChars: plain.length }); }
         let excerpt = riskExcerpt(plain, position.type, position.isin.trim().toUpperCase() === 'DE0008430026', position.isin.trim().toUpperCase(),
           spaceX ? (step, details = {}) => logSpaceX(step, details) : undefined);
+        if (umbrellaDocument && excerpt) excerpt = `Anbieterzuordnung: ${isin}; Fonds ${position.name}; Fondsgesellschaft ${issuerName}. Dieses Dokument betrifft den Fonds oder die Fondsgesellschaft und belegt für sich keine Anteilsklassen-ISIN.\n${excerpt}`;
         if (spaceX && spaceXFullHtml) {
           const continuity = spaceXContinuityQuote(spaceXFullHtml);
           if (continuity && !excerpt.includes(continuity)) excerpt += `\n${continuity}`;

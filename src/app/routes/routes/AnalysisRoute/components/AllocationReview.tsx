@@ -52,7 +52,7 @@ export function AssetOptimizationDetails({ plan, allocationKey, assetType, onOpe
       </div>
       <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2">
         <div className="min-w-0 rounded border border-sky-300/15 bg-slate-950/25 p-3">
-          <p className="m-0 text-gray-400">{forecast.model?.kind === 'bond-curve-v1' ? 'Modellierter Clean-Price nach 12 Monaten' : forecast.model?.kind === 'etf-history-v1' ? 'Modell-Referenzwert (kein veröffentlichtes Kursziel)' : 'Analysten-Kursziel'}</p>
+          <p className="m-0 text-gray-400">{forecast.model?.kind === 'bond-curve-v1' ? 'Modellierter Clean-Price nach 12 Monaten' : (forecast.model?.kind === 'etf-history-v1' || forecast.model?.kind === 'stock-history-v1') ? 'Modell-Referenzwert (kein veröffentlichtes Kursziel)' : 'Analysten-Kursziel'}</p>
           <p className="m-0 mt-1 text-lg font-bold text-white">{new Intl.NumberFormat('de-DE', { maximumFractionDigits: 4 }).format(forecast.targetPrice)} {forecast.model?.kind === 'bond-curve-v1' ? '% vom Nennwert' : forecast.currency}</p>
         </div>
         <div className="min-w-0 rounded border border-sky-300/15 bg-slate-950/25 p-3">
@@ -67,6 +67,7 @@ export function AssetOptimizationDetails({ plan, allocationKey, assetType, onOpe
       </p>}
       {forecast.dataStatus === 'stale-fallback' && <p className="m-0 text-amber-200">Der aktuelle Abruf ist fehlgeschlagen. Angezeigt wird der letzte gültige Forecast.</p>}
       {forecast.model?.kind === 'bond-curve-v1' && <p className="m-0 text-sky-200">Lokales Anleihe-Zinskurvenmodell: Kupon {percent(forecast.model.couponPercent)} · Fälligkeit {forecast.model.maturityDate} · aktueller Dirty-Price {new Intl.NumberFormat('de-DE', { maximumFractionDigits: 4 }).format(forecast.model.referenceDirty)} % vom Nennwert. Modellierte EUR-Risikoreihe und Zins-/Währungsszenarien; keine ausführbare Kursprognose.</p>}
+      {forecast.model?.kind === 'stock-history-v1' && <p className="m-0 text-amber-200">Aktien-Historienmodell ohne Analystenkonsens: historische Szenarien, kein veröffentlichtes Kursziel. Die Unsicherheit ist erhöht; Unternehmensereignisse lassen sich aus Kursen nicht zuverlässig vorhersagen.</p>}
       <details className="rounded border border-white/10 px-2.5 py-2"><summary className="cursor-pointer font-semibold text-gray-300">Signal, Unsicherheit und historische Daten</summary>
         <div className="mt-2 min-w-0 space-y-2 break-words">
           {estimate && <p className="m-0">Rohsignal: {percent(estimate.rawReturnPercent)} · Nach Grundgewichtung: {percent(estimate.adjustedReturnPercent)}{estimate.effectiveReturnPercent !== undefined ? ` · Konfidenzgewichtet: ${percent(estimate.effectiveReturnPercent)}` : ''} · Unsicherheitsproxy: {percent(estimate.uncertaintyPercent)} (keine Wahrscheinlichkeit).</p>}

@@ -1,5 +1,3 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import type { AnalysisPosition } from './portfolioAnalysis';
 import type { ReturnForecast } from './portfolioForecastOptimization';
 import { validReturnForecast } from './portfolioForecastOptimization';
@@ -16,6 +14,7 @@ type YahooChartResult = {
   meta?: { currency?: string; currentTradingPeriod?: { regular?: { start?: Date | string | number; end?: Date | string | number } } };
 };
 export interface YahooForecastClient {
+  search?(query: string, options: { quotesCount: number; newsCount: number }): Promise<{ quotes: unknown[] }>;
   quoteSummary(symbol: string, options: { modules: ('financialData' | 'price')[] }): Promise<YahooSummary>;
   chart(symbol: string, options: { period1: Date; period2: Date; interval: '1d'; events: 'history'; return: 'array' }): Promise<YahooChartResult>;
 }
@@ -25,7 +24,7 @@ export type MarketForecastProvider = (position: AnalysisPosition, options?: Mark
 type ConsensusCache = { targetPrice: number; targetLowPrice?: number; targetHighPrice?: number; analystCount: number; referencePrice: number; currency: string; referenceTime: number; fetchedAt: number; targetDate: string };
 type VolatilityCache = NonNullable<ReturnType<typeof annualizedHistoricalVolatility>> & { fetchedAt: number; refreshAfter: number; riskHistory?: ReturnForecast['riskHistory'] };
 type CryptoModelCache = NonNullable<ReturnType<typeof cryptoHistoricalForecast>> & { currency: string; fetchedAt: number; refreshAfter: number; targetDate: string; riskHistory?: ReturnForecast['riskHistory'] };
-type CacheEntry = { consensus?: ConsensusCache; volatility?: VolatilityCache; crypto?: CryptoModelCache; etf?: ReturnForecast; bond?: ReturnForecast; evidenceVersion?: 3 };
+type CacheEntry = { consensus?: ConsensusCache; volatility?: VolatilityCache; crypto?: CryptoModelCache; etf?: ReturnForecast; bond?: ReturnForecast; stock?: ReturnForecast; evidenceVersion?: 3 };
 type ProviderConfig = { cacheFile?: string; now?: () => number; requestFetch?: typeof fetch };
 
 const day = 86400000;
@@ -54,35 +53,6 @@ const validCrypto = (value: CryptoModelCache | undefined, now: number) => !!valu
   && value.scenarioReturns.median <= value.scenarioReturns.p90
   && Number.isFinite(value.fetchedAt) && value.fetchedAt <= now && now - value.fetchedAt <= MARKET_FORECAST_FALLBACK_MAX_AGE_MS
   && Number.isFinite(value.refreshAfter) && Number.isFinite(Date.parse(value.targetDate));
-
-class MarketForecastCache {
-  private readonly entries = new Map<string, CacheEntry>();
-  constructor(private readonly file?: string) {
-    if (!file) return;
-    try {
-      if (fs.statSync(file).size > 5_000_000) return;
-      const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
-      if (saved.version !== 1 || !Array.isArray(saved.entries)) return;
-      for (const item of saved.entries.slice(-200)) {
-        if (!Array.isArray(item) || item.length !== 2 || typeof item[0] !== 'string' || !item[1] || typeof item[1] !== 'object') continue;
-        this.entries.set(item[0], item[1]);
-      }
-    } catch { /* Missing or damaged cache must not prevent analysis. */ }
-  }
-  get(symbol: string): CacheEntry { return this.entries.get(symbol) ?? {}; }
-  set(symbol: string, value: CacheEntry): void {
-    this.entries.delete(symbol);
-    if (this.entries.size >= 200) this.entries.delete(this.entries.keys().next().value);
-    this.entries.set(symbol, value);
-    if (!this.file) return;
-    fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    const temporary = this.file + '.tmp';
-    try {
-      fs.writeFileSync(temporary, JSON.stringify({ version: 1, entries: [...this.entries] }), { mode: 0o600 });
-      fs.renameSync(temporary, this.file);
-    } finally { if (fs.existsSync(temporary)) fs.unlinkSync(temporary); }
-  }
-}
 
 export function annualizedHistoricalVolatility(rows: YahooHistoryRow[], minimumObservations = 181, minimumDays = 180) {
   const prices = rows.map(row => ({ time: instant(row.date), price: positive(row.adjClose) ? row.adjClose : row.close }))
@@ -178,28 +148,21 @@ function treasuryCurveRows(xml: string): Array<Omit<TreasuryCurveDay, 'usdEur'>>
   });
 }
 
-/** Builds a complete forecast and persistently reuses consensus and volatility until their respective refresh times. */
+/** Builds a forecast from freshly retrieved market data. */
 export function createYahooMarketForecastProvider(client: YahooForecastClient, config: ProviderConfig | (() => number) = {}): MarketForecastProvider {
   const now = typeof config === 'function' ? config : config.now ?? Date.now;
   const requestFetch = typeof config === 'function' ? undefined : config.requestFetch;
-  const cache = new MarketForecastCache(typeof config === 'function' ? undefined : config.cacheFile);
   return async (position, options = {}) => {
     const rawSymbol = position.symbol.trim().toUpperCase();
     const symbol = position.type === 'Crypto' && rawSymbol && !rawSymbol.includes('-') ? `${rawSymbol}-EUR` : rawSymbol;
     if (position.type === 'Bond' && position.isin.trim().toUpperCase() === 'US912810SQ22') {
-      const fetchedAt = now(), quote = position.quote, cached = cache.get('bond:US912810SQ22').bond;
+      const fetchedAt = now(), quote = position.quote;
       const quoteTime = Date.parse(quote?.quoteAsOf ?? '');
       if (quote?.source !== 'boerse-frankfurt' || quote.exchange !== 'XFRA' || quote.tradedInPercent !== true
         || quote.originalCurrency !== 'USD' || !positive(quote.originalPrice)
         || position.bondHolding?.source !== 'user-confirmed' || position.bondHolding.currency !== 'USD'
         || position.bondHolding.quantityConflict || !Number.isFinite(quoteTime) || quoteTime > fetchedAt
         || fetchedAt - quoteTime > 7 * day) return null;
-      const reusable = (value: ReturnForecast | undefined): value is ReturnForecast => !!value
-        && value.model?.kind === 'bond-curve-v1' && value.referencePrice === quote.originalPrice
-        && value.referencePriceAsOf === quote.quoteAsOf && validReturnForecast(value, fetchedAt)
-        && fetchedAt - Date.parse(value.publishedAt) <= MARKET_FORECAST_FALLBACK_MAX_AGE_MS;
-      if (!options.forceRefresh && reusable(cached) && fetchedAt - Date.parse(cached.publishedAt) < day)
-        return { ...cached, dataStatus: 'fresh-cache', dataAgeHours: (fetchedAt - Date.parse(cached.publishedAt)) / 3600000 };
       try {
         const loadCurve = requestFetch ?? globalThis.fetch;
         if (!loadCurve) throw new Error('Treasury fetch unavailable');
@@ -245,22 +208,19 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
           assumptions: `Lokales Szenario für CUSIP 912810SQ2: aktueller Frankfurt-Clean-Price ${quote.originalPrice} % am ${quote.quoteAsOf}; Kupon 1,125 % mit Zahlungen am 15.02. und 15.08. bis 15.08.2040. Dirty-Einstieg = Clean Price plus modellierte Stückzinsen. 12-Monats-Basis: unveränderte Treasury-Parzinskurve, ein Jahr Roll-down und konstanter, aus dem aktuellen Preis abgeleiteter Abstand zur Kurve; alle Kupons zählen zur Gesamtrendite. Konstanter USD/EUR-Kurs nur im Basisszenario. 2.000 deterministische 20-Tage-Blockpfade aus gemeinsamen historischen Zinskurven- und USD/EUR-Änderungen für P10/Median/P90; keine kalibrierten Wahrscheinlichkeiten. Die EUR-Risikohistorie sind theoretische Tageswerte mit Kupon-Cashflows, keine gehandelten Kurse dieser ISIN. Tagesvolumen, Spread, Steuern und Ausführungskosten sind nicht enthalten.`,
           forecastSources: [termSource, quoteSource, ...curveSources], volatilitySources: [...curveSources, fxSource] };
         if (!validReturnForecast(forecast, fetchedAt)) throw new Error('Invalid bond scenario');
-        try { cache.set('bond:US912810SQ22', { bond: forecast }); } catch { /* Valid result survives cache failure. */ }
         return forecast;
       } catch {
-        if (reusable(cached)) return { ...cached, dataStatus: 'stale-fallback',
-          dataAgeHours: (fetchedAt - Date.parse(cached.publishedAt)) / 3600000 };
         return null;
       }
     }
     if (position.type === 'ETF' && symbol) {
-      const fetchedAt = now(), cacheKey = `etf:${symbol}`, cached = cache.get(cacheKey);
+      const fetchedAt = now();
       const currency = position.quote?.originalCurrency ?? position.currency;
       const usable = (f: ReturnForecast | undefined): f is ReturnForecast => !!f && f.model?.kind === 'etf-history-v1'
         && f.currency === currency && validReturnForecast(f, fetchedAt)
         && fetchedAt - Date.parse(f.publishedAt) <= MARKET_FORECAST_FALLBACK_MAX_AGE_MS
         && fetchedAt - Date.parse(f.referencePriceAsOf) <= MARKET_FORECAST_FALLBACK_MAX_AGE_MS;
-      let forecast = usable(cached.etf) ? cached.etf : undefined;
+      let forecast: ReturnForecast | undefined;
       let status: ReturnForecast['dataStatus'] = 'fresh-cache';
       if (options.forceRefresh || !forecast || fetchedAt - Date.parse(forecast.publishedAt) >= day) {
         try {
@@ -283,17 +243,16 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
             forecastSources: [source], volatilitySources: [source], dataStatus: 'live', dataAgeHours: 0 };
           if (!usable(forecast)) throw new Error('Invalid ETF scenario');
           status = 'live';
-          try { cache.set(cacheKey, { etf: forecast }); } catch { /* Valid scenario survives a cache write failure. */ }
-        } catch { status = 'stale-fallback'; forecast = usable(cached.etf) ? cached.etf : undefined; }
+        } catch { forecast = undefined; }
       }
       if (!usable(forecast)) return null;
       return { ...forecast, key: String(position.id), dataStatus: status, dataAgeHours: (fetchedAt - Date.parse(forecast.publishedAt)) / 3600000 };
     }
     if (position.type === 'Crypto' && symbol) {
-      const fetchedAt = now(), cached = cache.get(symbol);
-      let model = validCrypto(cached.crypto, fetchedAt) ? cached.crypto : undefined;
+      const fetchedAt = now();
+      let model: CryptoModelCache | undefined;
       let refreshed = false, fallback = false;
-      if (options.forceRefresh || !model || fetchedAt >= model.refreshAfter || cached.evidenceVersion !== 3) {
+      if (options.forceRefresh || !model || fetchedAt >= model.refreshAfter) {
         try {
           const chart = await client.chart(symbol, { period1: new Date(fetchedAt - 5 * 365 * day), period2: new Date(fetchedAt), interval: '1d', events: 'history', return: 'array' });
           const currentUtcDay = Date.UTC(new Date(fetchedAt).getUTCFullYear(), new Date(fetchedAt).getUTCMonth(), new Date(fetchedAt).getUTCDate());
@@ -309,10 +268,6 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
         } catch { fallback = true; }
       }
       if (!validCrypto(model, fetchedAt)) return null;
-      if (refreshed) {
-        try { cache.set(symbol, { ...cached, crypto: model, evidenceVersion: 3 }); }
-        catch { /* A cache write failure must not discard a valid model. */ }
-      }
       const ageHours = (fetchedAt - model.fetchedAt) / 3600000;
       const dataStatus: NonNullable<ReturnForecast['dataStatus']> = fallback ? 'stale-fallback' : refreshed ? 'live' : 'fresh-cache';
       const encoded = encodeURIComponent(symbol);
@@ -330,13 +285,12 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
     }
     if (position.type !== 'Stock' || !symbol) return null;
     const fetchedAt = now();
-    const cached = cache.get(symbol);
-    let consensus = validConsensus(cached.consensus, fetchedAt) ? cached.consensus : undefined;
-    let volatility = validVolatility(cached.volatility, fetchedAt, 90) ? cached.volatility : undefined;
+    let consensus: ConsensusCache | undefined;
+    let volatility: VolatilityCache | undefined;
     let refreshed = false;
     let fallback = false;
 
-    const consensusDue = options.forceRefresh || !consensus || fetchedAt - consensus.fetchedAt >= MARKET_FORECAST_CONSENSUS_TTL_MS || cached.evidenceVersion !== 3;
+    const consensusDue = options.forceRefresh || !consensus || fetchedAt - consensus.fetchedAt >= MARKET_FORECAST_CONSENSUS_TTL_MS;
     if (consensusDue) {
       try {
         const summary = await client.quoteSummary(symbol, { modules: ['financialData', 'price'] });
@@ -355,7 +309,7 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
       } catch { fallback = true; }
     }
 
-    const volatilityDue = options.forceRefresh || !volatility || fetchedAt >= volatility.refreshAfter || cached.evidenceVersion !== 3
+    const volatilityDue = options.forceRefresh || !volatility || fetchedAt >= volatility.refreshAfter
       || !volatility.riskHistory;
     if (volatilityDue) {
       try {
@@ -375,11 +329,62 @@ export function createYahooMarketForecastProvider(client: YahooForecastClient, c
       } catch { fallback = true; }
     }
 
-    if (!validConsensus(consensus, fetchedAt) || !validVolatility(volatility, fetchedAt, 90)) return null;
-    if (refreshed) {
-      try { cache.set(symbol, { consensus, volatility, evidenceVersion: 3 }); }
-      catch { /* A cache write failure must not discard valid data fetched for this analysis. */ }
+    if (!validConsensus(consensus, fetchedAt)) {
+      const currency = position.quote?.originalCurrency ?? position.currency;
+      const usable = (f: ReturnForecast | undefined): f is ReturnForecast => !!f && f.model?.kind === 'stock-history-v1'
+        && f.currency === currency && validReturnForecast(f, fetchedAt)
+        && fetchedAt - Date.parse(f.publishedAt) <= MARKET_FORECAST_FALLBACK_MAX_AGE_MS
+        && fetchedAt - Date.parse(f.referencePriceAsOf) <= MARKET_FORECAST_FALLBACK_MAX_AGE_MS;
+      try {
+        const currentUtcDay = Date.UTC(new Date(fetchedAt).getUTCFullYear(), new Date(fetchedAt).getUTCMonth(), new Date(fetchedAt).getUTCDate());
+        const load = async (marketSymbol: string) => {
+          const chart = await client.chart(marketSymbol, { period1: new Date(fetchedAt - 8 * 366 * day), period2: new Date(fetchedAt), interval: '1d', events: 'history', return: 'array' });
+          const completed = chart.quotes.filter(row => instant(row.date) < currentUtcDay);
+          const model = etfHistoricalForecast(completed, true);
+          if (!model || fetchedAt - model.referenceTime > 7 * day || !chart.meta?.currency) throw new Error('Incomplete stock history');
+          const short = model.observations < 181 || model.volatilityLookbackDays < 180;
+          const riskHistory = await euroRiskHistory(client, marketSymbol, completed, chart.meta.currency, fetchedAt, short ? 61 : 181);
+          if (!riskHistory) throw new Error('Missing EUR risk history');
+          const last = completed.find(row => instant(row.date) === model.referenceTime);
+          const date = new Date(model.referenceTime).toISOString().slice(0, 10);
+          const eur = riskHistory.closes.find(row => row.date === date)?.price;
+          if (!positive(last?.adjclose) || !positive(eur) || currency !== 'EUR') {
+            if (chart.meta.currency !== currency) throw new Error('Missing same-day conversion');
+            return { model, short, riskHistory, factor: 1, marketSymbol };
+          }
+          return { model, short, riskHistory, factor: eur / last.adjclose, marketSymbol };
+        };
+        let result: Awaited<ReturnType<typeof load>>;
+        try { result = await load(symbol); } catch (originalError) {
+          if (!client.search || !/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(position.isin.trim().toUpperCase())) throw originalError;
+          const found = await client.search(position.isin.trim().toUpperCase(), { quotesCount: 20, newsCount: 0 });
+          const name = (value: string | undefined) => (value ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+          const quotes = found.quotes.filter((q): q is { symbol?: string; shortname?: string; longname?: string; quoteType?: string } => !!q && typeof q === 'object');
+          const anchor = quotes.find(q => q.symbol?.toUpperCase() === symbol && q.quoteType === 'EQUITY');
+          const names = [name(anchor?.shortname), name(anchor?.longname)].filter(Boolean);
+          const alternatives = quotes.filter(q => q.symbol && q.symbol.toUpperCase() !== symbol && q.quoteType === 'EQUITY'
+            && [name(q.shortname), name(q.longname)].some(n => n && names.includes(n)));
+          if (!anchor || alternatives.length !== 1) throw originalError;
+          result = await load(alternatives[0].symbol!);
+        }
+        const { model, short, riskHistory, factor, marketSymbol } = result;
+        const source = { title: `Yahoo Finance adjusted stock history ${marketSymbol}; FinPal local scenario`, url: `https://finance.yahoo.com/quote/${encodeURIComponent(marketSymbol)}/history/` };
+        const forecast: ReturnForecast = { key: String(position.id), publisher: 'FinPal Aktien-Historienmodell', publishedAt: new Date(fetchedAt).toISOString(),
+          targetDate: new Date(fetchedAt + 365 * day).toISOString(), horizonMonths: 12, targetPrice: model.targetPrice * factor,
+          referencePrice: model.referencePrice * factor, referencePriceAsOf: new Date(model.referenceTime).toISOString(), currency,
+          annualVolatilityPercent: model.annualVolatilityPercent, volatilityAsOf: model.volatilityAsOf, volatilityLookbackDays: model.volatilityLookbackDays,
+          ...(short ? { volatilityHistory: { kind: 'short-listing' as const, observations: model.observations } } : {}),
+          scenarioReturns: model.scenarioReturns, uncertainty: { method: 'historical-bootstrap', historyYears: model.historyYears }, riskHistory,
+          model: { kind: 'stock-history-v1', observations: model.observations, historyYears: model.historyYears, tradingDaysPerYear: 252, blockLength: 20, paths: 2000, returnBasis: 'adjusted-close' },
+          assumptions: `Kein verwendbarer Analystenkonsens. Historie: ${marketSymbol}; Referenzwert in ${currency} mit taggleicher Umrechnung, falls erforderlich. Lokales historisches Aktienszenario aus ${model.observations} bereinigten Tageskursen über ${model.historyYears.toFixed(2)} Jahre; 2.000 Bootstrap-Pfade, 20 Handelstage je Block, 252 Handelstage Horizont. Der Median wird zu 75 % gegen null geschrumpft. Historische Szenarien sind keine kalibrierten Zukunftswahrscheinlichkeiten oder veröffentlichten Kursziele. Gerade bei einzelnen Aktien und kurzer Historie ist die Unsicherheit erhöht; vergangene Kursverläufe bilden künftige Unternehmensereignisse nicht zuverlässig ab.`,
+          forecastSources: [source, ...(marketSymbol !== symbol ? [{ title: `Yahoo Finance ISIN search ${position.isin}`, url: `https://finance.yahoo.com/lookup?s=${encodeURIComponent(position.isin)}` }, ...riskHistory.sources] : [])], volatilitySources: [source], dataStatus: 'live', dataAgeHours: 0 };
+        if (!usable(forecast)) throw new Error('Invalid stock scenario');
+        return forecast;
+      } catch {
+        return null;
+      }
     }
+    if (!validVolatility(volatility, fetchedAt, 90)) return null;
     const ageHours = Math.max(fetchedAt - consensus.fetchedAt, fetchedAt - volatility.fetchedAt) / 3600000;
     const dataStatus: NonNullable<ReturnForecast['dataStatus']> = fallback ? 'stale-fallback' : refreshed ? 'live' : 'fresh-cache';
     const encoded = encodeURIComponent(symbol);

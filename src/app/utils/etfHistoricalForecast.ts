@@ -1,5 +1,5 @@
 /** A local scenario generator, not a published analyst target or calibrated prediction. */
-export function etfHistoricalForecast(rows: Array<{ date: Date | string | number; close: number | null; adjclose?: number | null }>) {
+export function etfHistoricalForecast(rows: Array<{ date: Date | string | number; close: number | null; adjclose?: number | null }>, stock = false) {
   const day = 86400000;
   const instant = (date: Date | string | number) => date instanceof Date ? date.getTime() : typeof date === 'number' ? (date < 1e12 ? date * 1000 : date) : Date.parse(date);
   // Do not silently replace missing adjusted prices with unadjusted prices across distributions/splits.
@@ -11,10 +11,10 @@ export function etfHistoricalForecast(rows: Array<{ date: Date | string | number
     || typeof row.rawPrice !== 'number' || !(row.rawPrice > 0) || !Number.isFinite(row.rawPrice))) return null;
   const prices = sorted.filter((row, i) => !i || row.time !== sorted[i - 1].time);
   if (sorted.some((row, i) => i && row.time === sorted[i - 1].time && row.price !== sorted[i - 1].price)) return null;
-  if (prices.length < 1261) return null;
+  if (prices.length < (stock ? 61 : 1261)) return null;
   const last = prices[prices.length - 1];
   const historyYears = (last.time - prices[0].time) / (365.25 * day);
-  if (historyYears < 5 || prices.length / historyYears < 200 || prices.length / historyYears > 280
+  if (historyYears < (stock ? 90 / 365.25 : 5) || (!stock && prices.length / historyYears < 200) || prices.length / historyYears > 280
     || prices.some((row, i) => i && row.time - prices[i - 1].time > 14 * day)) return null;
   const returns = prices.slice(1).map((row, i) => Math.log(row.price! / prices[i].price!));
   if (returns.some(value => !Number.isFinite(value))) return null;
@@ -46,6 +46,6 @@ export function etfHistoricalForecast(rows: Array<{ date: Date | string | number
     || scenarioReturns.p10 <= -100 || scenarioReturns.p90 > 100000 || expectedReturnPercent <= -100) return null;
   return { referencePrice: last.rawPrice!, referenceTime: last.time, targetPrice: last.rawPrice! * (1 + expectedReturnPercent / 100),
     expectedReturnPercent, scenarioReturns, annualVolatilityPercent, volatilityAsOf: new Date(last.time).toISOString(),
-    volatilityLookbackDays: Math.floor((last.time - prices[prices.length - 253].time) / day),
+    volatilityLookbackDays: Math.floor((last.time - prices[Math.max(0, prices.length - 253)].time) / day),
     historyYears, observations: prices.length };
 }

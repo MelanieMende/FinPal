@@ -242,6 +242,8 @@ export function buildRobustForecastAllocation(request: PortfolioAnalysisRequest,
     const name = plan.positions.find(position => position.key === key)?.name ?? key;
     plan.assumptions.push(`${name}: Wegen des belegten Konzentrationsrisikos wurde der aktuelle EUR-Bestand als Obergrenze gesetzt. Das ist keine pauschale Positionsquote; der Optimierer verteilt nur eine sonst modellierte Aufstockung neu.`);
   }
+  if ([...supplied.values()].some(f => f.model?.kind === 'stock-history-v1'))
+    plan.warnings.push('Aktien-Historienmodell ohne Analystenkonsens: Historische Szenarien sind keine veröffentlichten Kursziele; Unternehmensereignisse und Strukturbrüche erhöhen die Unsicherheit.');
   if ([...supplied.values()].some(f => f.model?.kind === 'etf-history-v1')) {
     plan.assumptions.push('ETF-Historienmodelle verwenden bereinigte Kurse als historischen Renditeproxy mit Ausschüttungs-/Splitbereinigung. Keine veröffentlichte Kursprognose und keine kalibrierten Zukunftswahrscheinlichkeiten; historische Renditen werden einmal zu 75 % gegen null geschrumpft. Künftige Ausschüttungen nicht zusätzlich addieren. Neue ETFs werden anhand ihres belegten EUR-Börsenkurses mit Beständen, Liquidität, Gebühren und Risiken gemeinsam modelliert; auch ein Nullbetrag ist ein berechnetes Ergebnis.');
     plan.assumptions = plan.assumptions.map(text => text.startsWith('Cashrendite =')

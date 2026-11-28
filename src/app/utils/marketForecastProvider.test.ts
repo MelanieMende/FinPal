@@ -6,7 +6,7 @@ import { validReturnForecast } from './portfolioForecastOptimization';
 import type { AnalysisPosition } from './portfolioAnalysis';
 import { etfHistoryFixture } from '../../testing/fixtures/etfHistory';
 
-it('provides ETF scenarios without analyst targets, persists and reuses them, and bounds offline fallback', async () => {
+it('retrieves ETF scenarios on every request and reports offline failure', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-etf-model-'));
   let clock = now;
   const client: YahooForecastClient = { quoteSummary: jest.fn(), chart: jest.fn().mockResolvedValue({ quotes: etfHistoryFixture(now), meta: { currency: 'EUR' } }) };
@@ -20,11 +20,12 @@ it('provides ETF scenarios without analyst targets, persists and reuses them, an
     expect(validReturnForecast(first, clock)).toBe(true);
     expect(client.quoteSummary).not.toHaveBeenCalled();
     clock += 23 * 3600000;
-    expect((await createYahooMarketForecastProvider(client, config)(position))?.dataStatus).toBe('fresh-cache');
-    expect(client.chart).toHaveBeenCalledTimes(1);
+    expect((await createYahooMarketForecastProvider(client, config)(position))?.dataStatus).toBe('live');
+    expect(client.chart).toHaveBeenCalledTimes(2);
     clock += 2 * 3600000;
     jest.mocked(client.chart).mockRejectedValue(new Error('offline'));
-    expect((await provider(position))?.dataStatus).toBe('stale-fallback');
+    expect(await provider(position)).toBeNull();
+    expect(await provider(position, { forceRefresh: true })).toBeNull();
     clock += 8 * day;
     expect(await provider(position)).toBeNull();
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
@@ -101,11 +102,11 @@ it('builds a deterministic shrunk 12-month crypto forecast and scenario band fro
   expect(forecast).toMatchObject({ key: '31', publisher: 'FinPal crypto history model', currency: 'EUR', scenarioReturns: model.scenarioReturns });
   expect(forecast?.assumptions).toContain('75 % gegen 0 % geschrumpft');
   expect(validReturnForecast(forecast! as never, now)).toBe(true);
-  expect((await provider(position))?.dataStatus).toBe('fresh-cache');
-  expect(client.chart).toHaveBeenCalledTimes(1);
+  expect((await provider(position))?.dataStatus).toBe('live');
+  expect(client.chart).toHaveBeenCalledTimes(2);
 });
 
-it('persists the crypto model and uses it as a bounded stale fallback after a restart', async () => {
+it('does not reuse a crypto forecast when offline', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-crypto-forecast-cache-'));
   const cacheFile = path.join(directory, 'forecast.json');
   let clock = now;
@@ -126,10 +127,8 @@ it('persists the crypto model and uses it as a bounded stale fallback after a re
       chart: jest.fn().mockRejectedValue(new Error('offline')),
     };
     const restartedProvider = createYahooMarketForecastProvider(offlineClient, { cacheFile, now: () => clock });
-    const fallback = await restartedProvider(position);
-    expect(fallback).toMatchObject({ dataStatus: 'stale-fallback', dataAgeHours: 25,
-      scenarioReturns: live?.scenarioReturns });
-    expect(fallback?.assumptions).toContain('Letzter gültiger Cache nach Abruffehler');
+    expect(await restartedProvider(position)).toBeNull();
+    expect(await restartedProvider(position, { forceRefresh: true })).toBeNull();
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
@@ -194,7 +193,7 @@ it('rejects incomplete consensus data or too little price history', async () => 
     shares: 1, price: 560, currency: 'EUR', costBasis: null, dividendsEarned: 0, realizedGainLoss: null })).toBeNull();
 });
 
-it('persists fresh forecasts, reuses them within the TTL and marks a stale fallback after provider failure', async () => {
+it('retrieves stock forecasts each time and reports offline failure', async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-forecast-cache-'));
   const cacheFile = path.join(directory, 'forecast.json');
   let clock = now;
@@ -208,9 +207,9 @@ it('persists fresh forecasts, reuses them within the TTL and marks a stale fallb
   try {
     const firstProvider = createYahooMarketForecastProvider(client, { cacheFile, now: () => clock });
     expect((await firstProvider(position))?.dataStatus).toBe('live');
-    expect((await firstProvider(position))?.dataStatus).toBe('fresh-cache');
-    expect(client.quoteSummary).toHaveBeenCalledTimes(1);
-    expect(client.chart).toHaveBeenCalledTimes(1);
+    expect((await firstProvider(position))?.dataStatus).toBe('live');
+    expect(client.quoteSummary).toHaveBeenCalledTimes(2);
+    expect(client.chart).toHaveBeenCalledTimes(2);
 
     clock += 25 * 60 * 60 * 1000;
     const offlineClient: YahooForecastClient = {
@@ -218,13 +217,12 @@ it('persists fresh forecasts, reuses them within the TTL and marks a stale fallb
       chart: jest.fn().mockRejectedValue(new Error('offline')),
     };
     const restartedProvider = createYahooMarketForecastProvider(offlineClient, { cacheFile, now: () => clock });
-    const fallback = await restartedProvider(position);
-    expect(fallback).toMatchObject({ dataStatus: 'stale-fallback', dataAgeHours: 25, targetPrice: 620 });
-    expect(fallback?.assumptions).toContain('last valid cached data');
+    expect(await restartedProvider(position)).toBeNull();
+    expect(await restartedProvider(position, { forceRefresh: true })).toBeNull();
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 
-it('bypasses a valid cache when a manual refresh is requested', async () => {
+it('retrieves fresh stock data when a manual refresh is requested', async () => {
   const client: YahooForecastClient = {
     quoteSummary: jest.fn().mockResolvedValue({ financialData: { targetMeanPrice: 620, currentPrice: 560, numberOfAnalystOpinions: 18 },
       price: { currency: 'EUR', regularMarketTime: new Date(now - day) } }),
@@ -237,4 +235,66 @@ it('bypasses a valid cache when a manual refresh is requested', async () => {
   await provider(position, { forceRefresh: true });
   expect(client.quoteSummary).toHaveBeenCalledTimes(2);
   expect(client.chart).toHaveBeenCalledTimes(2);
+});
+
+it('uses an explicitly labelled stock history scenario when analyst targets are missing and prefers a valid consensus', async () => {
+  const rows = etfHistoryFixture(now);
+  const position: AnalysisPosition = { id: 12, name: 'Stock', type: 'Stock', symbol: 'TEST.DE', isin: '', price: 9, currency: 'EUR', shares: 1, costBasis: null, dividendsEarned: 0, realizedGainLoss: null };
+  const client: YahooForecastClient = { quoteSummary: jest.fn().mockResolvedValue({}), chart: jest.fn().mockResolvedValue({ quotes: rows, meta: { currency: 'EUR' } }) };
+  const provider = createYahooMarketForecastProvider(client, () => now);
+  const forecast = await provider(position);
+  expect(forecast?.model?.kind).toBe('stock-history-v1');
+  expect(forecast?.uncertainty?.method).toBe('historical-bootstrap');
+  expect(validReturnForecast(forecast!, now)).toBe(true);
+  jest.mocked(client.quoteSummary).mockResolvedValue({ financialData: { targetMeanPrice: 12, currentPrice: 9, numberOfAnalystOpinions: 2 }, price: { currency: 'EUR', regularMarketTime: new Date(now - day) } });
+  expect((await provider(position, { forceRefresh: true }))?.uncertainty?.method).toBe('analyst-consensus');
+});
+
+it('does not create a stock scenario from insufficient or unadjusted history', async () => {
+  const position: AnalysisPosition = { id: 12, name: 'Stock', type: 'Stock', symbol: 'TEST.DE', isin: '', price: 9, currency: 'EUR', shares: 1, costBasis: null, dividendsEarned: 0, realizedGainLoss: null };
+  for (const quotes of [etfHistoryFixture(now).slice(-40), etfHistoryFixture(now).map(row => ({ ...row, adjclose: null as number | null }))]) {
+    const client: YahooForecastClient = { quoteSummary: jest.fn().mockResolvedValue({}), chart: jest.fn().mockResolvedValue({ quotes, meta: { currency: 'EUR' } }) };
+    expect(await createYahooMarketForecastProvider(client, () => now)(position)).toBeNull();
+  }
+});
+
+
+
+it('supports a sufficiently long short stock history and marks its increased uncertainty', async () => {
+  const position: AnalysisPosition = { id: 12, name: 'Stock', type: 'Stock', symbol: 'TEST.DE', isin: '', price: 9, currency: 'EUR', shares: 1, costBasis: null, dividendsEarned: 0, realizedGainLoss: null };
+  const client: YahooForecastClient = { quoteSummary: jest.fn().mockResolvedValue({}), chart: jest.fn().mockResolvedValue({ quotes: etfHistoryFixture(now).slice(-100), meta: { currency: 'EUR' } }) };
+  const forecast = await createYahooMarketForecastProvider(client, () => now)(position);
+  expect(forecast?.volatilityHistory?.kind).toBe('short-listing');
+  expect(validReturnForecast(forecast!, now)).toBe(true);
+});
+
+
+it('does not reuse a previous stock scenario when offline', async () => {
+  const position: AnalysisPosition = { id: 12, name: 'Stock', type: 'Stock', symbol: 'TEST.DE', isin: '', price: 9, currency: 'EUR', shares: 1, costBasis: null, dividendsEarned: 0, realizedGainLoss: null };
+  const client: YahooForecastClient = { quoteSummary: jest.fn().mockResolvedValue({}), chart: jest.fn().mockResolvedValue({ quotes: etfHistoryFixture(now), meta: { currency: 'EUR' } }) };
+  const provider = createYahooMarketForecastProvider(client, () => now);
+  expect((await provider(position))?.model?.kind).toBe('stock-history-v1');
+  jest.mocked(client.chart).mockRejectedValue(new Error('offline'));
+  expect((await provider(position, { forceRefresh: true }))).toBeNull();
+  expect(await provider(position)).toBeNull();
+});
+
+
+it('uses an unambiguous ISIN search result for an alternative listing with same-day EUR conversion', async () => {
+  const rows = etfHistoryFixture(now);
+  const position: AnalysisPosition = { id: 12, name: 'Stock', type: 'Stock', symbol: 'TEST.SG', isin: 'CA03880B1040', price: 9, currency: 'EUR', shares: 1, costBasis: null, dividendsEarned: 0, realizedGainLoss: null };
+  const search = jest.fn().mockResolvedValue({ quotes: [{ symbol: 'TEST.SG', shortname: 'Example Corp.', quoteType: 'EQUITY' }, { symbol: 'TEST.V', longname: 'Example Corp.', quoteType: 'EQUITY' }] });
+  const client: YahooForecastClient = { quoteSummary: jest.fn().mockResolvedValue({}), search, chart: jest.fn(async symbol => symbol === 'TEST.SG'
+    ? { quotes: rows.slice(-1), meta: { currency: 'EUR' } }
+    : symbol === 'CADEUR=X' ? { quotes: rows.slice(-300).map(row => ({ date: row.date, close: .65 })) }
+    : { quotes: rows, meta: { currency: 'CAD' } }) };
+  const provider = createYahooMarketForecastProvider(client, () => now);
+  const forecast = await provider(position);
+  expect(forecast?.model?.kind).toBe('stock-history-v1');
+  expect(forecast?.currency).toBe('EUR');
+  expect(forecast?.referencePrice).toBeCloseTo(rows[rows.length - 1].close * .65);
+  expect(forecast?.forecastSources[0].url).toContain('TEST.V');
+  expect(search).toHaveBeenCalledWith(position.isin, expect.anything());
+  search.mockResolvedValue({ quotes: [{ symbol: 'TEST.SG', shortname: 'Example Corp.', quoteType: 'EQUITY' }, { symbol: 'OTHER.V', shortname: 'Different Corp.', quoteType: 'EQUITY' }] });
+  expect(await provider(position)).toBeNull();
 });

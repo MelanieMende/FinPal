@@ -41,11 +41,13 @@ it('creates and reuses the exact Treasury issue forecast with coupon and EUR ris
     expect(first.expectedTotalReturnPercent).toEqual(expect.any(Number));
     expect(first.riskHistory?.currency).toBe('EUR');
     expect(validReturnForecast(first, clock)).toBe(true);
-    expect(await createYahooMarketForecastProvider(client, config)(position)).toMatchObject({ dataStatus: 'fresh-cache' });
-    expect(requestFetch).toHaveBeenCalledTimes(2);
+    expect(await createYahooMarketForecastProvider(client, config)(position)).toMatchObject({ dataStatus: 'live' });
+    expect(requestFetch).toHaveBeenCalledTimes(4);
     clock += 25 * 3600000;
     jest.mocked(client.chart).mockRejectedValueOnce(new Error('offline'));
-    expect(await createYahooMarketForecastProvider(client, config)(position)).toMatchObject({ dataStatus: 'stale-fallback' });
+    expect(await createYahooMarketForecastProvider(client, config)(position)).toBeNull();
+    jest.mocked(client.chart).mockRejectedValueOnce(new Error('offline'));
+    expect(await createYahooMarketForecastProvider(client, config)(position, { forceRefresh: true })).toBeNull();
   } finally { fs.rmSync(directory, { recursive: true, force: true }); }
 });
 

@@ -21,7 +21,7 @@ export interface ReturnForecast {
   dataStatus?: 'live' | 'fresh-cache' | 'stale-fallback';
   dataAgeHours?: number;
   scenarioReturns?: { p10: number; median: number; p90: number };
-  model?: { kind: 'etf-history-v1'; observations: number; historyYears: number; tradingDaysPerYear: 252; blockLength: 20; paths: 2000; returnBasis: 'adjusted-close' }
+  model?: { kind: 'etf-history-v1' | 'stock-history-v1'; observations: number; historyYears: number; tradingDaysPerYear: 252; blockLength: 20; paths: 2000; returnBasis: 'adjusted-close' }
     | { kind: 'bond-curve-v1'; observations: number; couponPercent: number; maturityDate: string; priceBasis: 'clean'; referenceDirty: number };
   uncertainty?: { method: 'analyst-consensus' | 'historical-bootstrap' | 'bond-curve-scenario'; analystCount?: number; targetLowPrice?: number; targetHighPrice?: number; historyYears?: number };
   riskHistory?: { currency: 'EUR'; closes: { date: string; price: number }[]; sources: AnalysisSource[] };
@@ -86,9 +86,9 @@ export function validReturnForecast(v: ReturnForecast, now = Date.now()): boolea
       && v.model.priceBasis === 'clean' && positive(v.model.referenceDirty)
       && v.uncertainty?.method === 'bond-curve-scenario' && !!v.scenarioReturns
       && Number.isFinite(v.expectedTotalReturnPercent)
-      || !!v.model && v.model.kind === 'etf-history-v1'
-      && Number.isInteger(v.model.observations) && v.model.observations >= 1261 && v.model.observations <= 4000
-      && Number.isFinite(v.model.historyYears) && v.model.historyYears >= 5 && v.model.historyYears <= 15
+      || !!v.model && (v.model.kind === 'etf-history-v1' || v.model.kind === 'stock-history-v1')
+      && Number.isInteger(v.model.observations) && v.model.observations >= (v.model.kind === 'etf-history-v1' ? 1261 : 61) && v.model.observations <= 4000
+      && Number.isFinite(v.model.historyYears) && v.model.historyYears >= (v.model.kind === 'etf-history-v1' ? 5 : 90 / 365.25) && v.model.historyYears <= 15
       && v.model.tradingDaysPerYear === 252 && v.model.blockLength === 20 && v.model.paths === 2000
       && v.model.returnBasis === 'adjusted-close' && v.uncertainty?.method === 'historical-bootstrap'
       && v.uncertainty.historyYears === v.model.historyYears && !!v.scenarioReturns))
@@ -259,7 +259,7 @@ function calculateForecastAllocation(request: PortfolioAnalysisRequest, forecast
     if (!f) {
       unresolved(i, asset.type === 'Bond'
         ? 'Eine belegte 12-Monats-Gesamtrendite einschließlich Kupon fehlt; ein reines Kursziel würde nicht ausreichen.'
-        : 'Mindestens eine erforderliche Optimierungseingabe fehlt. Benötigt werden sowohl eine veröffentlichte 12-Monats-Erwartung als auch eine belegte annualisierte historische Volatilität. Eine kurze verfügbare Kurshistorie kann ab 61 Kursen über 90 Kalendertage verwendet werden.');
+        : 'Mindestens eine erforderliche Optimierungseingabe fehlt. Benötigt werden ein verwendbarer Analystenkonsens oder ein historisches Aktienszenario sowie eine annualisierte historische Volatilität. Eine kurze verfügbare Kurshistorie kann ab 61 Kursen über 90 Kalendertage verwendet werden.');
       continue;
     }
     const held = i < request.positions.length ? request.positions[i] : null;

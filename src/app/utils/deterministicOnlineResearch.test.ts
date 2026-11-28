@@ -30,6 +30,36 @@ it('performs a deterministic identifier search, validates links and reuses its 2
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+it('labels different known sources by their actual addresses without claiming they are primary sources', async () => {
+  const arbor = { ...position, id: 12, name: 'Arbor Metals', isin: 'CA03880B1040', symbol: 'CA03880B1040.SG' };
+  const provider = createDeterministicOnlineResearchProvider({ search: jest.fn().mockResolvedValue({ news: [] }) });
+  const result = await provider(arbor);
+  const known = result.sources.filter(source => source.title.startsWith('Bekannter Recherchelink:'));
+  expect(known).toHaveLength(9);
+  expect(new Set(known.map(source => source.title)).size).toBe(9);
+  expect(known.find(source => source.url.includes('finance.yahoo.com'))?.title).not.toContain('Primärquelle');
+  expect(known.find(source => source.url.includes('financialreports.eu'))?.title).toContain('financialreports.eu/financialreports/');
+});
+
+it('updates legacy source labels when returning cached research without making a search', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'finpal-online-legacy-'));
+  const file = path.join(dir, 'cache.json');
+  const search = jest.fn().mockResolvedValue({ news: [] });
+  const clock = Date.parse('2026-10-19T10:00:00Z');
+  const arbor = { ...position, id: 12, name: 'Arbor Metals', isin: 'CA03880B1040', symbol: 'CA03880B1040.SG' };
+  try {
+    await createDeterministicOnlineResearchProvider({ search }, { cacheFile: file, now: () => clock })(arbor);
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'));
+    data.entries[0][1].sources[0].title = 'Bekannte Primärquelle für Arbor Metals';
+    fs.writeFileSync(file, JSON.stringify(data));
+    search.mockClear();
+    const result = await createDeterministicOnlineResearchProvider({ search }, { cacheFile: file, now: () => clock })(arbor);
+    expect(result.cacheStatus).toBe('reused');
+    expect(result.sources[0].title).toContain('arbormetalscorp.com');
+    expect(search).not.toHaveBeenCalled();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 it('keeps deterministic source links and reports the gap when the online search fails', async () => {
   const search = jest.fn().mockRejectedValue(new Error('offline'));
   const provider = createDeterministicOnlineResearchProvider({ search });
